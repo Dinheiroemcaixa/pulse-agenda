@@ -792,6 +792,8 @@ async function launchApp(){
   const dfInp=document.getElementById('date-filter-input');if(dfInp)dfInp.value=dateFilter;
   updateSidebar();updateStats();renderTagFilterBar();renderScopeBanner();
   goPage('tasks',document.getElementById('nav-tasks'));
+  // Cria ocorrências recorrentes de hoje se necessário
+  checkAndSpawnRecurring();
 }
 
 // ============================================================
@@ -849,7 +851,7 @@ function getFiltered(){
   else if(filterMode==='alta')list=list.filter(t=>t.prio==='Alta');
   if(!viewingAll)list=list.filter(t=>t.resp===currentUser.name);
   else if(memberFilter&&memberFilter!=='all')list=list.filter(t=>t.resp===memberFilter);
-  if(searchQ)list=list.filter(t=>t.descricao.toLowerCase().includes(searchQ.toLowerCase())||t.resp.toLowerCase().includes(searchQ.toLowerCase()));
+  if(searchQ)list=list.filter(t=>(t.descricao||t.desc||'').toLowerCase().includes(searchQ.toLowerCase())||t.resp.toLowerCase().includes(searchQ.toLowerCase()));
   if(dateFilter)list=list.filter(t=>t.date===dateFilter);
   if(tagFilter)list=list.filter(t=>t.tags&&t.tags.includes(tagFilter));
   return list;
@@ -1162,6 +1164,45 @@ async function completeTask(id){
 }
 function nextDate(t){const d=t.date?new Date(t.date+'T00:00:00'):new Date();if(t.recur==='daily')d.setDate(d.getDate()+1);else if(t.recur==='weekdays'){d.setDate(d.getDate()+1);while(d.getDay()===0||d.getDay()===6)d.setDate(d.getDate()+1);}else if(t.recur==='weekly')d.setDate(d.getDate()+7);else if(t.recur==='monthly')d.setMonth(d.getMonth()+1);else d.setDate(d.getDate()+1);return d.toISOString().split('T')[0];}
 
+// Cria ocorrências de hoje para tarefas recorrentes (independente de atrasadas)
+async function checkAndSpawnRecurring(){
+  const todayStr=getTodayStr();
+  const today=new Date(todayStr+'T00:00:00');
+  const dow=today.getDay();
+  // Busca tarefas-raiz recorrentes (não são de hoje)
+  const roots=tasks.filter(t=>t.recur&&t.recur!=='none'&&t.date!==todayStr);
+  const toCreate=[];
+  for(const t of roots){
+    // Já existe ocorrência para hoje?
+    const alreadyToday=tasks.some(x=>
+      (x.descricao===t.descricao)&&x.resp===t.resp&&x.recur===t.recur&&x.date===todayStr
+    );
+    if(alreadyToday)continue;
+    let ok=false;
+    if(t.recur==='daily')ok=true;
+    else if(t.recur==='weekdays')ok=(dow>=1&&dow<=5);
+    else if(t.recur==='weekly'){const s=new Date((t.recur_start||t.date)+'T00:00:00');ok=(s.getDay()===dow);}
+    else if(t.recur==='monthly'){const s=new Date((t.recur_start||t.date)+'T00:00:00');ok=(s.getDate()===today.getDate());}
+    else if(t.recur==='custom'&&t.recur_days&&t.recur_days.length){const dn=['dom','seg','ter','qua','qui','sex','sab'];ok=t.recur_days.includes(dn[dow]);}
+    if(!ok)continue;
+    toCreate.push({
+      ...t,
+      id:genId(),
+      status:'Em Aberto',
+      completed_at:null,
+      date:todayStr,
+      sort_order:tasks.length,
+      subtasks:(t.subtasks||[]).map(s=>({...s,done:false})),
+      recur_start:t.recur_start||t.date
+    });
+  }
+  if(!toCreate.length)return;
+  // Insere no Supabase em paralelo
+  await Promise.all(toCreate.map(nt=>sb.from('tasks').insert(nt)));
+  tasks.push(...toCreate);
+  updateStats();renderCurrentView();
+}
+
 function delTask(id){
   const t=tasks.find(x=>x.id===id);if(!t)return;
   const isRecurring=t.recur&&t.recur!=='none';
@@ -1221,13 +1262,15 @@ function editTask(id){
 function closeTaskModal(){document.getElementById('task-modal').style.display='none';}
 async function saveTask(){
   const descricao=document.getElementById('f-desc').value.trim();if(!descricao){showToast('⚠ Preencha a descrição','warn');return;}
+  const _date=document.getElementById('f-date').value;
   const taskData={
-    descricao,resp:document.getElementById('f-resp').value,date:document.getElementById('f-date').value,
+    descricao,resp:document.getElementById('f-resp').value,date:_date,
     prio:document.getElementById('f-prio').value,status:'Em Aberto',all_day:allDay,
     time_start:allDay?null:document.getElementById('f-time-start').value,
     time_end:allDay?null:document.getElementById('f-time-end').value,
     tags:[...selTags],recur:recurMode,recur_days:recurMode==='custom'?[...customDays]:[],
-    subtasks:modalSubs.map(s=>({...s})),notes:document.getElementById('f-notes').value.trim()
+    subtasks:modalSubs.map(s=>({...s})),notes:document.getElementById('f-notes').value.trim(),
+    recur_start:(recurMode&&recurMode!=='none')?_date:null
   };
   if(editTaskId){
     const existing=tasks.find(x=>x.id===editTaskId);
@@ -1447,7 +1490,6 @@ document.addEventListener('click',e=>{
 // ============================================================
 async function boot(){
   buildSignupAvatars();
-  switchTab('login');
   const savedEmail=localStorage.getItem('pulse_session');
   if(savedEmail){
     const {data,error}=await sb.from('users').select('*').eq('email',savedEmail).single();
