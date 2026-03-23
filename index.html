@@ -1539,7 +1539,12 @@ function goPage(page,el,skipNav){
   else if(page==='meetings'){mb.textContent='+ Nova Reunião';mb.onclick=openMeetModal;mb.style.display='';}
   else mb.style.display='none';
   if(page==='team')renderTeam();
-  if(page==='messages')renderConvList();
+  if(page==='messages'){
+    renderConvList();
+    // Abre automaticamente a primeira conversa
+    const others=team.filter(m=>m.name!==currentUser.name);
+    if(others.length&&!activeChatUser)openChat(others[0].name);
+  }
   if(page==='history'){const hs=document.getElementById('hist-scope');if(hs)hs.value='mine';renderHist();}
   if(page==='meetings')renderMeets();
   if(page==='tasks'){
