@@ -355,63 +355,6 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 .chat-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text3);gap:10px}
 .chat-empty-icon{font-size:48px;opacity:.3}
 .coming-soon-banner{background:var(--orangebg);border:1px solid var(--orange);border-radius:8px;padding:12px 16px;font-size:13px;color:var(--orange);font-weight:600;margin:20px;text-align:center}
-/* ===== CHAT ===== */
-.conv-item{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .15s;position:relative}
-.conv-item:hover{background:var(--bg3)}
-.conv-item.active{background:var(--accentbg);border-left:3px solid var(--accent)}
-.conv-item .avsm{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0}
-.conv-info{flex:1;min-width:0}
-.conv-name{font-size:13px;font-weight:600;color:var(--text)}
-.conv-preview{font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
-.conv-badge{background:var(--accent);color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:700;flex-shrink:0}
-.conv-online{width:9px;height:9px;background:var(--green);border-radius:50%;border:2px solid var(--bg2);position:absolute;bottom:12px;left:38px}
-.chat-header{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0;background:var(--bg2)}
-.chat-header-name{font-size:14px;font-weight:700}
-.chat-header-status{font-size:11px;color:var(--green);font-weight:600}
-.chat-msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
-.msg-row{display:flex;gap:8px;align-items:flex-end;margin-bottom:6px;width:100%}
-.msg-row.mine{flex-direction:row-reverse}
-.msg-row .msg-wrap{max-width:65%;display:flex;flex-direction:column}
-.msg-row.mine .msg-wrap{align-items:flex-end}
-.msg-row.theirs .msg-wrap{align-items:flex-start}
-.msg-bubble{padding:9px 13px;font-size:13px;line-height:1.55;word-break:break-word;white-space:pre-wrap}
-.msg-row.mine .msg-bubble{background:var(--accent);color:#fff;border-radius:18px 18px 4px 18px}
-.msg-row.theirs .msg-bubble{background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:18px 18px 18px 4px}
-.msg-sender{font-size:10px;font-weight:700;margin-bottom:3px;padding:0 4px}
-.msg-row.mine .msg-sender{color:var(--accent2);text-align:right}
-.msg-row.theirs .msg-sender{color:var(--text3);text-align:left}
-.msg-time{font-size:10px;opacity:.5;margin-top:3px;padding:0 4px}
-.msg-row.mine .msg-time{text-align:right}
-.msg-row.theirs .msg-time{text-align:left}
-.msg-file{display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(255,255,255,0.1);border-radius:8px;cursor:pointer;text-decoration:none;color:inherit;margin-top:4px}
-.msg-file-icon{font-size:20px;flex-shrink:0}
-.msg-file-name{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.msg-file-size{font-size:10px;opacity:.7}
-.msg-img{max-width:220px;border-radius:10px;cursor:pointer;margin-top:4px;display:block}
-.chat-input-area{padding:12px 16px;border-top:1px solid var(--border);background:var(--bg2);flex-shrink:0}
-.chat-input-row{display:flex;gap:8px;align-items:flex-end}
-.chat-input-box{flex:1;background:var(--bg3);border:1.5px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-size:13px;outline:none;resize:none;min-height:40px;max-height:120px;font-family:inherit;transition:border-color .15s}
-.chat-input-box:focus{border-color:var(--accent)}
-.chat-input-box::placeholder{color:var(--text3)}
-.chat-send-btn{width:40px;height:40px;border-radius:10px;background:var(--accent);border:none;color:#fff;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:opacity .15s}
-.chat-send-btn:hover{opacity:.85}
-.chat-attach-btn{width:40px;height:40px;border-radius:10px;background:var(--bg3);border:1.5px solid var(--border);color:var(--text2);cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s}
-.chat-attach-btn:hover{border-color:var(--accent);color:var(--accent)}
-.attach-preview{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:8px;display:flex;align-items:center;gap:8px;font-size:12px}
-.attach-preview-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2)}
-.attach-remove{cursor:pointer;color:var(--red);font-size:14px;padding:2px 6px}
-.msg-date-sep{text-align:center;font-size:11px;color:var(--text3);margin:8px 0;position:relative}
-.msg-date-sep::before,.msg-date-sep::after{content:'';position:absolute;top:50%;width:35%;height:1px;background:var(--border)}
-.msg-date-sep::before{left:0}.msg-date-sep::after{right:0}
-/* Membros na sidebar */
-.sidebar-member{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 18px;cursor:pointer;border-radius:7px;margin:1px 10px;transition:all .15s;position:relative}
-.sidebar-member:hover{background:var(--bg3)}
-.sidebar-member.active{background:var(--accentbg)}
-.sidebar-member .sav{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#fff;flex-shrink:0}
-.sidebar-member .smeta{flex:1;min-width:0}
-.sidebar-member .sname{font-size:12px;font-weight:600;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sidebar-member .spreview{font-size:10px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sidebar-member .sbadge{background:var(--red);color:#fff;border-radius:10px;padding:1px 6px;font-size:9px;font-weight:700;flex-shrink:0}
 .toast{position:fixed;bottom:20px;right:20px;padding:10px 18px;border-radius:9px;font-size:13px;font-weight:700;opacity:0;transition:all .3s;pointer-events:none;z-index:200;box-shadow:0 4px 20px rgba(0,0,0,.4)}
 .toast.success{background:var(--green);color:#0a2a1a}
 .toast.warn{background:var(--orange);color:#2a1500}
@@ -482,6 +425,10 @@ select.fi option{background:var(--bg3)}
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="2.5"/><path d="M1 13c0-2.2 2-4 5-4s5 1.8 5 4"/><circle cx="12" cy="5" r="2"/><path d="M12 9c1.5.3 3 1.4 3 4"/></svg>
       Equipe <span class="nb blue" id="nb-team">0</span>
     </div>
+    <div class="ni" id="nav-atrasadas" onclick="goPage('atrasadas',this)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l2.5 2"/><path d="M12 2l2 2M2 12l2 2" stroke-linecap="round"/></svg>
+      Atrasadas <span class="nb" id="nb-atrasadas" style="display:none">0</span>
+    </div>
     <div class="ni" id="nav-history" onclick="goPage('history',this)">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l2.5 2"/></svg>
       Histórico <span class="nb blue" id="nb-hist" style="display:none">0</span>
@@ -495,7 +442,6 @@ select.fi option{background:var(--bg3)}
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 1H2a1 1 0 00-1 1v8a1 1 0 001 1h3l3 3 3-3h3a1 1 0 001-1V2a1 1 0 00-1-1z"/></svg>
       Mensagens
     </div>
-    <div id="sidebar-members-list"></div>
   </nav>
   <div class="user-area">
     <div class="uc" onclick="openUserModal()">
@@ -558,6 +504,18 @@ select.fi option{background:var(--bg3)}
       <div id="view-agenda" style="display:none"><div class="agenda-wrap" id="agenda-wrap"></div></div>
     </div>
     <div class="page" id="page-team"><div class="team-grid" id="team-grid"></div></div>
+    <div class="page" id="page-atrasadas">
+      <div class="hist-wrap">
+        <div class="hist-filters" style="margin-bottom:14px">
+          <input class="hist-search" id="atrasadas-search" placeholder="🔍 Buscar tarefa atrasada..." oninput="renderAtrasadas()">
+          <select class="hist-filter-sel" id="atrasadas-scope" onchange="renderAtrasadas()">
+            <option value="mine">Minhas atrasadas</option>
+            <option value="all">Toda a equipe</option>
+          </select>
+        </div>
+        <div id="atrasadas-list"></div>
+      </div>
+    </div>
     <div class="page" id="page-history">
       <div class="hist-wrap">
         <div class="hist-stats" id="hist-stats"></div>
@@ -588,41 +546,12 @@ select.fi option{background:var(--bg3)}
     <div class="page" id="page-messages">
       <div class="msgs-layout" style="height:calc(100vh - 120px)">
         <div class="msgs-sidebar">
-          <div class="msgs-header">
-            <span>Conversas</span>
-          </div>
-          <div id="conv-list"></div>
+          <div class="msgs-header">Conversas</div>
         </div>
-        <div class="chat-area" id="chat-area">
-          <div class="chat-empty" id="chat-empty">
+        <div class="chat-area">
+          <div class="chat-empty">
             <div class="chat-empty-icon">💬</div>
-            <div style="font-size:14px;font-weight:600;color:var(--text2)">Selecione uma conversa</div>
-            <div style="font-size:12px;color:var(--text3)">Escolha um membro para conversar</div>
-          </div>
-          <div id="chat-active" style="display:none;flex-direction:column;height:100%">
-            <div class="chat-header">
-              <div class="avsm" id="chat-header-av" style="width:34px;height:34px;border-radius:50%;font-size:12px;font-weight:700;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0"></div>
-              <div>
-                <div class="chat-header-name" id="chat-header-name"></div>
-                <div class="chat-header-status" id="chat-header-role"></div>
-              </div>
-            </div>
-            <div class="chat-msgs" id="chat-msgs"></div>
-            <div class="chat-input-area">
-              <div id="attach-preview" style="display:none" class="attach-preview">
-                <span class="msg-file-icon" id="attach-icon">📎</span>
-                <span class="attach-preview-name" id="attach-name"></span>
-                <span class="attach-remove" onclick="clearAttach()">✕</span>
-              </div>
-              <div class="chat-input-row">
-                <button class="chat-attach-btn" onclick="document.getElementById('file-input').click()" title="Anexar arquivo">📎</button>
-                <input type="file" id="file-input" style="display:none" onchange="handleFileSelect(this)">
-                <textarea class="chat-input-box" id="chat-input" placeholder="Digite uma mensagem..." rows="1"
-                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}"
-                  oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
-                <button class="chat-send-btn" onclick="sendMessage()" title="Enviar">➤</button>
-              </div>
-            </div>
+            <div class="coming-soon-banner">⚡ Mensagens em tempo real em breve!<br>Aguardando integração completa com Supabase Realtime.</div>
           </div>
         </div>
       </div>
@@ -740,14 +669,13 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 // ============================================================
 // STATE
 // ============================================================
-let tasks=[], hist=[], meets=[], team=[], customTags=[];
+let tasks=[], hist=[], meets=[], team=[], customTags=[], atrasadas=[];
 let currentUser=null;
 let isDark=true, searchQ='', filterMode='all', memberFilter='', currentView='list';
 let dateFilter='', tagFilter='', viewingAll=false;
 let selTags=[], editIdx=-1, selColor='#4f6ef7', userSelColor='#4f6ef7', newTagColor='#4f6ef7';
 let recurMode='none', customDays=[], modalSubs=[], expandedTasks={}, expandedNotes={}, allDay=true, agendaDate=new Date();
 let meetParts=[], listDragSrcIdx=null, selectedAgendaDate=null, editTaskId=null;
-let messages=[], activeChatUser=null, chatChannel=null, pendingFile=null, msgUnread={};
 
 const COLORS=['#4f6ef7','#ff4d6d','#3dd68c','#ffa94d','#cc5de8','#e67700','#2f9e44','#1971c2','#ae3ec9','#f06595','#74c0fc','#63e6be'];
 const RECUR_LABELS={none:'Sem recorrência',daily:'Todos os dias',weekdays:'Seg a Sex',weekly:'Toda semana',monthly:'Todo mês',custom:'Dias específicos'};
@@ -860,23 +788,30 @@ async function doLogout(){
 async function launchApp(){
   document.getElementById('login-screen').style.display='none';
   document.getElementById('loading-screen').style.display='flex';
-  // load data in parallel
-  const [tasksRes,histRes,meetsRes,teamRes,tagsRes]=await Promise.all([
+  // Carrega dados em paralelo incluindo atrasadas
+  const [tasksRes,histRes,meetsRes,teamRes,tagsRes,atrasadasRes]=await Promise.all([
     sb.from('tasks').select('*').order('sort_order',{ascending:true}),
     sb.from('hist').select('*').order('created_at',{ascending:false}),
     sb.from('meets').select('*').order('created_at',{ascending:false}),
     sb.from('team').select('*'),
-    sb.from('tags').select('*')
+    sb.from('tags').select('*'),
+    sb.from('atrasadas').select('*').order('date',{ascending:true})
   ]);
   tasks=tasksRes.data||[];
   hist=histRes.data||[];
   meets=meetsRes.data||[];
   team=teamRes.data||[];
   customTags=tagsRes.data||[];
-  // Carregar contagem de não lidas
-  const {data:unreadData}=await sb.from('messages').select('from_user').eq('to_user',currentUser.name).eq('read',false);
-  msgUnread={};
-  (unreadData||[]).forEach(m=>{msgUnread[m.from_user]=(msgUnread[m.from_user]||0)+1;});
+  atrasadas=atrasadasRes.data||[];
+  // Gera ocorrências recorrentes para hoje se necessário
+  await checkAndSpawnRecurring();
+  // Move tarefas não recorrentes vencidas para atrasadas
+  await moveVencidasParaAtrasadas();
+  // Recarrega tasks após spawns
+  const {data:tasksAtt}=await sb.from('tasks').select('*').order('sort_order',{ascending:true});
+  tasks=tasksAtt||[];
+  const {data:atrasadasAtt}=await sb.from('atrasadas').select('*').order('date',{ascending:true});
+  atrasadas=atrasadasAtt||[];
   document.getElementById('loading-screen').style.display='none';
   document.getElementById('app').style.display='flex';
   viewingAll=false;memberFilter=currentUser.name;
@@ -884,11 +819,6 @@ async function launchApp(){
   const dfInp=document.getElementById('date-filter-input');if(dfInp)dfInp.value=dateFilter;
   updateSidebar();updateStats();renderTagFilterBar();renderScopeBanner();
   goPage('tasks',document.getElementById('nav-tasks'));
-  // Cria ocorrências recorrentes de hoje se necessário
-  checkAndSpawnRecurring();
-  // Inicia listener global de mensagens
-  subscribeGlobalMessages();
-  requestNotifPermission();
 }
 
 // ============================================================
@@ -915,23 +845,27 @@ function updateStats(){
   if(!currentUser)return;
   const today=getTodayStr();const me=currentUser.name;
   const todayOpen=tasks.filter(t=>t.status!=='Concluída'&&t.resp===me&&t.date===today);
-  const lateAll=tasks.filter(t=>t.status!=='Concluída'&&t.resp===me&&isLate(t));
+  const myAtrasadas=atrasadas.filter(a=>a.resp===me);
   const doneToday=hist.filter(h=>h.resp===me&&h.completed_at===new Date().toLocaleDateString('pt-BR'));
   document.getElementById('s-tot').textContent=todayOpen.length;
-  document.getElementById('s-late').textContent=lateAll.length;
+  document.getElementById('s-late').textContent=myAtrasadas.length;
   document.getElementById('s-done').textContent=doneToday.length;
-  const nl=document.getElementById('nb-late');lateAll.length>0?(nl.style.display='',nl.textContent=lateAll.length):nl.style.display='none';
+  const nl=document.getElementById('nb-late');myAtrasadas.length>0?(nl.style.display='',nl.textContent=myAtrasadas.length):nl.style.display='none';
   const nh=document.getElementById('nb-hist');hist.length>0?(nh.style.display='',nh.textContent=hist.length):nh.style.display='none';
   document.getElementById('nb-team').textContent=team.length;
+  // Badge atrasadas no sidebar
+  const na=document.getElementById('nb-atrasadas');
+  if(na){myAtrasadas.length>0?(na.style.display='',na.textContent=myAtrasadas.length):na.style.display='none';}
 }
 function dashClick(type){
   if(type==='done'){goPage('history',document.getElementById('nav-history'));}
+  else if(type==='late'){goPage('atrasadas',document.getElementById('nav-atrasadas'));}
   else{
     goPage('tasks',document.getElementById('nav-tasks'));
     viewingAll=false;memberFilter=currentUser.name;renderScopeBanner();
     document.getElementById('mf-bar').style.display='none';
-    filterMode=type==='late'?'late':'all';
-    document.querySelectorAll('.fb').forEach((b,i)=>b.classList.toggle('active',type==='late'?i===2:i===0));
+    filterMode='all';
+    document.querySelectorAll('.fb').forEach((b,i)=>b.classList.toggle('active',i===0));
     renderCurrentView();
   }
 }
@@ -946,7 +880,7 @@ function getFiltered(){
   else if(filterMode==='alta')list=list.filter(t=>t.prio==='Alta');
   if(!viewingAll)list=list.filter(t=>t.resp===currentUser.name);
   else if(memberFilter&&memberFilter!=='all')list=list.filter(t=>t.resp===memberFilter);
-  if(searchQ)list=list.filter(t=>(t.descricao||t.desc||'').toLowerCase().includes(searchQ.toLowerCase())||t.resp.toLowerCase().includes(searchQ.toLowerCase()));
+  if(searchQ)list=list.filter(t=>t.descricao.toLowerCase().includes(searchQ.toLowerCase())||t.resp.toLowerCase().includes(searchQ.toLowerCase()));
   if(dateFilter)list=list.filter(t=>t.date===dateFilter);
   if(tagFilter)list=list.filter(t=>t.tags&&t.tags.includes(tagFilter));
   return list;
@@ -1142,6 +1076,59 @@ function renderMemberFilter(){
 }
 
 // ============================================================
+// ATRASADAS
+// ============================================================
+function renderAtrasadas(){
+  const el=document.getElementById('atrasadas-list');if(!el)return;
+  const sq=(document.getElementById('atrasadas-search')||{}).value||'';
+  const scope=(document.getElementById('atrasadas-scope')||{}).value||'mine';
+  let list=[...atrasadas];
+  if(scope==='mine')list=list.filter(a=>a.resp===currentUser.name);
+  if(sq)list=list.filter(a=>a.descricao.toLowerCase().includes(sq.toLowerCase()));
+  if(!list.length){
+    el.innerHTML=`<div class="es"><div class="ei">🎉</div><div class="et">Nenhuma tarefa atrasada!</div><div style="color:var(--text3);font-size:13px">Tudo em dia por aqui.</div></div>`;
+    return;
+  }
+  // Agrupa por data
+  const groups={};
+  list.forEach(a=>{const g=a.date||'—';if(!groups[g])groups[g]=[];groups[g].push(a);});
+  const sortedDates=Object.keys(groups).sort((a,b)=>a.localeCompare(b));
+  el.innerHTML=sortedDates.map(dateKey=>{
+    const items=groups[dateKey];
+    const cards=items.map(a=>{
+      const m=getMember(a.resp);const mc=m?m.color:'#ff4d6d';
+      const diasAtraso=a.date?Math.floor((new Date()-new Date(a.date+'T00:00:00'))/86400000):0;
+      return`<div class="hist-card" style="border-left:3px solid var(--red)">
+        <div class="hist-card-check" style="background:var(--redbg);color:var(--red);border:1.5px solid var(--red)">!</div>
+        <div class="hist-card-body">
+          <div class="hist-card-title">${a.descricao}</div>
+          <div class="hist-card-meta">
+            <div class="asgn"><div class="avsm" style="background:${mc};width:18px;height:18px;font-size:8px">${getInitials(a.resp)}</div><span style="font-size:11px;color:var(--text2)">${a.resp.split(' ')[0]}</span></div>
+            ${tagsHtml(a.tags)}
+            <span style="font-size:10px;background:var(--redbg);color:var(--red);border-radius:3px;padding:1px 6px;font-weight:700">⏰ ${diasAtraso} dia${diasAtraso!==1?'s':''} atrasada</span>
+          </div>
+        </div>
+        <div class="hist-card-right">
+          <div class="hist-card-date" style="color:var(--red)">📅 ${fDate(a.date)}</div>
+          <div style="display:flex;gap:4px;margin-top:6px">
+            <button onclick="completeTask('${a.id}',true)" style="background:var(--greenbg);border:1px solid var(--green);border-radius:6px;padding:4px 9px;color:var(--green);font-size:11px;font-weight:700;cursor:pointer">✓ Concluir</button>
+            <button onclick="delAtrasada('${a.id}')" style="background:var(--redbg);border:1px solid var(--red);border-radius:6px;padding:4px 9px;color:var(--red);font-size:11px;font-weight:700;cursor:pointer">✕</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    return`<div class="hist-group"><div class="hist-group-title" style="color:var(--red)">📅 ${fDate(dateKey)} <span style="color:var(--accent);font-size:10px">${items.length}</span></div>${cards}</div>`;
+  }).join('');
+}
+
+async function delAtrasada(id){
+  await sb.from('atrasadas').delete().eq('id',id);
+  atrasadas=atrasadas.filter(x=>x.id!==id);
+  updateStats();renderAtrasadas();
+  showToast('🗑 Removida','warn');
+}
+
+// ============================================================
 // HISTORY
 // ============================================================
 function renderHist(){
@@ -1217,28 +1204,6 @@ function updateSidebar(){
   document.getElementById('sidebar-av').style.background=currentUser.color;
   document.getElementById('sidebar-name').textContent=currentUser.name;
   document.getElementById('sidebar-role').textContent=currentUser.role;
-  renderSidebarMembers();
-}
-
-function renderSidebarMembers(){
-  const el=document.getElementById('sidebar-members-list');
-  if(!el||!currentUser)return;
-  const others=team.filter(m=>m.name!==currentUser.name);
-  if(!others.length){el.innerHTML='';return;}
-  el.innerHTML=others.map(m=>{
-    const unread=msgUnread[m.name]||0;
-    const isActive=activeChatUser&&activeChatUser.name===m.name;
-    const lastMsg=messages.filter(x=>(x.from_user===m.name&&x.to_user===currentUser.name)||(x.from_user===currentUser.name&&x.to_user===m.name)).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
-    const preview=lastMsg?(lastMsg.file_name?'📎 '+lastMsg.file_name:lastMsg.content||''):'Clique para conversar';
-    return`<div class="sidebar-member${isActive?' active':''}" onclick="goPage('messages',document.getElementById('nav-messages'));openChat('${m.name}')">
-      <div class="sav" style="background:${m.color}">${getInitials(m.name)}</div>
-      <div class="smeta">
-        <div class="sname">${m.name.split(' ')[0]}</div>
-        <div class="spreview">${preview.substring(0,28)}</div>
-      </div>
-      ${unread>0?`<span class="sbadge">${unread}</span>`:''}
-    </div>`;
-  }).join('');
 }
 
 // ============================================================
@@ -1256,68 +1221,85 @@ async function cycleStatus(id){
   renderTasks();showToast(newStatus==='Em Andamento'?'🔄 Em Andamento':'📋 Em Aberto','info');
 }
 
-async function completeTask(id){
-  const t=tasks.find(x=>x.id===id);if(!t)return;
-  const wasRecurring=t.recur&&t.recur!=='none';
+async function completeTask(id, fromAtrasadas=false){
+  // Busca em tasks ou atrasadas
+  const t = fromAtrasadas
+    ? atrasadas.find(x=>x.id===id)
+    : tasks.find(x=>x.id===id);
+  if(!t)return;
   const completedAt=new Date().toLocaleDateString('pt-BR');
-  // insert into hist
+  // Move para histórico
   const histItem={...t,id:genId(),status:'Concluída',completed_at:completedAt};
   delete histItem.sort_order;
+  delete histItem.moved_at;
   await sb.from('hist').insert(histItem);
   hist.unshift(histItem);
-  // delete from tasks
-  await sb.from('tasks').delete().eq('id',id);
-  tasks=tasks.filter(x=>x.id!==id);
-  if(wasRecurring){
-    const nt={...t,id:genId(),status:'Em Aberto',completed_at:null,subtasks:(t.subtasks||[]).map(s=>({...s,done:false})),sort_order:0};
-    nt.date=nextDate(t);
-    await sb.from('tasks').insert(nt);
-    tasks.unshift(nt);
-    showToast('✅ Concluída! Próxima criada.','success');
+  // Remove da origem (tasks ou atrasadas)
+  if(fromAtrasadas){
+    await sb.from('atrasadas').delete().eq('id',id);
+    atrasadas=atrasadas.filter(x=>x.id!==id);
   } else {
-    showToast('✅ Tarefa concluída!','success');
+    await sb.from('tasks').delete().eq('id',id);
+    tasks=tasks.filter(x=>x.id!==id);
   }
+  showToast('✅ Tarefa concluída!','success');
   updateStats();renderCurrentView();
 }
-function nextDate(t){const d=t.date?new Date(t.date+'T00:00:00'):new Date();if(t.recur==='daily')d.setDate(d.getDate()+1);else if(t.recur==='weekdays'){d.setDate(d.getDate()+1);while(d.getDay()===0||d.getDay()===6)d.setDate(d.getDate()+1);}else if(t.recur==='weekly')d.setDate(d.getDate()+7);else if(t.recur==='monthly')d.setMonth(d.getMonth()+1);else d.setDate(d.getDate()+1);return d.toISOString().split('T')[0];}
 
-// Cria ocorrências de hoje para tarefas recorrentes (independente de atrasadas)
+// Verifica se hoje é dia válido para uma recorrência
+function isTodayValidForRecur(recur, recurDays, recurStart, today){
+  const dow=today.getDay();
+  if(recur==='daily')return true;
+  if(recur==='weekdays')return dow>=1&&dow<=5;
+  if(recur==='weekly'){const orig=new Date(recurStart+'T00:00:00');return orig.getDay()===dow;}
+  if(recur==='monthly'){const orig=new Date(recurStart+'T00:00:00');return orig.getDate()===today.getDate();}
+  if(recur==='custom'&&recurDays&&recurDays.length){
+    const dayNames=['dom','seg','ter','qua','qui','sex','sab'];
+    return recurDays.includes(dayNames[dow]);
+  }
+  return false;
+}
+
+// Gera ocorrências recorrentes para HOJE (roda ao abrir o app)
 async function checkAndSpawnRecurring(){
   const todayStr=getTodayStr();
   const today=new Date(todayStr+'T00:00:00');
-  const dow=today.getDay();
-  // Busca tarefas-raiz recorrentes (não são de hoje)
-  const roots=tasks.filter(t=>t.recur&&t.recur!=='none'&&t.date!==todayStr);
-  const toCreate=[];
-  for(const t of roots){
-    // Já existe ocorrência para hoje?
-    const alreadyToday=tasks.some(x=>
-      (x.descricao===t.descricao)&&x.resp===t.resp&&x.recur===t.recur&&x.date===todayStr
-    );
-    if(alreadyToday)continue;
-    let ok=false;
-    if(t.recur==='daily')ok=true;
-    else if(t.recur==='weekdays')ok=(dow>=1&&dow<=5);
-    else if(t.recur==='weekly'){const s=new Date((t.recur_start||t.date)+'T00:00:00');ok=(s.getDay()===dow);}
-    else if(t.recur==='monthly'){const s=new Date((t.recur_start||t.date)+'T00:00:00');ok=(s.getDate()===today.getDate());}
-    else if(t.recur==='custom'&&t.recur_days&&t.recur_days.length){const dn=['dom','seg','ter','qua','qui','sex','sab'];ok=t.recur_days.includes(dn[dow]);}
-    if(!ok)continue;
-    toCreate.push({
-      ...t,
-      id:genId(),
-      status:'Em Aberto',
-      completed_at:null,
-      date:todayStr,
-      sort_order:tasks.length,
+  // Busca todas as tarefas recorrentes com data anterior a hoje
+  const bases=tasks.filter(t=>t.recur&&t.recur!=='none'&&t.date&&t.date<todayStr);
+  for(const t of bases){
+    const recurDays=Array.isArray(t.recur_days)?t.recur_days:[];
+    const recurStart=t.recur_start||t.date;
+    if(!isTodayValidForRecur(t.recur,recurDays,recurStart,today))continue;
+    // Verifica se já existe para hoje
+    const jaExiste=tasks.some(x=>x.descricao===t.descricao&&x.resp===t.resp&&x.recur===t.recur&&x.date===todayStr);
+    if(jaExiste)continue;
+    // Cria ocorrência para hoje
+    const newTask={
+      id:genId(),descricao:t.descricao,resp:t.resp,date:todayStr,
+      prio:t.prio,status:'Em Aberto',all_day:t.all_day,
+      time_start:t.time_start,time_end:t.time_end,tags:t.tags,
+      recur:t.recur,recur_days:t.recur_days,recur_start:recurStart,
       subtasks:(t.subtasks||[]).map(s=>({...s,done:false})),
-      recur_start:t.recur_start||t.date
-    });
+      notes:t.notes,is_meeting:t.is_meeting||false,sort_order:0
+    };
+    await sb.from('tasks').insert(newTask);
+    tasks.push(newTask);
   }
-  if(!toCreate.length)return;
-  // Insere no Supabase em paralelo
-  await Promise.all(toCreate.map(nt=>sb.from('tasks').insert(nt)));
-  tasks.push(...toCreate);
-  updateStats();renderCurrentView();
+}
+
+// Move tarefas NÃO recorrentes com data vencida para tabela atrasadas
+async function moveVencidasParaAtrasadas(){
+  const todayStr=getTodayStr();
+  const todayBR=new Date().toLocaleDateString('pt-BR');
+  const vencidas=tasks.filter(t=>t.date&&t.date<todayStr&&(!t.recur||t.recur==='none')&&t.status!=='Concluída');
+  for(const t of vencidas){
+    // Verifica se já está em atrasadas
+    const jaEsta=atrasadas.some(a=>a.id===t.id);
+    if(jaEsta)continue;
+    await sb.from('atrasadas').upsert({...t,status:'Atrasada',moved_at:todayBR});
+    await sb.from('tasks').delete().eq('id',t.id);
+    tasks=tasks.filter(x=>x.id!==t.id);
+  }
 }
 
 function delTask(id){
@@ -1379,19 +1361,22 @@ function editTask(id){
 function closeTaskModal(){document.getElementById('task-modal').style.display='none';}
 async function saveTask(){
   const descricao=document.getElementById('f-desc').value.trim();if(!descricao){showToast('⚠ Preencha a descrição','warn');return;}
-  const _date=document.getElementById('f-date').value;
+  const dateVal=document.getElementById('f-date').value;
   const taskData={
-    descricao,resp:document.getElementById('f-resp').value,date:_date,
+    descricao,resp:document.getElementById('f-resp').value,date:dateVal,
     prio:document.getElementById('f-prio').value,status:'Em Aberto',all_day:allDay,
     time_start:allDay?null:document.getElementById('f-time-start').value,
     time_end:allDay?null:document.getElementById('f-time-end').value,
     tags:[...selTags],recur:recurMode,recur_days:recurMode==='custom'?[...customDays]:[],
-    subtasks:modalSubs.map(s=>({...s})),notes:document.getElementById('f-notes').value.trim(),
-    recur_start:(recurMode&&recurMode!=='none')?_date:null
+    // recur_start guarda a data original da recorrência para cálculo de dia da semana/mês
+    recur_start:recurMode!=='none'?dateVal:null,
+    subtasks:modalSubs.map(s=>({...s})),notes:document.getElementById('f-notes').value.trim()
   };
   if(editTaskId){
     const existing=tasks.find(x=>x.id===editTaskId);
     taskData.status=existing?existing.status:'Em Aberto';
+    // Preserva recur_start original se já existia
+    if(existing&&existing.recur_start)taskData.recur_start=existing.recur_start;
     await sb.from('tasks').update(taskData).eq('id',editTaskId);
     const idx=tasks.findIndex(x=>x.id===editTaskId);
     if(idx>-1)tasks[idx]={...tasks[idx],...taskData};
@@ -1557,7 +1542,7 @@ function toggleAllParts(){meetParts=meetParts.length===team.length?[]:team.map(m
 // ============================================================
 // PAGE NAVIGATION
 // ============================================================
-const PI={tasks:['Minhas Tarefas','Visualize em Lista, Kanban ou Agenda'],team:['Equipe','Membros e produtividade'],history:['Histórico','Tarefas concluídas'],meetings:['Reuniões','Compromissos agendados'],messages:['Mensagens','Conversas diretas']};
+const PI={tasks:['Minhas Tarefas','Visualize em Lista, Kanban ou Agenda'],team:['Equipe','Membros e produtividade'],history:['Histórico','Tarefas concluídas'],atrasadas:['Atrasadas','Tarefas que passaram do prazo'],meetings:['Reuniões','Compromissos agendados'],messages:['Mensagens','Conversas diretas']};
 function goPage(page,el,skipNav){
   if(!skipNav){document.querySelectorAll('.ni').forEach(n=>n.classList.remove('active'));if(el)el.classList.add('active');}
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.getElementById('page-'+page).classList.add('active');
@@ -1571,13 +1556,8 @@ function goPage(page,el,skipNav){
   else if(page==='meetings'){mb.textContent='+ Nova Reunião';mb.onclick=openMeetModal;mb.style.display='';}
   else mb.style.display='none';
   if(page==='team')renderTeam();
-  if(page==='messages'){
-    renderConvList();
-    // Abre automaticamente a primeira conversa
-    const others=team.filter(m=>m.name!==currentUser.name);
-    if(others.length&&!activeChatUser)openChat(others[0].name);
-  }
   if(page==='history'){const hs=document.getElementById('hist-scope');if(hs)hs.value='mine';renderHist();}
+  if(page==='atrasadas')renderAtrasadas();
   if(page==='meetings')renderMeets();
   if(page==='tasks'){
     if(!dateFilter){dateFilter=getTodayStr();const inp=document.getElementById('date-filter-input');if(inp)inp.value=dateFilter;}
@@ -1611,201 +1591,6 @@ document.addEventListener('click',e=>{
 // ============================================================
 // BOOT
 // ============================================================
-// ============================================================
-// CHAT / MESSAGES
-// ============================================================
-function renderConvList(){
-  const el=document.getElementById('conv-list');
-  if(!el)return;
-  const others=team.filter(m=>m.name!==currentUser.name);
-  if(!others.length){el.innerHTML='<div style="padding:20px;text-align:center;font-size:12px;color:var(--text3)">Nenhum membro na equipe ainda.</div>';return;}
-  el.innerHTML=others.map(m=>{
-    const unread=msgUnread[m.name]||0;
-    const isActive=activeChatUser&&activeChatUser.name===m.name;
-    const lastMsg=messages.filter(x=>(x.from_user===m.name&&x.to_user===currentUser.name)||(x.from_user===currentUser.name&&x.to_user===m.name)).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
-    const preview=lastMsg?(lastMsg.file_name?'📎 '+lastMsg.file_name:lastMsg.content):'Clique para conversar';
-    return`<div class="conv-item${isActive?' active':''}" onclick="openChat('${m.name}')">
-      <div class="avsm" style="background:${m.color};width:36px;height:36px;border-radius:50%;font-size:13px;font-weight:700;color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0">${getInitials(m.name)}</div>
-      <div class="conv-info">
-        <div class="conv-name">${m.name}</div>
-        <div class="conv-preview">${preview.substring(0,40)}</div>
-      </div>
-      ${unread>0?`<span class="conv-badge">${unread}</span>`:''}
-    </div>`;
-  }).join('');
-}
-
-async function openChat(userName){
-  const member=team.find(m=>m.name===userName);
-  if(!member)return;
-  activeChatUser=member;
-  // Marcar como lido
-  if(msgUnread[userName]){
-    await sb.from('messages').update({read:true}).eq('from_user',userName).eq('to_user',currentUser.name).eq('read',false);
-    msgUnread[userName]=0;
-    updateUnreadBadge();
-  }
-  // Carregar mensagens desta conversa
-  const {data}=await sb.from('messages').select('*')
-    .or(`and(from_user.eq.${currentUser.name},to_user.eq.${userName}),and(from_user.eq.${userName},to_user.eq.${currentUser.name})`)
-    .order('created_at',{ascending:true});
-  messages=data||[];
-  // Header
-  document.getElementById('chat-header-av').textContent=getInitials(member.name);
-  document.getElementById('chat-header-av').style.background=member.color;
-  document.getElementById('chat-header-name').textContent=member.name;
-  document.getElementById('chat-header-role').textContent=member.role||'Membro';
-  document.getElementById('chat-empty').style.display='none';
-  const chatActive=document.getElementById('chat-active');
-  chatActive.style.display='flex';
-  renderMessages();
-  renderConvList();
-  // Realtime subscription
-  if(chatChannel)sb.removeChannel(chatChannel);
-  const chanKey='chat_'+[currentUser.name,userName].sort().join('_');
-  chatChannel=sb.channel(chanKey)
-    .on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},(payload)=>{
-      const msg=payload.new;
-      const isRelevant=(msg.from_user===currentUser.name&&msg.to_user===userName)||(msg.from_user===userName&&msg.to_user===currentUser.name);
-      if(!isRelevant)return;
-      // Evitar duplicata (msg enviada por mim já foi adicionada localmente)
-      if(messages.find(m=>m.id===msg.id))return;
-      messages.push(msg);
-      if(msg.from_user!==currentUser.name){
-        sb.from('messages').update({read:true}).eq('id',msg.id);
-      }
-      renderMessages();
-      renderConvList();
-    }).subscribe();
-}
-
-function renderMessages(){
-  const el=document.getElementById('chat-msgs');
-  if(!el)return;
-  if(!messages.length){el.innerHTML='<div style="text-align:center;padding:30px;font-size:12px;color:var(--text3)">Nenhuma mensagem ainda. Diga olá! 👋</div>';return;}
-  let lastDate='';
-  el.innerHTML=messages.map(msg=>{
-    const isMine=msg.from_user===currentUser.name;
-    const d=new Date(msg.created_at);
-    const dateStr=d.toLocaleDateString('pt-BR');
-    const timeStr=d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-    let dateSep='';
-    if(dateStr!==lastDate){
-      lastDate=dateStr;
-      const label=dateStr===new Date().toLocaleDateString('pt-BR')?'Hoje':dateStr;
-      dateSep=`<div class="msg-date-sep">${label}</div>`;
-    }
-    let bubbleContent='';
-    if(msg.file_url){
-      const isImage=msg.file_type&&msg.file_type.startsWith('image/');
-      if(isImage){
-        bubbleContent=`${msg.content?`<div style="margin-bottom:6px">${msg.content}</div>`:''}
-          <img src="${msg.file_url}" class="msg-img" onclick="window.open('${msg.file_url}','_blank')" alt="${msg.file_name}">`;
-      } else {
-        const icon=msg.file_type&&msg.file_type.includes('pdf')?'📄':msg.file_type&&msg.file_type.includes('sheet')?'📊':'📎';
-        bubbleContent=`${msg.content?`<div style="margin-bottom:6px">${msg.content}</div>`:''}
-          <a href="${msg.file_url}" target="_blank" class="msg-file" download="${msg.file_name}">
-            <span class="msg-file-icon">${icon}</span>
-            <span class="msg-file-name">${msg.file_name}</span>
-          </a>`;
-      }
-    } else {
-      bubbleContent=msg.content||'';
-    }
-    const senderName=isMine?'Você':msg.from_user.split(' ')[0];
-    return`${dateSep}<div class="msg-row ${isMine?'mine':'theirs'}">
-      <div class="msg-wrap">
-        <div class="msg-sender">${senderName}</div>
-        <div class="msg-bubble">${bubbleContent}</div>
-        <span class="msg-time">${timeStr}</span>
-      </div>
-    </div>`;
-  }).join('');
-  el.scrollTop=el.scrollHeight;
-}
-
-async function sendMessage(){
-  const input=document.getElementById('chat-input');
-  const text=input.value.trim();
-  if(!text&&!pendingFile)return;
-  if(!activeChatUser)return;
-  let fileUrl=null,fileName=null,fileType=null;
-  if(pendingFile){
-    const ext=pendingFile.name.split('.').pop();
-    const path=`${currentUser.name}/${Date.now()}.${ext}`;
-    const {data:upData,error:upErr}=await sb.storage.from('chat-files').upload(path,pendingFile,{contentType:pendingFile.type});
-    if(upErr){showToast('Erro ao enviar arquivo','error');return;}
-    const {data:urlData}=sb.storage.from('chat-files').getPublicUrl(path);
-    fileUrl=urlData.publicUrl;
-    fileName=pendingFile.name;
-    fileType=pendingFile.type;
-    clearAttach();
-  }
-  const msg={id:genId(),from_user:currentUser.name,to_user:activeChatUser.name,content:text||null,file_url:fileUrl,file_name:fileName,file_type:fileType,read:false,created_at:new Date().toISOString()};
-  input.value='';input.style.height='auto';
-  // Adicionar localmente de imediato para UX instantânea
-  messages.push(msg);
-  renderMessages();
-  renderConvList();
-  await sb.from('messages').insert(msg);
-}
-
-function handleFileSelect(input){
-  const file=input.files[0];
-  if(!file)return;
-  if(file.size>10*1024*1024){showToast('Arquivo muito grande (máx 10MB)','warn');return;}
-  pendingFile=file;
-  const isImage=file.type.startsWith('image/');
-  const icon=isImage?'🖼️':file.type.includes('pdf')?'📄':file.type.includes('sheet')?'📊':'📎';
-  document.getElementById('attach-icon').textContent=icon;
-  document.getElementById('attach-name').textContent=file.name;
-  document.getElementById('attach-preview').style.display='flex';
-  input.value='';
-}
-
-function clearAttach(){
-  pendingFile=null;
-  document.getElementById('attach-preview').style.display='none';
-  document.getElementById('attach-name').textContent='';
-}
-
-function updateUnreadBadge(){
-  const total=Object.values(msgUnread).reduce((a,b)=>a+b,0);
-  const nb=document.getElementById('nb-msgs');
-  if(nb){nb.textContent=total;nb.style.display=total>0?'':'none';}
-  renderConvList();
-  renderSidebarMembers();
-}
-
-// Realtime global para receber msgs de qualquer usuário
-function requestNotifPermission(){
-  if('Notification' in window && Notification.permission==='default'){
-    Notification.requestPermission();
-  }
-}
-
-function sendBrowserNotif(title, body){
-  if('Notification' in window && Notification.permission==='granted' && document.hidden){
-    const n=new Notification(title,{body,icon:'https://pulse-agenda.vercel.app/favicon.ico',tag:'pulse-msg'});
-    n.onclick=()=>{window.focus();n.close();};
-    setTimeout(()=>n.close(),5000);
-  }
-}
-
-function subscribeGlobalMessages(){
-  sb.channel('global_msgs_'+currentUser.name)
-    .on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},(payload)=>{
-      const msg=payload.new;
-      if(msg.to_user!==currentUser.name)return;
-      if(activeChatUser&&msg.from_user===activeChatUser.name)return;
-      msgUnread[msg.from_user]=(msgUnread[msg.from_user]||0)+1;
-      updateUnreadBadge();
-      const preview=(msg.file_name?'📎 '+msg.file_name:msg.content||'').substring(0,60);
-      showToast('💬 '+msg.from_user+': '+preview,'info');
-      sendBrowserNotif('💬 '+msg.from_user, preview);
-    }).subscribe();
-}
-
 async function boot(){
   buildSignupAvatars();
   const savedEmail=localStorage.getItem('pulse_session');
