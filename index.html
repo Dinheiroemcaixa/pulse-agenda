@@ -732,6 +732,7 @@ function groupLabel(dateStr){
   return MO[d.getMonth()]+' '+d.getFullYear();
 }
 function hashPass(p){let h=0;for(let i=0;i<p.length;i++)h=(h*31+p.charCodeAt(i))>>>0;return h.toString(36);}
+function isAdmin(){return currentUser&&currentUser.is_admin===true;}
 function showToast(msg,type='info'){const t=document.getElementById('toast');t.textContent=msg;t.className='toast '+type;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2800);}
 function genId(){return 'id_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);}
 
@@ -836,6 +837,7 @@ async function launchApp(){
   document.getElementById('loading-screen').style.display='none';
   document.getElementById('app').style.display='flex';
   viewingAll=false;memberFilter=currentUser.name;
+  if(!isAdmin()){document.getElementById('scope-toggle-btn').style.display='none';}
   dateFilter=getTodayStr();
   const dfInp=document.getElementById('date-filter-input');if(dfInp)dfInp.value=dateFilter;
   updateSidebar();updateStats();renderTagFilterBar();renderScopeBanner();
@@ -846,6 +848,7 @@ async function launchApp(){
 // SCOPE
 // ============================================================
 function toggleScope(){
+  if(!isAdmin())return;
   viewingAll=!viewingAll;memberFilter=viewingAll?'all':currentUser.name;
   renderScopeBanner();renderCurrentView();updateStats();
   document.getElementById('mf-bar').style.display=viewingAll?'flex':'none';
@@ -857,6 +860,7 @@ function renderScopeBanner(){
   const btn=document.getElementById('scope-toggle-btn');
   if(viewingAll){banner.className='scope-banner team-mode';text.textContent='👥 Mostrando tarefas de toda a equipe';btn.textContent='Ver só as minhas';}
   else{banner.className='scope-banner';text.textContent='📋 Mostrando apenas suas tarefas';btn.textContent='Ver toda a equipe';}
+  document.getElementById('scope-toggle-btn').style.display=isAdmin()?'':'none';
 }
 
 // ============================================================
@@ -1104,7 +1108,8 @@ function renderAtrasadas(){
   const sq=(document.getElementById('atrasadas-search')||{}).value||'';
   const scope=(document.getElementById('atrasadas-scope')||{}).value||'mine';
   let list=[...atrasadas];
-  if(scope==='mine')list=list.filter(a=>a.resp===currentUser.name);
+  const aScope=isAdmin()?scope:'mine';
+  if(aScope==='mine')list=list.filter(a=>a.resp===currentUser.name);
   if(sq)list=list.filter(a=>a.descricao.toLowerCase().includes(sq.toLowerCase()));
   if(!list.length){
     el.innerHTML=`<div class="es"><div class="ei">🎉</div><div class="et">Nenhuma tarefa atrasada!</div><div style="color:var(--text3);font-size:13px">Tudo em dia por aqui.</div></div>`;
@@ -1158,7 +1163,8 @@ function renderHist(){
   const period=parseInt((document.getElementById('hist-period')||{}).value)||0;
   const scope=(document.getElementById('hist-scope')||{}).value||'mine';
   let list=[...hist];
-  if(scope==='mine')list=list.filter(t=>t.resp===currentUser.name);
+  const effectiveScope=isAdmin()?scope:'mine';
+  if(effectiveScope==='mine')list=list.filter(t=>t.resp===currentUser.name);
   if(sq)list=list.filter(t=>t.descricao.toLowerCase().includes(sq.toLowerCase()));
   if(period>0){const cutoff=new Date();cutoff.setDate(cutoff.getDate()-period);cutoff.setHours(0,0,0,0);list=list.filter(t=>{const d=parseBrDate(t.completed_at);return d&&d>=cutoff;});}
 
@@ -1180,7 +1186,7 @@ function renderHist(){
   const chartEl=document.getElementById('hist-chart');
   if(chartEl){
     const days=14;const bars=[];
-    for(let i=days-1;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);d.setHours(0,0,0,0);const label=d.getDate()+'/'+(d.getMonth()+1);const dStr=d.toLocaleDateString('pt-BR');const count=hist.filter(t=>t.completed_at===dStr&&(scope==='mine'?t.resp===currentUser.name:true)).length;bars.push({label,count});}
+    for(let i=days-1;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);d.setHours(0,0,0,0);const label=d.getDate()+'/'+(d.getMonth()+1);const dStr=d.toLocaleDateString('pt-BR');const count=hist.filter(t=>t.completed_at===dStr&&(!isAdmin()||scope==='mine'?t.resp===currentUser.name:true)).length;bars.push({label,count});}
     const max=Math.max(...bars.map(b=>b.count),1);
     chartEl.innerHTML=`<div class="hist-chart-title">📊 Concluídas — últimos 14 dias</div><div class="hist-chart-bars">${bars.map(b=>`<div class="hist-bar-wrap"><div class="hist-bar-val">${b.count>0?b.count:''}</div><div class="hist-bar" style="height:${Math.max(b.count/max*72,b.count>0?8:2)}px;background:${b.count>0?'var(--accent)':'var(--border)'}"></div><div class="hist-bar-label">${b.label}</div></div>`).join('')}</div>`;
   }
@@ -1207,8 +1213,9 @@ function renderHist(){
 // ============================================================
 function renderMeets(){
   const el=document.getElementById('meet-list');
-  if(!meets.length){el.innerHTML='<div class="es"><div class="ei">📅</div><div class="et">Nenhuma reunião agendada</div></div>';return;}
-  el.innerHTML=meets.map((m,i)=>`<div class="tr" style="grid-template-columns:1fr 160px 100px 85px 70px;align-items:start">
+  const myMeets=isAdmin()?meets:meets.filter(m=>m.parts&&m.parts.split(', ').includes(currentUser.name));
+  if(!myMeets.length){el.innerHTML='<div class="es"><div class="ei">📅</div><div class="et">Nenhuma reunião agendada</div></div>';return;}
+  el.innerHTML=myMeets.map((m,i)=>`<div class="tr" style="grid-template-columns:1fr 160px 100px 85px 70px;align-items:start">
     <div><div class="tn">${m.title}</div>${m.notes?`<div class="notes-display" style="margin-top:6px;font-size:11px">${m.notes.replace(/\n/g,'<br>')}</div>`:''}</div>
     <div style="font-size:12px;color:var(--text2);padding-top:2px">${m.parts}</div>
     <div class="dc" style="padding-top:2px">📅 ${fDate(m.date)}</div>
@@ -1606,7 +1613,7 @@ async function saveMeet(){
   const date=document.getElementById('mt-date').value;const time=document.getElementById('mt-time').value;const notes=document.getElementById('mt-notes').value.trim();
   const parts=meetParts.length>0?meetParts:[currentUser.name];
   const meetId=genId();
-  const newMeet={id:meetId,title,parts:parts.join(', '),date,time,notes};
+  const newMeet={id:meetId,title,parts:parts.join(', '),date,time,notes,created_by:currentUser.name};
   await sb.from('meets').insert(newMeet);meets.unshift(newMeet);
   // ensure tag Reunião exists
   if(!customTags.find(t=>t.name==='Reunião')){
@@ -1652,7 +1659,8 @@ async function salvarBackup(label){
     backup_date:todayStr,
     backup_label:label||'Manual — '+new Date().toLocaleDateString('pt-BR'),
     tasks_json:tasks,
-    atrasadas_json:atrasadas
+    atrasadas_json:atrasadas,
+    created_by:currentUser?currentUser.name:null
   };
   const {data,error}=await sb.from('backup_tasks').insert(payload).select('id,backup_date,backup_label,created_at').single();
   if(error){console.error('Erro ao salvar backup:',error);return;}
@@ -1706,11 +1714,12 @@ async function excluirBackup(backupId){
 
 function renderBackup(){
   const el=document.getElementById('backup-list');if(!el)return;
-  if(!backups.length){
+  const myBackups=isAdmin()?backups:backups.filter(b=>!b.created_by||b.created_by===currentUser.name);
+  if(!myBackups.length){
     el.innerHTML='<div class="hist-empty"><div style="font-size:40px;opacity:.3">🗄</div><div style="font-size:14px;font-weight:600;color:var(--text2);margin-top:10px">Nenhum backup ainda</div><div style="font-size:12px;color:var(--text3);margin-top:6px">O backup automático será criado ao abrir o app amanhã</div></div>';
     return;
   }
-  el.innerHTML=backups.map(b=>{
+  el.innerHTML=myBackups.map(b=>{
     const dt=new Date(b.created_at);
     const dtStr=dt.toLocaleDateString('pt-BR')+' às '+dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
     const isAuto=b.backup_label&&b.backup_label.startsWith('Automático');
@@ -1745,7 +1754,7 @@ function goPage(page,el,skipNav){
   else if(page==='meetings'){mb.textContent='+ Nova Reunião';mb.onclick=openMeetModal;mb.style.display='';}
   else mb.style.display='none';
   if(page==='team')renderTeam();
-  if(page==='history'){const hs=document.getElementById('hist-scope');if(hs)hs.value='mine';renderHist();}
+  if(page==='history'){const hs=document.getElementById('hist-scope');if(hs){hs.value='mine';hs.style.display=isAdmin()?'':'none';}const as=document.getElementById('atrasadas-scope');if(as)as.style.display=isAdmin()?'':'none';renderHist();}
   if(page==='atrasadas')renderAtrasadas();
   if(page==='meetings')renderMeets();
   if(page==='backup')renderBackup();
