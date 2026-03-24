@@ -1386,21 +1386,40 @@ async function saveTask(){
     recur_start:recurMode!=='none'?dateVal:null,
     subtasks:modalSubs.map(s=>({...s})),notes:document.getElementById('f-notes').value.trim()
   };
+  const todayStr=getTodayStr();
+  const isVencida=dateVal&&dateVal<todayStr&&(!recurMode||recurMode==='none');
   if(editTaskId){
     const existing=tasks.find(x=>x.id===editTaskId);
     taskData.status=existing?existing.status:'Em Aberto';
-    // Preserva recur_start original se já existia
     if(existing&&existing.recur_start)taskData.recur_start=existing.recur_start;
-    await sb.from('tasks').update(taskData).eq('id',editTaskId);
-    const idx=tasks.findIndex(x=>x.id===editTaskId);
-    if(idx>-1)tasks[idx]={...tasks[idx],...taskData};
-    showToast('✏ Atualizada!','success');
+    if(isVencida){
+      // Move direto para atrasadas
+      await sb.from('atrasadas').upsert({...taskData,id:editTaskId,status:'Atrasada',moved_at:new Date().toLocaleDateString('pt-BR')});
+      await sb.from('tasks').delete().eq('id',editTaskId);
+      tasks=tasks.filter(x=>x.id!==editTaskId);
+      const {data:att}=await sb.from('atrasadas').select('*').order('date',{ascending:true});
+      atrasadas=att||[];
+      showToast('⚠ Data vencida — tarefa movida para Atrasadas','warn');
+    } else {
+      await sb.from('tasks').update(taskData).eq('id',editTaskId);
+      const idx=tasks.findIndex(x=>x.id===editTaskId);
+      if(idx>-1)tasks[idx]={...tasks[idx],...taskData};
+      showToast('✏ Atualizada!','success');
+    }
   } else {
     const id=genId();
-    const newTask={...taskData,id,sort_order:tasks.length};
-    await sb.from('tasks').insert(newTask);
-    tasks.push(newTask);
-    showToast('✅ Criada!','success');
+    if(isVencida){
+      // Cria direto em atrasadas
+      const newAtrasada={...taskData,id,status:'Atrasada',moved_at:new Date().toLocaleDateString('pt-BR'),sort_order:0};
+      await sb.from('atrasadas').insert(newAtrasada);
+      atrasadas.unshift(newAtrasada);
+      showToast('⚠ Data vencida — tarefa criada em Atrasadas','warn');
+    } else {
+      const newTask={...taskData,id,sort_order:tasks.length};
+      await sb.from('tasks').insert(newTask);
+      tasks.push(newTask);
+      showToast('✅ Criada!','success');
+    }
   }
   updateStats();renderCurrentView();closeTaskModal();
 }
