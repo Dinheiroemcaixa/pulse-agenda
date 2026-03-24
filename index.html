@@ -805,8 +805,6 @@ async function launchApp(){
   atrasadas=atrasadasRes.data||[];
   // Gera ocorrências recorrentes para hoje se necessário
   await checkAndSpawnRecurring();
-  // Move tarefas não recorrentes vencidas para atrasadas
-  await moveVencidasParaAtrasadas();
   // Recarrega tasks após spawns
   const {data:tasksAtt}=await sb.from('tasks').select('*').order('sort_order',{ascending:true});
   tasks=tasksAtt||[];
@@ -1301,20 +1299,7 @@ async function checkAndSpawnRecurring(){
   }
 }
 
-// Move tarefas NÃO recorrentes com data vencida para tabela atrasadas
-async function moveVencidasParaAtrasadas(){
-  const todayStr=getTodayStr();
-  const todayBR=new Date().toLocaleDateString('pt-BR');
-  const vencidas=tasks.filter(t=>t.date&&t.date<todayStr&&(!t.recur||t.recur==='none')&&t.status!=='Concluída');
-  for(const t of vencidas){
-    // Verifica se já está em atrasadas
-    const jaEsta=atrasadas.some(a=>a.id===t.id);
-    if(jaEsta)continue;
-    await sb.from('atrasadas').upsert({...t,status:'Atrasada',moved_at:todayBR});
-    await sb.from('tasks').delete().eq('id',t.id);
-    tasks=tasks.filter(x=>x.id!==t.id);
-  }
-}
+// Movimentação para atrasadas agora é feita pelo trigger do banco (fn_check_task_date)
 
 function delTask(id){
   const t=tasks.find(x=>x.id===id);if(!t)return;
@@ -1376,51 +1361,35 @@ function closeTaskModal(){document.getElementById('task-modal').style.display='n
 async function saveTask(){
   const descricao=document.getElementById('f-desc').value.trim();if(!descricao){showToast('⚠ Preencha a descrição','warn');return;}
   const dateVal=document.getElementById('f-date').value;
+  const todayStr=getTodayStr();
+  const isVencida=dateVal&&dateVal<todayStr;
   const taskData={
     descricao,resp:document.getElementById('f-resp').value,date:dateVal,
     prio:document.getElementById('f-prio').value,status:'Em Aberto',all_day:allDay,
     time_start:allDay?null:document.getElementById('f-time-start').value,
     time_end:allDay?null:document.getElementById('f-time-end').value,
     tags:[...selTags],recur:recurMode,recur_days:recurMode==='custom'?[...customDays]:[],
-    // recur_start guarda a data original da recorrência para cálculo de dia da semana/mês
     recur_start:recurMode!=='none'?dateVal:null,
     subtasks:modalSubs.map(s=>({...s})),notes:document.getElementById('f-notes').value.trim()
   };
-  const todayStr=getTodayStr();
-  const isVencida=dateVal&&dateVal<todayStr&&(!recurMode||recurMode==='none');
   if(editTaskId){
     const existing=tasks.find(x=>x.id===editTaskId);
     taskData.status=existing?existing.status:'Em Aberto';
     if(existing&&existing.recur_start)taskData.recur_start=existing.recur_start;
-    if(isVencida){
-      // Move direto para atrasadas
-      await sb.from('atrasadas').upsert({...taskData,id:editTaskId,status:'Atrasada',moved_at:new Date().toLocaleDateString('pt-BR')});
-      await sb.from('tasks').delete().eq('id',editTaskId);
-      tasks=tasks.filter(x=>x.id!==editTaskId);
-      const {data:att}=await sb.from('atrasadas').select('*').order('date',{ascending:true});
-      atrasadas=att||[];
-      showToast('⚠ Data vencida — tarefa movida para Atrasadas','warn');
-    } else {
-      await sb.from('tasks').update(taskData).eq('id',editTaskId);
-      const idx=tasks.findIndex(x=>x.id===editTaskId);
-      if(idx>-1)tasks[idx]={...tasks[idx],...taskData};
-      showToast('✏ Atualizada!','success');
-    }
+    await sb.from('tasks').update(taskData).eq('id',editTaskId);
+    showToast(isVencida?'⚠ Data vencida — movida para Atrasadas':'✏ Atualizada!',isVencida?'warn':'success');
   } else {
     const id=genId();
-    if(isVencida){
-      // Cria direto em atrasadas
-      const newAtrasada={...taskData,id,status:'Atrasada',moved_at:new Date().toLocaleDateString('pt-BR'),sort_order:0};
-      await sb.from('atrasadas').insert(newAtrasada);
-      atrasadas.unshift(newAtrasada);
-      showToast('⚠ Data vencida — tarefa criada em Atrasadas','warn');
-    } else {
-      const newTask={...taskData,id,sort_order:tasks.length};
-      await sb.from('tasks').insert(newTask);
-      tasks.push(newTask);
-      showToast('✅ Criada!','success');
-    }
+    await sb.from('tasks').insert({...taskData,id,sort_order:tasks.length});
+    showToast(isVencida?'⚠ Data vencida — criada em Atrasadas':'✅ Criada!',isVencida?'warn':'success');
   }
+  // Recarrega tasks e atrasadas do banco (trigger já tratou tudo)
+  const [{data:tasksAtt},{data:atrasadasAtt}]=await Promise.all([
+    sb.from('tasks').select('*').order('sort_order',{ascending:true}),
+    sb.from('atrasadas').select('*').order('date',{ascending:true})
+  ]);
+  tasks=tasksAtt||[];
+  atrasadas=atrasadasAtt||[];
   updateStats();renderCurrentView();closeTaskModal();
 }
 
