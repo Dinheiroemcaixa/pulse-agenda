@@ -431,7 +431,7 @@ select.fi option{background:var(--bg3)}
     </div>
     <div class="ni" id="nav-history" onclick="goPage('history',this)">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 4v4l2.5 2"/></svg>
-      Histórico <span class="nb blue" id="nb-hist" style="display:none">0</span>
+      Histórico
     </div>
     <div class="ni" id="nav-meetings" onclick="goPage('meetings',this)">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="2" width="14" height="12" rx="2"/><path d="M1 6h14M5 1v2M11 1v2"/></svg>
@@ -876,7 +876,6 @@ function updateStats(){
   document.getElementById('s-late').textContent=myAtrasadas.length;
   document.getElementById('s-done').textContent=doneToday.length;
   const nl=document.getElementById('nb-late');myAtrasadas.length>0?(nl.style.display='',nl.textContent=myAtrasadas.length):nl.style.display='none';
-  const nh=document.getElementById('nb-hist');hist.length>0?(nh.style.display='',nh.textContent=hist.length):nh.style.display='none';
   document.getElementById('nb-team').textContent=team.length;
   // Badge atrasadas no sidebar
   const na=document.getElementById('nb-atrasadas');
