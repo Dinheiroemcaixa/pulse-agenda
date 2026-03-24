@@ -1289,6 +1289,10 @@ function nextDate(t){const d=t.date?new Date(t.date+'T00:00:00'):new Date();if(t
 
 async function reopenTask(histId){
   const h=hist.find(x=>x.id===histId);if(!h)return;
+  // Reajusta sort_order de todas as tarefas para abrir espaço no topo (sort_order+1)
+  const updates=tasks.map(tk=>sb.from('tasks').update({sort_order:(tk.sort_order||0)+1}).eq('id',tk.id));
+  await Promise.all(updates);
+  tasks.forEach(tk=>{tk.sort_order=(tk.sort_order||0)+1;});
   const taskData={
     id:genId(),descricao:h.descricao,resp:h.resp,date:getTodayStr(),
     prio:h.prio||'Média',status:'Em Aberto',all_day:h.all_day!==undefined?h.all_day:true,
@@ -1301,7 +1305,7 @@ async function reopenTask(histId){
   if(insErr){showToast('❌ Erro ao reabrir: '+insErr.message,'error');return;}
   const {error:delErr}=await sb.from('hist').delete().eq('id',histId);
   if(delErr){console.error('Erro ao remover do hist:',delErr);}
-  tasks.push(taskData);
+  tasks.unshift(taskData);
   hist=hist.filter(x=>x.id!==histId);
   updateStats();renderHist();showToast('↩ Tarefa reaberta!','info');
 }
