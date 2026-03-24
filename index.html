@@ -1378,7 +1378,7 @@ async function checkAndSpawnRecurring(){
       time_start:t.time_start,time_end:t.time_end,tags:t.tags,
       recur:t.recur,recur_days:t.recur_days,recur_start:recurStart,
       subtasks:(t.subtasks||[]).map(s=>({...s,done:false})),
-      notes:t.notes,is_meeting:t.is_meeting||false,sort_order:0
+      notes:t.notes,is_meeting:t.is_meeting||false,sort_order:t.sort_order
     };
     await sb.from('tasks').insert(newTask);
     tasks.push(newTask);
