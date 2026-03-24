@@ -1165,6 +1165,7 @@ function renderHist(){
   const groups={};list.forEach(t=>{const g=groupLabel(t.completed_at);if(!groups[g])groups[g]=[];groups[g].push(t);});
   const gOrder=['Hoje','Ontem','Essa semana','Este mês'];
   const sorted=[...gOrder.filter(g=>groups[g]),...Object.keys(groups).filter(g=>!gOrder.includes(g)).sort((a,b)=>b.localeCompare(a))];
+  const todayBR=new Date().toLocaleDateString('pt-BR');
   el.innerHTML=sorted.map(gname=>{
     const items=groups[gname];
     const cards=items.map(t=>{
@@ -1172,10 +1173,36 @@ function renderHist(){
       const dur=daysBetween(t.date?new Date(t.date+'T00:00:00'):null,parseBrDate(t.completed_at));
       const durLabel=dur===null?'':(dur===0?'No mesmo dia':`${dur} dia${dur!==1?'s':''}`);
       const onTime=t.date&&parseBrDate(t.completed_at)?parseBrDate(t.completed_at)<=new Date(t.date+'T00:00:00'):null;
-      return`<div class="hist-card"><div class="hist-card-check">✓</div><div class="hist-card-body"><div class="hist-card-title">${t.descricao}</div><div class="hist-card-meta"><div class="asgn"><div class="avsm" style="background:${mc};width:18px;height:18px;font-size:8px">${getInitials(t.resp)}</div><span style="font-size:11px;color:var(--text2)">${t.resp.split(' ')[0]}</span></div>${tagsHtml(t.tags)}${onTime===true?'<span style="font-size:10px;background:var(--greenbg);color:var(--green);border-radius:3px;padding:1px 6px;font-weight:700">✓ No prazo</span>':onTime===false?'<span style="font-size:10px;background:var(--redbg);color:var(--red);border-radius:3px;padding:1px 6px;font-weight:700">✗ Atrasada</span>':''}</div>${t.notes?`<div class="hist-card-notes">📝 ${t.notes}</div>`:''}</div><div class="hist-card-right"><div class="hist-card-date">✅ ${t.completed_at||'—'}</div>${durLabel?`<div class="hist-card-duration">${durLabel}</div>`:''}</div></div>`;
+      const isToday=t.completed_at===todayBR;
+      // Subtarefas
+      const subs=t.subtasks&&t.subtasks.length?`<div style="margin-top:8px;display:flex;flex-direction:column;gap:3px">${t.subtasks.map(s=>`<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3)"><div style="width:13px;height:13px;border-radius:3px;background:${s.done?'var(--green)':'var(--border)'};display:flex;align-items:center;justify-content:center;flex-shrink:0">${s.done?'<span style="color:#fff;font-size:8px;font-weight:700">✓</span>':''}</div><span style="${s.done?'text-decoration:line-through;opacity:.5':''}">${s.text}</span></div>`).join('')}</div>`:'';
+      // Botão reabrir só para concluídas hoje
+      const reabrirBtn=isToday?`<button onclick="reabrirTask('${t.id}')" style="background:var(--orangebg);border:1px solid var(--orange);border-radius:6px;padding:3px 9px;color:var(--orange);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap">↩ Reabrir</button>`:'';
+      return`<div class="hist-card"><div class="hist-card-check">✓</div><div class="hist-card-body"><div class="hist-card-title">${t.descricao}</div><div class="hist-card-meta"><div class="asgn"><div class="avsm" style="background:${mc};width:18px;height:18px;font-size:8px">${getInitials(t.resp)}</div><span style="font-size:11px;color:var(--text2)">${t.resp.split(' ')[0]}</span></div>${tagsHtml(t.tags)}${onTime===true?'<span style="font-size:10px;background:var(--greenbg);color:var(--green);border-radius:3px;padding:1px 6px;font-weight:700">✓ No prazo</span>':onTime===false?'<span style="font-size:10px;background:var(--redbg);color:var(--red);border-radius:3px;padding:1px 6px;font-weight:700">✗ Atrasada</span>':''}</div>${t.notes?`<div class="hist-card-notes">📝 ${t.notes}</div>`:''}${subs}</div><div class="hist-card-right"><div class="hist-card-date">✅ ${t.completed_at||'—'}</div>${durLabel?`<div class="hist-card-duration">${durLabel}</div>`:''} ${reabrirBtn}</div></div>`;
     }).join('');
     return`<div class="hist-group"><div class="hist-group-title">${gname} <span style="color:var(--accent);font-size:10px">${items.length}</span></div>${cards}</div>`;
   }).join('');
+}
+
+// ============================================================
+// REABRIR TAREFA DO HISTÓRICO (só hoje)
+// ============================================================
+async function reabrirTask(id){
+  const t=hist.find(x=>x.id===id);if(!t)return;
+  const todayBR=new Date().toLocaleDateString('pt-BR');
+  // Só permite reabrir se foi concluída hoje
+  if(t.completed_at!==todayBR){showToast('⚠ Só é possível reabrir tarefas concluídas hoje','warn');return;}
+  // Volta para tasks com status Em Aberto
+  const taskBack={...t,status:'Em Aberto',completed_at:null,sort_order:tasks.length};
+  delete taskBack.completed_at;
+  await sb.from('tasks').insert({...taskBack,id:genId()});
+  // Remove do histórico
+  await sb.from('hist').delete().eq('id',id);
+  hist=hist.filter(x=>x.id!==id);
+  // Recarrega tasks
+  const {data:tasksAtt}=await sb.from('tasks').select('*').order('sort_order',{ascending:true});
+  tasks=tasksAtt||[];
+  updateStats();renderHist();showToast('↩ Tarefa reaberta!','success');
 }
 
 // ============================================================
