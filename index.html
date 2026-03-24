@@ -805,6 +805,8 @@ async function launchApp(){
   atrasadas=atrasadasRes.data||[];
   // Gera ocorrências recorrentes para hoje se necessário
   await checkAndSpawnRecurring();
+  // Move tarefas não recorrentes vencidas para atrasadas
+  await moveVencidasParaAtrasadas();
   // Recarrega tasks após spawns
   const {data:tasksAtt}=await sb.from('tasks').select('*').order('sort_order',{ascending:true});
   tasks=tasksAtt||[];
@@ -1165,7 +1167,6 @@ function renderHist(){
   const groups={};list.forEach(t=>{const g=groupLabel(t.completed_at);if(!groups[g])groups[g]=[];groups[g].push(t);});
   const gOrder=['Hoje','Ontem','Essa semana','Este mês'];
   const sorted=[...gOrder.filter(g=>groups[g]),...Object.keys(groups).filter(g=>!gOrder.includes(g)).sort((a,b)=>b.localeCompare(a))];
-  const todayBR=new Date().toLocaleDateString('pt-BR');
   el.innerHTML=sorted.map(gname=>{
     const items=groups[gname];
     const cards=items.map(t=>{
@@ -1173,36 +1174,10 @@ function renderHist(){
       const dur=daysBetween(t.date?new Date(t.date+'T00:00:00'):null,parseBrDate(t.completed_at));
       const durLabel=dur===null?'':(dur===0?'No mesmo dia':`${dur} dia${dur!==1?'s':''}`);
       const onTime=t.date&&parseBrDate(t.completed_at)?parseBrDate(t.completed_at)<=new Date(t.date+'T00:00:00'):null;
-      const isToday=t.completed_at===todayBR;
-      // Subtarefas
-      const subs=t.subtasks&&t.subtasks.length?`<div style="margin-top:8px;display:flex;flex-direction:column;gap:3px">${t.subtasks.map(s=>`<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3)"><div style="width:13px;height:13px;border-radius:3px;background:${s.done?'var(--green)':'var(--border)'};display:flex;align-items:center;justify-content:center;flex-shrink:0">${s.done?'<span style="color:#fff;font-size:8px;font-weight:700">✓</span>':''}</div><span style="${s.done?'text-decoration:line-through;opacity:.5':''}">${s.text}</span></div>`).join('')}</div>`:'';
-      // Botão reabrir só para concluídas hoje
-      const reabrirBtn=isToday?`<button onclick="reabrirTask('${t.id}')" style="background:var(--orangebg);border:1px solid var(--orange);border-radius:6px;padding:3px 9px;color:var(--orange);font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap">↩ Reabrir</button>`:'';
-      return`<div class="hist-card"><div class="hist-card-check">✓</div><div class="hist-card-body"><div class="hist-card-title">${t.descricao}</div><div class="hist-card-meta"><div class="asgn"><div class="avsm" style="background:${mc};width:18px;height:18px;font-size:8px">${getInitials(t.resp)}</div><span style="font-size:11px;color:var(--text2)">${t.resp.split(' ')[0]}</span></div>${tagsHtml(t.tags)}${onTime===true?'<span style="font-size:10px;background:var(--greenbg);color:var(--green);border-radius:3px;padding:1px 6px;font-weight:700">✓ No prazo</span>':onTime===false?'<span style="font-size:10px;background:var(--redbg);color:var(--red);border-radius:3px;padding:1px 6px;font-weight:700">✗ Atrasada</span>':''}</div>${t.notes?`<div class="hist-card-notes">📝 ${t.notes}</div>`:''}${subs}</div><div class="hist-card-right"><div class="hist-card-date">✅ ${t.completed_at||'—'}</div>${durLabel?`<div class="hist-card-duration">${durLabel}</div>`:''} ${reabrirBtn}</div></div>`;
+      return`<div class="hist-card"><div class="hist-card-check">✓</div><div class="hist-card-body"><div class="hist-card-title">${t.descricao}</div><div class="hist-card-meta"><div class="asgn"><div class="avsm" style="background:${mc};width:18px;height:18px;font-size:8px">${getInitials(t.resp)}</div><span style="font-size:11px;color:var(--text2)">${t.resp.split(' ')[0]}</span></div>${tagsHtml(t.tags)}${onTime===true?'<span style="font-size:10px;background:var(--greenbg);color:var(--green);border-radius:3px;padding:1px 6px;font-weight:700">✓ No prazo</span>':onTime===false?'<span style="font-size:10px;background:var(--redbg);color:var(--red);border-radius:3px;padding:1px 6px;font-weight:700">✗ Atrasada</span>':''}</div>${t.notes?`<div class="hist-card-notes">📝 ${t.notes}</div>`:''}</div><div class="hist-card-right"><div class="hist-card-date">✅ ${t.completed_at||'—'}</div>${durLabel?`<div class="hist-card-duration">${durLabel}</div>`:''}</div></div>`;
     }).join('');
     return`<div class="hist-group"><div class="hist-group-title">${gname} <span style="color:var(--accent);font-size:10px">${items.length}</span></div>${cards}</div>`;
   }).join('');
-}
-
-// ============================================================
-// REABRIR TAREFA DO HISTÓRICO (só hoje)
-// ============================================================
-async function reabrirTask(id){
-  const t=hist.find(x=>x.id===id);if(!t)return;
-  const todayBR=new Date().toLocaleDateString('pt-BR');
-  // Só permite reabrir se foi concluída hoje
-  if(t.completed_at!==todayBR){showToast('⚠ Só é possível reabrir tarefas concluídas hoje','warn');return;}
-  // Volta para tasks com status Em Aberto
-  const taskBack={...t,status:'Em Aberto',completed_at:null,sort_order:tasks.length};
-  delete taskBack.completed_at;
-  await sb.from('tasks').insert({...taskBack,id:genId()});
-  // Remove do histórico
-  await sb.from('hist').delete().eq('id',id);
-  hist=hist.filter(x=>x.id!==id);
-  // Recarrega tasks
-  const {data:tasksAtt}=await sb.from('tasks').select('*').order('sort_order',{ascending:true});
-  tasks=tasksAtt||[];
-  updateStats();renderHist();showToast('↩ Tarefa reaberta!','success');
 }
 
 // ============================================================
@@ -1253,22 +1228,60 @@ async function completeTask(id, fromAtrasadas=false){
     : tasks.find(x=>x.id===id);
   if(!t)return;
   const completedAt=new Date().toLocaleDateString('pt-BR');
-  // Move para histórico
-  const histItem={...t,id:genId(),status:'Concluída',completed_at:completedAt};
-  delete histItem.sort_order;
-  delete histItem.moved_at;
-  await sb.from('hist').insert(histItem);
+  // Monta histItem APENAS com campos que existem na tabela hist
+  const histItem={
+    id: genId(),
+    descricao: t.descricao,
+    resp: t.resp,
+    date: t.date||null,
+    prio: t.prio||'Média',
+    status: 'Concluída',
+    all_day: t.all_day!==undefined?t.all_day:true,
+    time_start: t.time_start||null,
+    time_end: t.time_end||null,
+    tags: t.tags||[],
+    recur: t.recur||'none',
+    recur_days: t.recur_days||[],
+    subtasks: t.subtasks||[],
+    notes: t.notes||null,
+    completed_at: completedAt
+  };
+  // Insere no histórico primeiro — com tratamento de erro
+  const {error:histErr}=await sb.from('hist').insert(histItem);
+  if(histErr){
+    console.error('Erro ao salvar histórico:',histErr);
+    showToast('❌ Erro ao salvar no histórico: '+histErr.message,'error');
+    return; // Não deleta a tarefa se falhou o insert
+  }
   hist.unshift(histItem);
-  // Remove da origem (tasks ou atrasadas)
+  // Remove da origem SOMENTE após confirmar insert no hist
   if(fromAtrasadas){
-    await sb.from('atrasadas').delete().eq('id',id);
+    const {error:delErr}=await sb.from('atrasadas').delete().eq('id',id);
+    if(delErr)console.error('Erro ao remover de atrasadas:',delErr);
     atrasadas=atrasadas.filter(x=>x.id!==id);
   } else {
-    await sb.from('tasks').delete().eq('id',id);
+    const wasRecurring=t.recur&&t.recur!=='none';
+    const {error:delErr}=await sb.from('tasks').delete().eq('id',id);
+    if(delErr){console.error('Erro ao remover tarefa:',delErr);}
     tasks=tasks.filter(x=>x.id!==id);
+    if(wasRecurring){
+      const nt={
+        id:genId(),descricao:t.descricao,resp:t.resp,date:nextDate(t),
+        prio:t.prio,status:'Em Aberto',all_day:t.all_day,
+        time_start:t.time_start,time_end:t.time_end,tags:t.tags||[],
+        recur:t.recur,recur_days:t.recur_days||[],recur_start:t.recur_start||t.date,
+        subtasks:(t.subtasks||[]).map(s=>({...s,done:false})),
+        notes:t.notes,is_meeting:t.is_meeting||false,sort_order:0
+      };
+      const {error:insErr}=await sb.from('tasks').insert(nt);
+      if(!insErr){tasks.unshift(nt);showToast('✅ Concluída! Próxima criada.','success');}
+      else{showToast('✅ Concluída!','success');console.error('Erro ao criar próxima recorrência:',insErr);}
+    } else {
+      showToast('✅ Tarefa concluída!','success');
+    }
   }
-  showToast('✅ Tarefa concluída!','success');
   updateStats();renderCurrentView();
+  if(document.getElementById('page-history').classList.contains('active'))renderHist();
 }
 
 // Verifica se hoje é dia válido para uma recorrência
@@ -1289,44 +1302,43 @@ function isTodayValidForRecur(recur, recurDays, recurStart, today){
 async function checkAndSpawnRecurring(){
   const todayStr=getTodayStr();
   const today=new Date(todayStr+'T00:00:00');
-  // Busca tarefas recorrentes com data anterior a hoje (bases)
+  // Busca todas as tarefas recorrentes com data anterior a hoje
   const bases=tasks.filter(t=>t.recur&&t.recur!=='none'&&t.date&&t.date<todayStr);
-  // Também busca do histórico tarefas recorrentes que não têm base em tasks
-  const {data:histRecur}=await sb.from('hist').select('*').neq('recur','none').lt('date',todayStr);
-  // Junta bases de tasks e hist, sem duplicar por descricao+resp
-  const allBases=[...bases];
-  (histRecur||[]).forEach(h=>{
-    const jaTemBase=allBases.some(b=>b.descricao===h.descricao&&b.resp===h.resp&&b.recur===h.recur);
-    if(!jaTemBase)allBases.push(h);
-  });
-  // Ordena pelo sort_order para criar na ordem certa
-  allBases.sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
-  // Calcula o maior sort_order atual em tasks para hoje
-  const maxOrder=tasks.filter(t=>t.date===todayStr).reduce((max,t)=>Math.max(max,t.sort_order||0),-1);
-  let nextOrder=maxOrder+1;
-  for(const t of allBases){
+  for(const t of bases){
     const recurDays=Array.isArray(t.recur_days)?t.recur_days:[];
     const recurStart=t.recur_start||t.date;
     if(!isTodayValidForRecur(t.recur,recurDays,recurStart,today))continue;
     // Verifica se já existe para hoje
     const jaExiste=tasks.some(x=>x.descricao===t.descricao&&x.resp===t.resp&&x.recur===t.recur&&x.date===todayStr);
     if(jaExiste)continue;
-    // Herda sort_order da base ou usa próximo disponível
-    const sortOrder=t.sort_order!==undefined&&t.sort_order!==null?t.sort_order:nextOrder++;
+    // Cria ocorrência para hoje
     const newTask={
       id:genId(),descricao:t.descricao,resp:t.resp,date:todayStr,
       prio:t.prio,status:'Em Aberto',all_day:t.all_day,
       time_start:t.time_start,time_end:t.time_end,tags:t.tags,
       recur:t.recur,recur_days:t.recur_days,recur_start:recurStart,
       subtasks:(t.subtasks||[]).map(s=>({...s,done:false})),
-      notes:t.notes,is_meeting:t.is_meeting||false,sort_order:sortOrder
+      notes:t.notes,is_meeting:t.is_meeting||false,sort_order:0
     };
     await sb.from('tasks').insert(newTask);
     tasks.push(newTask);
   }
 }
 
-// Movimentação para atrasadas agora é feita pelo trigger do banco (fn_check_task_date)
+// Move tarefas NÃO recorrentes com data vencida para tabela atrasadas
+async function moveVencidasParaAtrasadas(){
+  const todayStr=getTodayStr();
+  const todayBR=new Date().toLocaleDateString('pt-BR');
+  const vencidas=tasks.filter(t=>t.date&&t.date<todayStr&&(!t.recur||t.recur==='none')&&t.status!=='Concluída');
+  for(const t of vencidas){
+    // Verifica se já está em atrasadas
+    const jaEsta=atrasadas.some(a=>a.id===t.id);
+    if(jaEsta)continue;
+    await sb.from('atrasadas').upsert({...t,status:'Atrasada',moved_at:todayBR});
+    await sb.from('tasks').delete().eq('id',t.id);
+    tasks=tasks.filter(x=>x.id!==t.id);
+  }
+}
 
 function delTask(id){
   const t=tasks.find(x=>x.id===id);if(!t)return;
@@ -1388,35 +1400,32 @@ function closeTaskModal(){document.getElementById('task-modal').style.display='n
 async function saveTask(){
   const descricao=document.getElementById('f-desc').value.trim();if(!descricao){showToast('⚠ Preencha a descrição','warn');return;}
   const dateVal=document.getElementById('f-date').value;
-  const todayStr=getTodayStr();
-  const isVencida=dateVal&&dateVal<todayStr;
   const taskData={
     descricao,resp:document.getElementById('f-resp').value,date:dateVal,
     prio:document.getElementById('f-prio').value,status:'Em Aberto',all_day:allDay,
     time_start:allDay?null:document.getElementById('f-time-start').value,
     time_end:allDay?null:document.getElementById('f-time-end').value,
     tags:[...selTags],recur:recurMode,recur_days:recurMode==='custom'?[...customDays]:[],
+    // recur_start guarda a data original da recorrência para cálculo de dia da semana/mês
     recur_start:recurMode!=='none'?dateVal:null,
     subtasks:modalSubs.map(s=>({...s})),notes:document.getElementById('f-notes').value.trim()
   };
   if(editTaskId){
     const existing=tasks.find(x=>x.id===editTaskId);
     taskData.status=existing?existing.status:'Em Aberto';
+    // Preserva recur_start original se já existia
     if(existing&&existing.recur_start)taskData.recur_start=existing.recur_start;
     await sb.from('tasks').update(taskData).eq('id',editTaskId);
-    showToast(isVencida?'⚠ Data vencida — movida para Atrasadas':'✏ Atualizada!',isVencida?'warn':'success');
+    const idx=tasks.findIndex(x=>x.id===editTaskId);
+    if(idx>-1)tasks[idx]={...tasks[idx],...taskData};
+    showToast('✏ Atualizada!','success');
   } else {
     const id=genId();
-    await sb.from('tasks').insert({...taskData,id,sort_order:tasks.length});
-    showToast(isVencida?'⚠ Data vencida — criada em Atrasadas':'✅ Criada!',isVencida?'warn':'success');
+    const newTask={...taskData,id,sort_order:tasks.length};
+    await sb.from('tasks').insert(newTask);
+    tasks.push(newTask);
+    showToast('✅ Criada!','success');
   }
-  // Recarrega tasks e atrasadas do banco (trigger já tratou tudo)
-  const [{data:tasksAtt},{data:atrasadasAtt}]=await Promise.all([
-    sb.from('tasks').select('*').order('sort_order',{ascending:true}),
-    sb.from('atrasadas').select('*').order('date',{ascending:true})
-  ]);
-  tasks=tasksAtt||[];
-  atrasadas=atrasadasAtt||[];
   updateStats();renderCurrentView();closeTaskModal();
 }
 
