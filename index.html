@@ -1264,23 +1264,37 @@ function isTodayValidForRecur(recur, recurDays, recurStart, today){
 async function checkAndSpawnRecurring(){
   const todayStr=getTodayStr();
   const today=new Date(todayStr+'T00:00:00');
-  // Busca todas as tarefas recorrentes com data anterior a hoje
+  // Busca tarefas recorrentes com data anterior a hoje (bases)
   const bases=tasks.filter(t=>t.recur&&t.recur!=='none'&&t.date&&t.date<todayStr);
-  for(const t of bases){
+  // Também busca do histórico tarefas recorrentes que não têm base em tasks
+  const {data:histRecur}=await sb.from('hist').select('*').neq('recur','none').lt('date',todayStr);
+  // Junta bases de tasks e hist, sem duplicar por descricao+resp
+  const allBases=[...bases];
+  (histRecur||[]).forEach(h=>{
+    const jaTemBase=allBases.some(b=>b.descricao===h.descricao&&b.resp===h.resp&&b.recur===h.recur);
+    if(!jaTemBase)allBases.push(h);
+  });
+  // Ordena pelo sort_order para criar na ordem certa
+  allBases.sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
+  // Calcula o maior sort_order atual em tasks para hoje
+  const maxOrder=tasks.filter(t=>t.date===todayStr).reduce((max,t)=>Math.max(max,t.sort_order||0),-1);
+  let nextOrder=maxOrder+1;
+  for(const t of allBases){
     const recurDays=Array.isArray(t.recur_days)?t.recur_days:[];
     const recurStart=t.recur_start||t.date;
     if(!isTodayValidForRecur(t.recur,recurDays,recurStart,today))continue;
     // Verifica se já existe para hoje
     const jaExiste=tasks.some(x=>x.descricao===t.descricao&&x.resp===t.resp&&x.recur===t.recur&&x.date===todayStr);
     if(jaExiste)continue;
-    // Cria ocorrência para hoje
+    // Herda sort_order da base ou usa próximo disponível
+    const sortOrder=t.sort_order!==undefined&&t.sort_order!==null?t.sort_order:nextOrder++;
     const newTask={
       id:genId(),descricao:t.descricao,resp:t.resp,date:todayStr,
       prio:t.prio,status:'Em Aberto',all_day:t.all_day,
       time_start:t.time_start,time_end:t.time_end,tags:t.tags,
       recur:t.recur,recur_days:t.recur_days,recur_start:recurStart,
       subtasks:(t.subtasks||[]).map(s=>({...s,done:false})),
-      notes:t.notes,is_meeting:t.is_meeting||false,sort_order:0
+      notes:t.notes,is_meeting:t.is_meeting||false,sort_order:sortOrder
     };
     await sb.from('tasks').insert(newTask);
     tasks.push(newTask);
