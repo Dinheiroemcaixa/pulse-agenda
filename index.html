@@ -1174,7 +1174,8 @@ function renderHist(){
       const dur=daysBetween(t.date?new Date(t.date+'T00:00:00'):null,parseBrDate(t.completed_at));
       const durLabel=dur===null?'':(dur===0?'No mesmo dia':`${dur} dia${dur!==1?'s':''}`);
       const onTime=t.date&&parseBrDate(t.completed_at)?parseBrDate(t.completed_at)<=new Date(t.date+'T00:00:00'):null;
-      return`<div class="hist-card"><div class="hist-card-check">✓</div><div class="hist-card-body"><div class="hist-card-title">${t.descricao}</div><div class="hist-card-meta"><div class="asgn"><div class="avsm" style="background:${mc};width:18px;height:18px;font-size:8px">${getInitials(t.resp)}</div><span style="font-size:11px;color:var(--text2)">${t.resp.split(' ')[0]}</span></div>${tagsHtml(t.tags)}${onTime===true?'<span style="font-size:10px;background:var(--greenbg);color:var(--green);border-radius:3px;padding:1px 6px;font-weight:700">✓ No prazo</span>':onTime===false?'<span style="font-size:10px;background:var(--redbg);color:var(--red);border-radius:3px;padding:1px 6px;font-weight:700">✗ Atrasada</span>':''}</div>${t.notes?`<div class="hist-card-notes">📝 ${t.notes}</div>`:''}</div><div class="hist-card-right"><div class="hist-card-date">✅ ${t.completed_at||'—'}</div>${durLabel?`<div class="hist-card-duration">${durLabel}</div>`:''}</div></div>`;
+      const subsHtml=(t.subtasks&&t.subtasks.length)?`<div style="margin-top:6px;display:flex;flex-direction:column;gap:3px">${t.subtasks.map(s=>`<div style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text3)"><span style="color:${s.done?'var(--green)':' var(--text3)'}">${s.done?'✓':'○'}</span><span style="${s.done?'text-decoration:line-through;opacity:.6':''}">${s.text}</span></div>`).join('')}</div>`:'';
+      return`<div class="hist-card"><div class="hist-card-check" style="cursor:pointer" onclick="reopenTask('${t.id}')" title="Reabrir tarefa">↩</div><div class="hist-card-body"><div class="hist-card-title">${t.descricao}</div><div class="hist-card-meta"><div class="asgn"><div class="avsm" style="background:${mc};width:18px;height:18px;font-size:8px">${getInitials(t.resp)}</div><span style="font-size:11px;color:var(--text2)">${t.resp.split(' ')[0]}</span></div>${tagsHtml(t.tags)}${onTime===true?'<span style="font-size:10px;background:var(--greenbg);color:var(--green);border-radius:3px;padding:1px 6px;font-weight:700">✓ No prazo</span>':onTime===false?'<span style="font-size:10px;background:var(--redbg);color:var(--red);border-radius:3px;padding:1px 6px;font-weight:700">✗ Atrasada</span>':''}</div>${t.notes?`<div class="hist-card-notes">📝 ${t.notes}</div>`:''} ${subsHtml}</div><div class="hist-card-right"><div class="hist-card-date">✅ ${t.completed_at||'—'}</div>${durLabel?`<div class="hist-card-duration">${durLabel}</div>`:''}</div></div>`;
     }).join('');
     return`<div class="hist-group"><div class="hist-group-title">${gname} <span style="color:var(--accent);font-size:10px">${items.length}</span></div>${cards}</div>`;
   }).join('');
@@ -1286,6 +1287,25 @@ async function completeTask(id, fromAtrasadas=false){
 
 function nextDate(t){const d=t.date?new Date(t.date+'T00:00:00'):new Date();if(t.recur==='daily')d.setDate(d.getDate()+1);else if(t.recur==='weekdays'){d.setDate(d.getDate()+1);while(d.getDay()===0||d.getDay()===6)d.setDate(d.getDate()+1);}else if(t.recur==='weekly')d.setDate(d.getDate()+7);else if(t.recur==='monthly')d.setMonth(d.getMonth()+1);else d.setDate(d.getDate()+1);return d.toISOString().split('T')[0];}
 
+async function reopenTask(histId){
+  const h=hist.find(x=>x.id===histId);if(!h)return;
+  const taskData={
+    id:genId(),descricao:h.descricao,resp:h.resp,date:getTodayStr(),
+    prio:h.prio||'Média',status:'Em Aberto',all_day:h.all_day!==undefined?h.all_day:true,
+    time_start:h.time_start||null,time_end:h.time_end||null,
+    tags:h.tags||[],recur:'none',recur_days:[],recur_start:null,
+    subtasks:(h.subtasks||[]).map(s=>({...s,done:false})),
+    notes:h.notes||null,is_meeting:h.is_meeting||false,sort_order:0
+  };
+  const {error:insErr}=await sb.from('tasks').insert(taskData);
+  if(insErr){showToast('❌ Erro ao reabrir: '+insErr.message,'error');return;}
+  const {error:delErr}=await sb.from('hist').delete().eq('id',histId);
+  if(delErr){console.error('Erro ao remover do hist:',delErr);}
+  tasks.push(taskData);
+  hist=hist.filter(x=>x.id!==histId);
+  updateStats();renderHist();showToast('↩ Tarefa reaberta!','info');
+}
+
 // Verifica se hoje é dia válido para uma recorrência
 function isTodayValidForRecur(recur, recurDays, recurStart, today){
   const dow=today.getDay();
@@ -1304,13 +1324,20 @@ function isTodayValidForRecur(recur, recurDays, recurStart, today){
 async function checkAndSpawnRecurring(){
   const todayStr=getTodayStr();
   const today=new Date(todayStr+'T00:00:00');
-  // Busca todas as tarefas recorrentes com data anterior a hoje
-  const bases=tasks.filter(t=>t.recur&&t.recur!=='none'&&t.date&&t.date<todayStr);
-  for(const t of bases){
+  // Agrupa recorrentes pela chave unica e pega a mais recente de cada grupo
+  const recorrentes=tasks.filter(t=>t.recur&&t.recur!=='none');
+  const grupos={};
+  for(const t of recorrentes){
+    const key=t.descricao+'||'+t.resp+'||'+t.recur+'||'+( t.recur_start||t.date);
+    if(!grupos[key]||t.date>grupos[key].date)grupos[key]=t;
+  }
+  for(const t of Object.values(grupos)){
+    // Só spawna se a tarefa mais recente do grupo é anterior a hoje
+    if(t.date>=todayStr)continue;
     const recurDays=Array.isArray(t.recur_days)?t.recur_days:[];
     const recurStart=t.recur_start||t.date;
     if(!isTodayValidForRecur(t.recur,recurDays,recurStart,today))continue;
-    // Verifica se já existe para hoje
+    // Verifica se já existe uma versão de hoje no grupo
     const jaExiste=tasks.some(x=>x.descricao===t.descricao&&x.resp===t.resp&&x.recur===t.recur&&x.date===todayStr);
     if(jaExiste)continue;
     // Cria ocorrência para hoje
