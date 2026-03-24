@@ -1284,6 +1284,8 @@ async function completeTask(id, fromAtrasadas=false){
   if(document.getElementById('page-history').classList.contains('active'))renderHist();
 }
 
+function nextDate(t){const d=t.date?new Date(t.date+'T00:00:00'):new Date();if(t.recur==='daily')d.setDate(d.getDate()+1);else if(t.recur==='weekdays'){d.setDate(d.getDate()+1);while(d.getDay()===0||d.getDay()===6)d.setDate(d.getDate()+1);}else if(t.recur==='weekly')d.setDate(d.getDate()+7);else if(t.recur==='monthly')d.setMonth(d.getMonth()+1);else d.setDate(d.getDate()+1);return d.toISOString().split('T')[0];}
+
 // Verifica se hoje é dia válido para uma recorrência
 function isTodayValidForRecur(recur, recurDays, recurStart, today){
   const dow=today.getDay();
