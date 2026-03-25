@@ -825,9 +825,9 @@ async function launchApp(){
   backups=backupsRes.data||[];
   // Backup automático diário
   await checkDailyBackup();
-  // Gera ocorrências recorrentes para hoje se necessário
-  await checkAndSpawnRecurring();
-  // Move tarefas não recorrentes vencidas para atrasadas
+  // Primeiro move vencidas para atrasadas (incluindo recorrentes)
+  await moveVencidasParaAtrasadas();
+  // Depois gera ocorrências recorrentes para hoje (usa tasks + atrasadas como base)
   await moveVencidasParaAtrasadas();
   // Recarrega tasks após spawns
   const {data:tasksAtt}=await sb.from('tasks').select('*').order('sort_order',{ascending:true});
@@ -1352,14 +1352,23 @@ function isTodayValidForRecur(recur, recurDays, recurStart, today){
 }
 
 // Gera ocorrências recorrentes para HOJE (roda ao abrir o app)
+// Usa como base: tarefas recorrentes em tasks OU em atrasadas (já movidas)
 async function checkAndSpawnRecurring(){
   const todayStr=getTodayStr();
   const today=new Date(todayStr+'T00:00:00');
-  // Agrupa recorrentes pela chave unica e pega a mais recente de cada grupo
+  // Agrupa recorrentes da tabela tasks pela chave única e pega a mais recente de cada grupo
   const recorrentes=tasks.filter(t=>t.recur&&t.recur!=='none');
   const grupos={};
   for(const t of recorrentes){
-    const key=t.descricao+'||'+t.resp+'||'+t.recur+'||'+( t.recur_start||t.date);
+    const key=t.descricao+'||'+t.resp+'||'+t.recur+'||'+(t.recur_start||t.date);
+    if(!grupos[key]||t.date>grupos[key].date)grupos[key]=t;
+  }
+  // Também inclui recorrentes que estão em atrasadas (foram movidas)
+  // mas ainda não têm ocorrência para hoje em tasks
+  const recorrentesAtrasadas=atrasadas.filter(t=>t.recur&&t.recur!=='none');
+  for(const t of recorrentesAtrasadas){
+    const key=t.descricao+'||'+t.resp+'||'+t.recur+'||'+(t.recur_start||t.date);
+    // Só adiciona se não há representante mais recente em tasks
     if(!grupos[key]||t.date>grupos[key].date)grupos[key]=t;
   }
   for(const t of Object.values(grupos)){
@@ -1368,7 +1377,7 @@ async function checkAndSpawnRecurring(){
     const recurDays=Array.isArray(t.recur_days)?t.recur_days:[];
     const recurStart=t.recur_start||t.date;
     if(!isTodayValidForRecur(t.recur,recurDays,recurStart,today))continue;
-    // Verifica se já existe uma versão de hoje no grupo
+    // Verifica se já existe uma versão de hoje no grupo (em tasks)
     const jaExiste=tasks.some(x=>x.descricao===t.descricao&&x.resp===t.resp&&x.recur===t.recur&&x.date===todayStr);
     if(jaExiste)continue;
     // Cria ocorrência para hoje
@@ -1385,11 +1394,13 @@ async function checkAndSpawnRecurring(){
   }
 }
 
-// Move tarefas NÃO recorrentes com data vencida para tabela atrasadas
+// Move tarefas com data vencida para tabela atrasadas
+// Inclui recorrentes (aparecem em Atrasadas) e não recorrentes
 async function moveVencidasParaAtrasadas(){
   const todayStr=getTodayStr();
   const todayBR=new Date().toLocaleDateString('pt-BR');
-  const vencidas=tasks.filter(t=>t.date&&t.date<todayStr&&(!t.recur||t.recur==='none')&&t.status!=='Concluída');
+  // Todas as tarefas não concluídas com data passada (recorrentes e não recorrentes)
+  const vencidas=tasks.filter(t=>t.date&&t.date<todayStr&&t.status!=='Concluída');
   for(const t of vencidas){
     // Verifica se já está em atrasadas
     const jaEsta=atrasadas.some(a=>a.id===t.id);
