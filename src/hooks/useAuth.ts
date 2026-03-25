@@ -1,0 +1,68 @@
+import { useState, useEffect } from 'react'
+import { sb } from '../lib/supabase'
+import { genId, hashPass } from '../lib/utils'
+import type { User } from '../types'
+
+export function useAuth() {
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+
+  useEffect(() => {
+    const saved = localStorage.getItem('pulse_session')
+    if (saved) {
+      sb.from('users').select('*').eq('email', saved).single().then(({ data }) => {
+        if (data) setCurrentUser(data)
+        setAuthLoading(false)
+      })
+    } else {
+      setAuthLoading(false)
+    }
+  }, [])
+
+  const login = async (email: string, pass: string): Promise<string | null> => {
+    const { data, error } = await sb.from('users').select('*').eq('email', email.trim().toLowerCase()).single()
+    if (error || !data) return 'E-mail não encontrado. Faça o cadastro.'
+    if (data.pass_hash !== hashPass(pass)) return 'Senha incorreta'
+    setCurrentUser(data)
+    localStorage.setItem('pulse_session', email.trim().toLowerCase())
+    return null
+  }
+
+  const signup = async (name: string, role: string, email: string, pass: string, color: string): Promise<string | null> => {
+    if (!name) return 'Preencha seu nome'
+    if (!email) return 'Preencha o e-mail'
+    if (pass.length < 4) return 'Senha deve ter ao menos 4 caracteres'
+
+    const { data: existing } = await sb.from('users').select('id').eq('email', email.trim().toLowerCase()).single()
+    if (existing) return 'E-mail já cadastrado'
+
+    const { data: allUsers } = await sb.from('users').select('id')
+    const isFirst = !allUsers || allUsers.length === 0
+    const id = genId()
+    const newUser: User = { id, name, role: role || 'Membro', email: email.trim().toLowerCase(), pass_hash: hashPass(pass), color, is_admin: isFirst }
+
+    const { error: ue } = await sb.from('users').insert(newUser)
+    if (ue) return 'Erro ao criar conta: ' + ue.message
+
+    const { error: te } = await sb.from('team').insert({ id, name, role: role || 'Membro', color, email: email.trim().toLowerCase(), is_admin: isFirst })
+    if (te) return 'Erro ao adicionar à equipe: ' + te.message
+
+    setCurrentUser(newUser)
+    localStorage.setItem('pulse_session', email.trim().toLowerCase())
+    return null
+  }
+
+  const logout = () => {
+    localStorage.removeItem('pulse_session')
+    setCurrentUser(null)
+  }
+
+  const updateUser = async (id: string, data: Partial<User>): Promise<boolean> => {
+    const { error } = await sb.from('users').update(data).eq('id', id)
+    if (error) return false
+    setCurrentUser(prev => prev ? { ...prev, ...data } : prev)
+    return true
+  }
+
+  return { currentUser, authLoading, login, signup, logout, updateUser }
+}
