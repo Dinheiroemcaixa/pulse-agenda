@@ -20,11 +20,16 @@ export function useAuth() {
   }, [])
 
   const login = async (email: string, pass: string): Promise<string | null> => {
-    const { data, error } = await sb.from('users').select('*').eq('email', email.trim().toLowerCase()).single()
-    if (error || !data) return 'E-mail não encontrado. Faça o cadastro.'
+    const trimmedEmail = email.trim().toLowerCase()
+    // Valida formato do e-mail antes de consultar o banco
+    if (!trimmedEmail) return 'Preencha o e-mail'
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) return 'E-mail inválido. Verifique se digitou corretamente.'
+    if (!pass) return 'Preencha a senha'
+    const { data, error } = await sb.from('users').select('*').eq('email', trimmedEmail).single()
+    if (error || !data) return 'E-mail não encontrado. Verifique o e-mail ou faça o cadastro.'
     if (data.pass_hash !== hashPass(pass)) return 'Senha incorreta'
     setCurrentUser(data)
-    localStorage.setItem('pulse_session', email.trim().toLowerCase())
+    localStorage.setItem('pulse_session', trimmedEmail)
     return null
   }
 

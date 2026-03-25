@@ -119,12 +119,30 @@ export function useAppData() {
     if (!t) return false
 
     const completedAt = new Date().toLocaleDateString('pt-BR')
-    const histItem = { ...t, id: genId(), status: 'Concluída' as const, completed_at: completedAt }
-    delete (histItem as any).sort_order
-    delete (histItem as any).moved_at
+    // Constrói histItem SOMENTE com campos que existem na tabela hist
+    // Nunca usa spread para evitar enviar sort_order, moved_at, etc.
+    const histItem = {
+      id: genId(),
+      descricao: t.descricao,
+      resp: t.resp,
+      date: t.date || null,
+      prio: t.prio || 'Média',
+      status: 'Concluída' as const,
+      all_day: t.all_day !== undefined ? t.all_day : true,
+      time_start: t.time_start || null,
+      time_end: t.time_end || null,
+      tags: t.tags || [],
+      recur: t.recur || 'none',
+      recur_days: t.recur_days || [],
+      recur_start: t.recur_start || null,
+      subtasks: t.subtasks || [],
+      notes: t.notes || null,
+      is_meeting: t.is_meeting || false,
+      completed_at: completedAt,
+    }
 
     const { error } = await sb.from('hist').insert(histItem)
-    if (error) return false
+    if (error) { console.error('Erro hist:', error); return false }
 
     if (fromAtrasadas) {
       await sb.from('atrasadas').delete().eq('id', id)
@@ -133,7 +151,7 @@ export function useAppData() {
       await sb.from('tasks').delete().eq('id', id)
       setTasks(prev => prev.filter(x => x.id !== id))
     }
-    setHist(prev => [histItem, ...prev])
+    setHist(prev => [histItem as unknown as Task, ...prev])
     return true
   }, [tasks, atrasadas])
 
