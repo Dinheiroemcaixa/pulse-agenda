@@ -907,8 +907,6 @@ function getFiltered(){
   if(searchQ)list=list.filter(t=>t.descricao.toLowerCase().includes(searchQ.toLowerCase())||t.resp.toLowerCase().includes(searchQ.toLowerCase()));
   if(dateFilter)list=list.filter(t=>t.date===dateFilter);
   if(tagFilter)list=list.filter(t=>t.tags&&t.tags.includes(tagFilter));
-  // Garante ordem consistente com o banco (sort_order salvo no Supabase)
-  list.sort((a,b)=>(a.sort_order??9999)-(b.sort_order??9999));
   return list;
 }
 
