@@ -234,7 +234,7 @@ export function useAppData() {
       status: 'Em Aberto',
       recur: 'none',
       recur_days: [],
-      recur_start: null,
+      recur_start: undefined,
       completed_at: undefined,
       sort_order: 0,
     }
