@@ -163,16 +163,20 @@ export function useAppData() {
   }, [tasks])
 
   // ── ATRASADAS RECORRENTES ─────────────────────────────────
-  // Ocorrências recorrentes vencidas (data < hoje, não concluídas)
-  // Aparecem no badge de Atraso e na página Atrasadas
+  // Usa APENAS registros reais do banco (tasks), NÃO expandedTasks.
+  // Isso evita que tarefas virtuais geradas automaticamente para datas
+  // passadas (baseadas em recur_start) apareçam falsamente como atrasadas.
+  // Uma tarefa recorrente só é "atrasada" se o próprio mestre (registro real)
+  // tiver uma data passada e estiver Em Aberto — o que acontece quando o
+  // usuário genuinamente perdeu o prazo e não concluiu.
   const atrasadasRecorrentes = useMemo(() => {
     const todayStr = getTodayStr()
-    return expandedTasks.filter(t =>
+    return tasks.filter(t =>
       t.date && t.date < todayStr &&
       t.status !== 'Concluída' &&
       t.recur && t.recur !== 'none'
     )
-  }, [expandedTasks])
+  }, [tasks])
 
   // Combina atrasadas do banco (não-recorrentes) + recorrentes vencidas
   const allAtrasadas = useMemo(() => {
