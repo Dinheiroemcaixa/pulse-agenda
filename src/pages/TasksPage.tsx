@@ -68,6 +68,8 @@ export function TasksPage(props: Props) {
   const list = getFiltered()
 
   const handleDrop = async (srcId: string, dstId: string, before: boolean) => {
+    // Não reordena tarefas virtuais
+    if (srcId.startsWith('virtual_') || dstId.startsWith('virtual_')) return
     const allTasks = [...tasks]
     const srcIdx = allTasks.findIndex(t => t.id === srcId)
     const [moved] = allTasks.splice(srcIdx, 1)

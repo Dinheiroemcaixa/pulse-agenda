@@ -41,6 +41,7 @@ export interface Task {
   recur: RecurType
   recur_days?: string[]
   recur_start?: string
+  recur_group_id?: string   // ID da série recorrente
   subtasks: Subtask[]
   notes?: string
   is_meeting: boolean
@@ -48,6 +49,7 @@ export interface Task {
   completed_at?: string
   moved_at?: string
   created_at?: string
+  isVirtual?: boolean       // true = gerada no front-end, não existe no banco ainda
 }
 
 export interface Meeting {

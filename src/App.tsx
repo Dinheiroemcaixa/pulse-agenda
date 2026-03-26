@@ -195,7 +195,7 @@ export default function App() {
   const isAdmin = currentUser.is_admin === true
 
   const pageProps = {
-    tasks: data.tasks,
+    tasks: data.expandedTasks, // expandedTasks inclui virtuais para exibição
     hist: data.hist,
     meets: data.meets,
     team: data.team,
@@ -248,7 +248,7 @@ export default function App() {
         setPage={setPage}
         currentUser={currentUser}
         isAdmin={isAdmin}
-        tasks={data.tasks}
+        tasks={data.expandedTasks}
         atrasadas={data.atrasadas}
         hist={data.hist}
         team={data.team}
@@ -268,7 +268,7 @@ export default function App() {
 
       {taskModalOpen && (
         <TaskModal
-          editTask={editTaskId ? data.tasks.find(t => t.id === editTaskId) : undefined}
+          editTask={editTaskId ? data.expandedTasks.find(t => t.id === editTaskId) : undefined}
           team={data.team}
           tags={data.tags}
           currentUser={currentUser}
