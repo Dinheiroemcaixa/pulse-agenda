@@ -1,4 +1,6 @@
 *{box-sizing:border-box;margin:0;padding:0}
+html{height:100%;width:100%;overflow:hidden}
+#root{height:100%;width:100%;display:flex;flex-direction:column}
 :root{
   --bg:#0d1117;--bg2:#161c2d;--bg3:#1e2740;--bg4:#263354;
   --text:#f0f2ff;--text2:#8892b0;--text3:#4a5578;
@@ -9,7 +11,7 @@
   --purple:#cc5de8;--purplebg:rgba(204,93,232,0.12);
   --border:#1e2a45;--radius:10px;
 }
-body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden;font-size:14px}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);height:100%;width:100%;display:flex;overflow:hidden;font-size:14px}
 ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
 
 /* TOAST */
@@ -21,7 +23,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 .toast.error{background:var(--redbg);border:1px solid var(--red);color:var(--red)}
 
 /* LAYOUT */
-#app{display:flex;width:100%;height:100vh}
+#app{display:flex;width:100%;height:100%;min-height:100vh}
 .sidebar{width:230px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
 .logo{padding:16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)}
 .logo-icon{width:34px;height:34px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:14px;flex-shrink:0}
