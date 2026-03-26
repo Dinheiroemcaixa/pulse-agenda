@@ -9,10 +9,11 @@ interface Props {
   isAdmin: boolean
   onComplete: (id: string, fromAtrasadas: boolean) => Promise<void>
   onDeleteAtrasada: (id: string) => Promise<void>
+  openEditTask: (id: string) => void
   showToast: (msg: string, type?: string) => void
 }
 
-export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, onComplete, onDeleteAtrasada, showToast }: Props) {
+export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, onComplete, onDeleteAtrasada, openEditTask, showToast }: Props) {
   const [search, setSearch] = useState('')
   const [scope, setScope] = useState<'mine' | 'all'>('mine')
 
@@ -87,6 +88,8 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, onComplet
                       <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
                         <button style={{ background: 'var(--greenbg)', border: '1px solid var(--green)', borderRadius: 6, padding: '4px 9px', color: 'var(--green)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
                           onClick={async () => { await onComplete(a.id, true); showToast('✅ Concluída!', 'success') }}>✓ Concluir</button>
+                        <button style={{ background: 'var(--accentbg)', border: '1px solid var(--accent)', borderRadius: 6, padding: '4px 9px', color: 'var(--accent)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
+                          onClick={() => openEditTask(a.id)}>✏</button>
                         <button style={{ background: 'var(--redbg)', border: '1px solid var(--red)', borderRadius: 6, padding: '4px 9px', color: 'var(--red)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
                           onClick={async () => { await onDeleteAtrasada(a.id); showToast('🗑 Removida', 'warn') }}>✕</button>
                       </div>
