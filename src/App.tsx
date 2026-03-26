@@ -200,7 +200,7 @@ export default function App() {
     meets: data.meets,
     team: data.team,
     tags: data.tags,
-    atrasadas: data.atrasadas,
+    atrasadas: data.allAtrasadas,
     backups: data.backups,
     currentUser,
     isAdmin,
@@ -249,7 +249,7 @@ export default function App() {
         currentUser={currentUser}
         isAdmin={isAdmin}
         tasks={data.expandedTasks}
-        atrasadas={data.atrasadas}
+        atrasadas={data.allAtrasadas}
         hist={data.hist}
         team={data.team}
         onLogout={logout}

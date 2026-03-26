@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react'
 import { sb } from '../lib/supabase'
-import { genId, getTodayStr, isTodayValidForRecur } from '../lib/utils'
+import { genId, getTodayStr, isTodayValidForRecur, getNextOccurrenceAfter } from '../lib/utils'
 import type { Task, TeamMember, Meeting, Tag, Backup } from '../types'
 
 // ============================================================
@@ -162,6 +162,23 @@ export function useAppData() {
     return finalResult
   }, [tasks])
 
+  // ── ATRASADAS RECORRENTES ─────────────────────────────────
+  // Ocorrências recorrentes vencidas (data < hoje, não concluídas)
+  // Aparecem no badge de Atraso e na página Atrasadas
+  const atrasadasRecorrentes = useMemo(() => {
+    const todayStr = getTodayStr()
+    return expandedTasks.filter(t =>
+      t.date && t.date < todayStr &&
+      t.status !== 'Concluída' &&
+      t.recur && t.recur !== 'none'
+    )
+  }, [expandedTasks])
+
+  // Combina atrasadas do banco (não-recorrentes) + recorrentes vencidas
+  const allAtrasadas = useMemo(() => {
+    return [...atrasadas, ...atrasadasRecorrentes]
+  }, [atrasadas, atrasadasRecorrentes])
+
   // ── LOAD ALL ─────────────────────────────────────────────
   const loadAll = useCallback(async () => {
     setLoading(true)
@@ -252,12 +269,16 @@ export function useAppData() {
   const completeTask = useCallback(async (id: string, fromAtrasadas = false): Promise<boolean> => {
     const isVirtual = id.startsWith('virtual_')
 
-    // Busca a tarefa — pode ser virtual (em expandedTasks) ou real
-    const t = isVirtual
-      ? expandedTasks.find(x => x.id === id)
-      : fromAtrasadas
-        ? atrasadas.find(x => x.id === id)
-        : tasks.find(x => x.id === id)
+    // Busca a tarefa de acordo com a origem
+    // fromAtrasadas=true pode vir da tabela atrasadas (não-recorrente) OU de atrasadasRecorrentes (virtual/mestre)
+    let t: Task | undefined
+    if (isVirtual) {
+      t = expandedTasks.find(x => x.id === id)
+    } else if (fromAtrasadas) {
+      t = atrasadas.find(x => x.id === id) || expandedTasks.find(x => x.id === id)
+    } else {
+      t = tasks.find(x => x.id === id)
+    }
 
     if (!t) return false
 
@@ -287,20 +308,63 @@ export function useAppData() {
     if (histErr) { console.error('Erro hist:', histErr); return false }
 
     if (isVirtual) {
-      // Tarefa virtual: materializa diretamente como concluída no banco
+      // Tarefa virtual: materializa como concluída no banco
       const { isVirtual: _iv, ...payload } = t as any
-      const { error } = await sb.from('tasks').insert({
+      const completedPayload = {
         ...payload,
-        id: histItem.id, // usa o mesmo id do hist para rastrear
-        status: 'Concluída',
+        id: histItem.id,
+        status: 'Concluída' as const,
         completed_at: completedAt,
-      })
-      // Se der erro de insert (não crítico), ignora — o hist já foi salvo
-      if (error) console.warn('Aviso: não materializou virtual como concluída:', error)
-    } else if (fromAtrasadas) {
+      }
+      const { error } = await sb.from('tasks').insert(completedPayload)
+      if (!error) {
+        // Atualiza estado local para remover virtual imediatamente do atrasadasRecorrentes
+        setTasks(prev => [...prev, completedPayload])
+      } else {
+        console.warn('Aviso: não materializou virtual como concluída:', error)
+      }
+
+    } else if (fromAtrasadas && atrasadas.some(a => a.id === id)) {
+      // Atrasada regular da tabela atrasadas (não-recorrente)
       await sb.from('atrasadas').delete().eq('id', id)
       setAtrasadas(prev => prev.filter(x => x.id !== id))
+
+    } else if ((t as any).recur_group_id && t.recur && t.recur !== 'none') {
+      // ── TAREFA MESTRE RECORRENTE ────────────────────────────
+      // NUNCA deletar o mestre — isso quebraria toda a série futura.
+      // Em vez disso:
+      //   1. Materializa a data original como concluída (bloqueia re-geração virtual)
+      //   2. Avança o mestre para a próxima ocorrência após hoje
+      const originalDate = t.date
+      const completedRecord = {
+        ...(t as any),
+        id: genId(),
+        date: originalDate,
+        status: 'Concluída' as const,
+        completed_at: completedAt,
+        isVirtual: undefined,
+      }
+      await sb.from('tasks').insert(completedRecord)
+      setTasks(prev => [...prev, completedRecord])
+
+      // Avança o mestre para a próxima ocorrência depois de HOJE
+      const nextDate = getNextOccurrenceAfter(
+        t.recur!,
+        t.recur_days || [],
+        t.recur_start || t.date,
+        getTodayStr()
+      )
+      if (nextDate) {
+        await sb.from('tasks').update({ date: nextDate }).eq('id', id)
+        setTasks(prev => prev.map(x => x.id === id ? { ...x, date: nextDate } : x))
+      } else {
+        // Série esgotada — sem mais ocorrências futuras
+        await sb.from('tasks').delete().eq('id', id)
+        setTasks(prev => prev.filter(x => x.id !== id))
+      }
+
     } else {
+      // Tarefa não-recorrente comum
       await sb.from('tasks').delete().eq('id', id)
       setTasks(prev => prev.filter(x => x.id !== id))
     }
@@ -377,9 +441,41 @@ export function useAppData() {
   }, [hist])
 
   const deleteAtrasada = useCallback(async (id: string): Promise<void> => {
-    await sb.from('atrasadas').delete().eq('id', id)
-    setAtrasadas(prev => prev.filter(x => x.id !== id))
-  }, [])
+    // Virtual recorrente → materializa como concluída silenciosamente (sem hist)
+    if (id.startsWith('virtual_')) {
+      const t = expandedTasks.find(x => x.id === id)
+      if (t) {
+        const { isVirtual: _iv, ...payload } = t as any
+        const skipped = { ...payload, id: genId(), status: 'Concluída' as const, completed_at: new Date().toLocaleDateString('pt-BR') }
+        await sb.from('tasks').insert(skipped)
+        setTasks(prev => [...prev, skipped])
+      }
+      return
+    }
+    // Atrasada real da tabela atrasadas (não-recorrente)
+    if (atrasadas.some(a => a.id === id)) {
+      await sb.from('atrasadas').delete().eq('id', id)
+      setAtrasadas(prev => prev.filter(x => x.id !== id))
+      return
+    }
+    // Tarefa mestre recorrente vencida → avança mestre + materializa data como concluída
+    const t = tasks.find(x => x.id === id)
+    if (t && (t as any).recur_group_id && t.recur && t.recur !== 'none') {
+      const completedAt = new Date().toLocaleDateString('pt-BR')
+      const completedRecord = { ...t, id: genId(), status: 'Concluída' as const, completed_at: completedAt }
+      await sb.from('tasks').insert(completedRecord)
+      setTasks(prev => [...prev, completedRecord])
+
+      const nextDate = getNextOccurrenceAfter(t.recur!, t.recur_days || [], t.recur_start || t.date, getTodayStr())
+      if (nextDate) {
+        await sb.from('tasks').update({ date: nextDate }).eq('id', id)
+        setTasks(prev => prev.map(x => x.id === id ? { ...x, date: nextDate } : x))
+      } else {
+        await sb.from('tasks').delete().eq('id', id)
+        setTasks(prev => prev.filter(x => x.id !== id))
+      }
+    }
+  }, [atrasadas, tasks, expandedTasks])
 
   // ── MEETINGS ──────────────────────────────────────────────
   const saveMeet = useCallback(async (meetData: Partial<Meeting>, editId?: string): Promise<boolean> => {
@@ -479,7 +575,7 @@ export function useAppData() {
   return {
     tasks,
     expandedTasks, // ← usado pelo TasksPage para exibir
-    hist, meets, team, tags, atrasadas, backups, loading,
+    hist, meets, team, tags, atrasadas, atrasadasRecorrentes, allAtrasadas, backups, loading,
     setTasks, setHist, setMeets, setTeam, setTags, setAtrasadas,
     loadAll,
     saveTask, completeTask, deleteTask, cycleStatus, reorderTasks, reopenTask, deleteAtrasada,

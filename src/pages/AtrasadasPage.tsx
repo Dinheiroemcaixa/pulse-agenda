@@ -62,10 +62,13 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, onComplet
                 const mc = m?.color || '#ff4d6d'
                 const diasAtraso = a.date ? Math.floor((Date.now() - new Date(a.date + 'T00:00:00').getTime()) / 86400000) : 0
                 return (
-                  <div key={a.id} className="hist-card" style={{ borderLeft: '3px solid var(--red)' }}>
+                  <div key={a.id} className="hist-card" style={{ borderLeft: `3px solid ${a.recur && a.recur !== 'none' ? 'var(--orange)' : 'var(--red)'}` }}>
                     <div className="hist-card-check" style={{ background: 'var(--redbg)', color: 'var(--red)', border: '1.5px solid var(--red)', cursor: 'default' }}>!</div>
                     <div className="hist-card-body">
-                      <div className="hist-card-title">{a.descricao}</div>
+                      <div className="hist-card-title">
+                        {a.recur && a.recur !== 'none' && <span style={{ marginRight: 5, opacity: 0.7 }}>🔁</span>}
+                        {a.descricao}
+                      </div>
                       <div className="hist-card-meta">
                         <div className="asgn">
                           <div className="avsm" style={{ background: mc, width: 18, height: 18, fontSize: 8 }}>{getInitials(a.resp)}</div>

@@ -91,3 +91,30 @@ export function getTagStyle(tag: Tag | undefined): { color: string; bg: string }
 export function priorityClass(p: string): string {
   return p === 'Alta' ? 'p-alta' : p === 'Baixa' ? 'p-baixa' : 'p-media'
 }
+
+// Retorna a próxima data de ocorrência depois de afterDate (exclusive)
+export function getNextOccurrenceAfter(
+  recur: string,
+  recurDays: string[],
+  recurStart: string,
+  afterDate: string
+): string | null {
+  const after = new Date(afterDate + 'T00:00:00')
+  const rangeEnd = new Date(after)
+  rangeEnd.setDate(rangeEnd.getDate() + 400)
+  const current = new Date(after)
+  current.setDate(current.getDate() + 1)
+  const dayNames = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab']
+  while (current <= rangeEnd) {
+    const dow = current.getDay()
+    let matches = false
+    if (recur === 'daily') matches = true
+    else if (recur === 'weekdays') matches = dow >= 1 && dow <= 5
+    else if (recur === 'weekly') matches = new Date(recurStart + 'T00:00:00').getDay() === dow
+    else if (recur === 'monthly') matches = new Date(recurStart + 'T00:00:00').getDate() === current.getDate()
+    else if (recur === 'custom') matches = recurDays.includes(dayNames[dow])
+    if (matches) return current.toISOString().split('T')[0]
+    current.setDate(current.getDate() + 1)
+  }
+  return null
+}
