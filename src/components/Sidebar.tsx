@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { User, TeamMember, Task } from '../types'
-import { getInitials, getTodayStr } from '../lib/utils'
+import { getInitials, getTodayStr, hashPass, COLORS } from '../lib/utils'
 import type { Page } from '../types'
 
 interface Props {
@@ -27,10 +27,35 @@ export function Sidebar({ page, setPage, currentUser, isAdmin, tasks, atrasadas,
   const [userModalOpen, setUserModalOpen] = useState(false)
   const [uName, setUName] = useState(currentUser.name)
   const [uRole, setURole] = useState(currentUser.role)
+  const [uColor, setUColor] = useState(currentUser.color)
+  const [passAtual, setPassAtual] = useState('')
+  const [passNova, setPassNova] = useState('')
+  const [passConf, setPassConf] = useState('')
+  const [passErr, setPassErr] = useState('')
+
+  const openUserModal = () => {
+    setUName(currentUser.name)
+    setURole(currentUser.role || '')
+    setUColor(currentUser.color)
+    setPassAtual(''); setPassNova(''); setPassConf(''); setPassErr('')
+    setUserModalOpen(true)
+  }
 
   const saveUser = async () => {
     if (!uName.trim()) { showToast('⚠ Preencha o nome', 'warn'); return }
-    const ok = await onUpdateUser(currentUser.id, { name: uName.trim(), role: uRole.trim() })
+    const update: Partial<User> = { name: uName.trim(), role: uRole.trim(), color: uColor }
+
+    // Troca de senha — só processa se o usuário preencheu algum campo
+    if (passAtual || passNova || passConf) {
+      if (!passAtual) { setPassErr('Informe a senha atual'); return }
+      if (hashPass(passAtual) !== currentUser.pass_hash) { setPassErr('Senha atual incorreta'); return }
+      if (!passNova) { setPassErr('Informe a nova senha'); return }
+      if (passNova.length < 4) { setPassErr('A nova senha deve ter ao menos 4 caracteres'); return }
+      if (passNova !== passConf) { setPassErr('As senhas não coincidem'); return }
+      update.pass_hash = hashPass(passNova)
+    }
+    setPassErr('')
+    const ok = await onUpdateUser(currentUser.id, update)
     if (ok) { showToast('✅ Perfil atualizado', 'success'); setUserModalOpen(false) }
     else showToast('❌ Erro ao salvar', 'error')
   }
@@ -120,7 +145,7 @@ export function Sidebar({ page, setPage, currentUser, isAdmin, tasks, atrasadas,
         </nav>
 
         <div className="user-area">
-          <div className="uc" onClick={() => { setUName(currentUser.name); setURole(currentUser.role); setUserModalOpen(true) }}>
+          <div className="uc" onClick={openUserModal}>
             <div className="av" style={{ background: currentUser.color }}>{getInitials(currentUser.name)}</div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="un" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUser.name}</div>
@@ -137,19 +162,83 @@ export function Sidebar({ page, setPage, currentUser, isAdmin, tasks, atrasadas,
 
       {userModalOpen && (
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setUserModalOpen(false)}>
-          <div className="modal modal-sm">
+          <div className="modal" style={{ width: 460 }}>
             <div className="modal-title">Editar Perfil</div>
-            <div className="field">
-              <label className="label">Nome</label>
-              <input className="inp" value={uName} onChange={e => setUName(e.target.value)} />
+
+            {/* Preview do avatar */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 18 }}>
+              <div style={{
+                width: 64, height: 64, borderRadius: '50%', background: uColor,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 22, fontWeight: 800, color: '#fff',
+                boxShadow: `0 0 0 4px ${uColor}44`
+              }}>
+                {getInitials(uName || currentUser.name)}
+              </div>
             </div>
-            <div className="field">
-              <label className="label">Cargo</label>
-              <input className="inp" value={uRole} onChange={e => setURole(e.target.value)} />
+
+            {/* Nome e Cargo */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div className="field">
+                <label className="label">Nome</label>
+                <input className="inp" value={uName} onChange={e => setUName(e.target.value)} />
+              </div>
+              <div className="field">
+                <label className="label">Cargo</label>
+                <input className="inp" value={uRole} onChange={e => setURole(e.target.value)} />
+              </div>
             </div>
+
+            {/* E-mail (somente leitura) */}
+            <div className="field">
+              <label className="label">E-mail</label>
+              <input className="inp" value={currentUser.email} readOnly
+                style={{ opacity: 0.5, cursor: 'default' }} />
+            </div>
+
+            {/* Cor do avatar */}
+            <div className="field">
+              <label className="label">Cor do avatar</label>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                {COLORS.map(c => (
+                  <div key={c} onClick={() => setUColor(c)} style={{
+                    width: 28, height: 28, borderRadius: '50%', background: c, cursor: 'pointer',
+                    border: uColor === c ? '3px solid #fff' : '3px solid transparent',
+                    boxShadow: uColor === c ? `0 0 0 2px ${c}` : 'none',
+                    transition: 'all .15s',
+                  }} />
+                ))}
+              </div>
+            </div>
+
+            {/* Separador */}
+            <div style={{ borderTop: '1px solid var(--border)', margin: '16px 0 12px', paddingTop: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text3)', letterSpacing: 1, marginBottom: 10 }}>
+                ALTERAR SENHA <span style={{ fontWeight: 400, opacity: 0.6 }}>(deixe em branco para não alterar)</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label className="label">Senha atual</label>
+                  <input className="inp" type="password" placeholder="••••••"
+                    value={passAtual} onChange={e => { setPassAtual(e.target.value); setPassErr('') }} />
+                </div>
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label className="label">Nova senha</label>
+                  <input className="inp" type="password" placeholder="••••••"
+                    value={passNova} onChange={e => { setPassNova(e.target.value); setPassErr('') }} />
+                </div>
+                <div className="field" style={{ marginBottom: 0 }}>
+                  <label className="label">Confirmar</label>
+                  <input className="inp" type="password" placeholder="••••••"
+                    value={passConf} onChange={e => { setPassConf(e.target.value); setPassErr('') }} />
+                </div>
+              </div>
+              {passErr && <div style={{ color: 'var(--red)', fontSize: 12, marginTop: 8 }}>⚠ {passErr}</div>}
+            </div>
+
             <div className="modal-footer">
               <button className="bcancel" onClick={() => setUserModalOpen(false)}>Cancelar</button>
-              <button className="btn-primary" onClick={saveUser}>Salvar</button>
+              <button className="btn-primary" onClick={saveUser}>💾 Salvar</button>
             </div>
           </div>
         </div>

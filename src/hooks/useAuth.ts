@@ -65,6 +65,14 @@ export function useAuth() {
   const updateUser = async (id: string, data: Partial<User>): Promise<boolean> => {
     const { error } = await sb.from('users').update(data).eq('id', id)
     if (error) return false
+    // Sincroniza nome, cargo e cor também na tabela team (usada para exibição da equipe)
+    const teamSync: Record<string, unknown> = {}
+    if (data.name !== undefined) teamSync.name = data.name
+    if (data.role !== undefined) teamSync.role = data.role
+    if (data.color !== undefined) teamSync.color = data.color
+    if (Object.keys(teamSync).length > 0) {
+      await sb.from('team').update(teamSync).eq('id', id)
+    }
     setCurrentUser(prev => prev ? { ...prev, ...data } : prev)
     return true
   }
