@@ -8,7 +8,7 @@ html{height:100%;width:100%;overflow:hidden}
   --red:#ff4d6d;--redbg:rgba(255,77,109,0.12);
   --green:#3dd68c;--greenbg:rgba(61,214,140,0.12);
   --orange:#ffa94d;--orangebg:rgba(255,169,77,0.12);
-  --purple:#cc5de8;--purplebg:rgba(204,93,232,0.12);
+  --purple:#7e9ccc;--purplebg:rgba(126,156,204,0.1);
   --border:#1e2a45;--radius:10px;
 }
 body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);height:100%;width:100%;display:flex;overflow:hidden;font-size:14px}
@@ -115,7 +115,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 .tn{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tt{display:flex;flex-wrap:wrap;gap:3px;margin-top:2px}
 .tag{padding:2px 7px;border-radius:20px;font-size:10px;font-weight:700}
-.recur-badge{font-size:10px;color:var(--purple);background:var(--purplebg);padding:2px 6px;border-radius:10px;font-weight:600}
+.recur-badge{font-size:10px;color:var(--purple);background:var(--purplebg);border:1px solid rgba(126,156,204,0.2);padding:2px 6px;border-radius:10px;font-weight:500}
 .asgn{display:flex;align-items:center;gap:5px;min-width:0}
 .dc{font-size:11px;color:var(--text2);white-space:nowrap}
 .dc.late{color:var(--red)}
