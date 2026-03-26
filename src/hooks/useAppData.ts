@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { sb } from '../lib/supabase'
-import { genId, hashPass, getTodayStr, isTodayValidForRecur } from '../lib/utils'
-import type { Task, User, TeamMember, Meeting, Tag, Backup } from '../types'
+import { genId, getTodayStr, isTodayValidForRecur } from '../lib/utils'
+import type { Task, TeamMember, Meeting, Tag, Backup } from '../types'
 
 export function useAppData() {
   const [tasks, setTasks] = useState<Task[]>([])
@@ -25,52 +25,78 @@ export function useAppData() {
       sb.from('backup_tasks').select('id,backup_date,backup_label,created_at').order('created_at', { ascending: false }).limit(30),
     ])
 
-    const loadedTasks: Task[] = tasksRes.data || []
-    const loadedAtrasadas: Task[] = atrasadasRes.data || []
-
     setHist(histRes.data || [])
     setMeets(meetsRes.data || [])
     setTeam(teamRes.data || [])
     setTags(tagsRes.data || [])
     setBackups(backupsRes.data || [])
 
-    // 1. Move vencidas para atrasadas (incluindo recorrentes)
     const todayStr = getTodayStr()
     const todayBR = new Date().toLocaleDateString('pt-BR')
     const today = new Date(todayStr + 'T00:00:00')
 
-    let updatedTasks = [...loadedTasks]
-    let updatedAtrasadas = [...loadedAtrasadas]
+    let updatedTasks: Task[] = tasksRes.data || []
+    let updatedAtrasadas: Task[] = atrasadasRes.data || []
 
-    const vencidas = updatedTasks.filter(t => t.date && t.date < todayStr && t.status !== 'Concluída')
-    for (const t of vencidas) {
-      const jaEsta = updatedAtrasadas.some(a => a.id === t.id)
-      if (jaEsta) continue
-      await sb.from('atrasadas').upsert({ ...t, status: 'Atrasada', moved_at: todayBR })
-      await sb.from('tasks').delete().eq('id', t.id)
-      updatedTasks = updatedTasks.filter(x => x.id !== t.id)
-      updatedAtrasadas = [...updatedAtrasadas, { ...t, status: 'Atrasada', moved_at: todayBR }]
-    }
+    // ================================================================
+    // LÓGICA DE RECORRÊNCIA
+    //
+    // REGRAS:
+    //   a) Tarefa recorrente com data < hoje E hoje é dia válido:
+    //      → ocorrência velha vai para ATRASADAS (registro de que não foi feita)
+    //      → cria NOVA ocorrência para HOJE
+    //   b) Data === hoje → já existe, nada a fazer
+    //   c) Data > hoje  → futura, nada a fazer
+    //
+    //   Tarefas NÃO recorrentes vencidas → vão para ATRASADAS somente.
+    //
+    //   completeTask NÃO cria próxima ocorrência.
+    //   O loadAll() faz isso automaticamente todo dia ao abrir o app.
+    // ================================================================
 
-    // 2. Gera ocorrências recorrentes para hoje
-    // Usa tasks + atrasadas como base
-    const recorrentesMap: Record<string, Task> = {}
-    for (const t of updatedTasks.filter(t => t.recur && t.recur !== 'none')) {
+    // PASSO 1 — Spawn de recorrentes
+    // Busca diretamente do banco (mais confiável que estado em memória)
+    const [trRes, arRes] = await Promise.all([
+      sb.from('tasks').select('*').neq('recur', 'none'),
+      sb.from('atrasadas').select('*').neq('recur', 'none'),
+    ])
+    const allRec: Task[] = [...(trRes.data || []), ...(arRes.data || [])]
+
+    // Agrupa por identidade de série, pega a ocorrência mais recente de cada uma
+    const recMap: Record<string, Task> = {}
+    for (const t of allRec) {
+      if (!t.recur || t.recur === 'none') continue
       const key = `${t.descricao}||${t.resp}||${t.recur}||${t.recur_start || t.date}`
-      if (!recorrentesMap[key] || t.date > recorrentesMap[key].date) recorrentesMap[key] = t
-    }
-    for (const t of updatedAtrasadas.filter(t => t.recur && t.recur !== 'none')) {
-      const key = `${t.descricao}||${t.resp}||${t.recur}||${t.recur_start || t.date}`
-      if (!recorrentesMap[key] || t.date > recorrentesMap[key].date) recorrentesMap[key] = t
+      if (!recMap[key] || t.date > recMap[key].date) recMap[key] = t
     }
 
-    for (const t of Object.values(recorrentesMap)) {
+    for (const t of Object.values(recMap)) {
+      // Já tem ocorrência de hoje ou futura → nada a fazer
       if (t.date >= todayStr) continue
+
       const recurDays = Array.isArray(t.recur_days) ? t.recur_days : []
       const recurStart = t.recur_start || t.date
+
+      // Hoje não é dia válido para esta recorrência → pula
       if (!isTodayValidForRecur(t.recur, recurDays, recurStart, today)) continue
-      const jaExiste = updatedTasks.some(x => x.descricao === t.descricao && x.resp === t.resp && x.recur === t.recur && x.date === todayStr)
-      if (jaExiste) continue
+
+      // Verifica duplicata no banco antes de criar
+      const { data: existing } = await sb.from('tasks')
+        .select('id').eq('descricao', t.descricao).eq('resp', t.resp)
+        .eq('recur', t.recur).eq('date', todayStr).limit(1)
+      if (existing && existing.length > 0) continue
+
+      // Ocorrência vencida → move para ATRASADAS (se ainda não estiver lá)
+      const jaEmAtrasadas = updatedAtrasadas.some(a => a.id === t.id)
+      const eraEmAtrasadas = (arRes.data || []).some(a => a.id === t.id)
+      if (!jaEmAtrasadas && !eraEmAtrasadas) {
+        await sb.from('atrasadas').upsert({ ...t, status: 'Atrasada', moved_at: todayBR })
+        await sb.from('tasks').delete().eq('id', t.id)
+        updatedTasks = updatedTasks.filter(x => x.id !== t.id)
+        updatedAtrasadas = [...updatedAtrasadas, { ...t, status: 'Atrasada' as const, moved_at: todayBR }]
+      }
+
+      // Cria nova ocorrência para HOJE
       const newTask: Task = {
         ...t,
         id: genId(),
@@ -79,13 +105,28 @@ export function useAppData() {
         completed_at: undefined,
         moved_at: undefined,
         subtasks: (t.subtasks || []).map(s => ({ ...s, done: false })),
-        sort_order: t.sort_order,
+        recur_start: recurStart,
+        sort_order: t.sort_order ?? 0,
       }
-      await sb.from('tasks').insert(newTask)
-      updatedTasks = [...updatedTasks, newTask]
+      const { error: insErr } = await sb.from('tasks').insert(newTask)
+      if (!insErr) updatedTasks = [...updatedTasks, newTask]
+      else console.error('Erro ao criar recorrência para hoje:', insErr)
     }
 
-    // Recarrega do banco para garantir consistência
+    // PASSO 2 — Move NÃO-recorrentes vencidas para Atrasadas
+    const vencidas = updatedTasks.filter(
+      t => t.date && t.date < todayStr && t.status !== 'Concluída' && (!t.recur || t.recur === 'none')
+    )
+    for (const t of vencidas) {
+      const jaEsta = updatedAtrasadas.some(a => a.id === t.id)
+      if (jaEsta) continue
+      await sb.from('atrasadas').upsert({ ...t, status: 'Atrasada', moved_at: todayBR })
+      await sb.from('tasks').delete().eq('id', t.id)
+      updatedTasks = updatedTasks.filter(x => x.id !== t.id)
+      updatedAtrasadas = [...updatedAtrasadas, { ...t, status: 'Atrasada' as const, moved_at: todayBR }]
+    }
+
+    // Recarrega do banco para garantir consistência total
     const { data: finalTasks } = await sb.from('tasks').select('*').order('sort_order', { ascending: true })
     const { data: finalAtrasadas } = await sb.from('atrasadas').select('*').order('date', { ascending: true })
 
@@ -119,8 +160,7 @@ export function useAppData() {
     if (!t) return false
 
     const completedAt = new Date().toLocaleDateString('pt-BR')
-    // Constrói histItem SOMENTE com campos que existem na tabela hist
-    // Nunca usa spread para evitar enviar sort_order, moved_at, etc.
+    // Campos explícitos — nunca spread completo para evitar colunas inválidas na tabela hist
     const histItem = {
       id: genId(),
       descricao: t.descricao,
@@ -144,6 +184,7 @@ export function useAppData() {
     const { error } = await sb.from('hist').insert(histItem)
     if (error) { console.error('Erro hist:', error); return false }
 
+    // NÃO cria próxima ocorrência aqui — loadAll() faz isso automaticamente no próximo dia
     if (fromAtrasadas) {
       await sb.from('atrasadas').delete().eq('id', id)
       setAtrasadas(prev => prev.filter(x => x.id !== id))
@@ -159,7 +200,6 @@ export function useAppData() {
     const t = tasks.find(x => x.id === id)
     if (!t) return
     if (deleteAll && t.recur && t.recur !== 'none') {
-      // Remove todas as da mesma série (mesmo desc+resp+recur)
       const series = tasks.filter(x => x.descricao === t.descricao && x.resp === t.resp && x.recur === t.recur)
       for (const s of series) await sb.from('tasks').delete().eq('id', s.id)
       setTasks(prev => prev.filter(x => !(x.descricao === t.descricao && x.resp === t.resp && x.recur === t.recur)))
@@ -187,18 +227,17 @@ export function useAppData() {
     const h = hist.find(x => x.id === histId)
     if (!h) return false
     const todayStr = getTodayStr()
-    const { data: allTasks } = await sb.from('tasks').select('sort_order').order('sort_order', { ascending: false }).limit(1)
-    const maxOrder = allTasks?.[0]?.sort_order ?? -1
     const newTask: Task = {
       ...h,
       id: genId(),
       date: todayStr,
       status: 'Em Aberto',
+      recur: 'none',
+      recur_days: [],
+      recur_start: null,
       completed_at: undefined,
       sort_order: 0,
     }
-    // Abre espaço no topo
-    await sb.from('tasks').update({ sort_order: maxOrder + 2 }).eq('id', 'dummy_nonexistent') // noop trick
     const allCurrent = await sb.from('tasks').select('id,sort_order').order('sort_order', { ascending: true })
     if (allCurrent.data) {
       const ups = allCurrent.data.map(t => sb.from('tasks').update({ sort_order: (t.sort_order || 0) + 1 }).eq('id', t.id))
@@ -206,7 +245,9 @@ export function useAppData() {
       setTasks(prev => prev.map(t => ({ ...t, sort_order: (t.sort_order || 0) + 1 })))
     }
     await sb.from('tasks').insert(newTask)
+    await sb.from('hist').delete().eq('id', histId)
     setTasks(prev => [newTask, ...prev])
+    setHist(prev => prev.filter(x => x.id !== histId))
     return true
   }, [hist])
 
