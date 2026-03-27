@@ -123,7 +123,7 @@ export function useAppData() {
               id: `virtual_${master.recur_group_id}_${dateStr}`,
               date: dateStr,
               status: 'Em Aberto',
-              subtasks: (master.subtasks || []).map(s => ({ ...s, done: false })),
+              subtasks: (master.subtasks || []).map(s => ({ ...s })),
               completed_at: undefined,
               moved_at: undefined,
               isVirtual: true as any,
@@ -524,13 +524,29 @@ export function useAppData() {
   // ── SUBTASKS ──────────────────────────────────────────────
   const toggleSubtask = useCallback(async (taskId: string, idx: number): Promise<void> => {
     const isVirtual = taskId.startsWith('virtual_')
-    if (isVirtual) return // Virtuais não têm subtasks persistidas ainda
+
+    if (isVirtual) {
+      // Tarefa virtual: localiza o mestre da série e atualiza sua subtarefa
+      const virtualTask = expandedTasks.find(x => x.id === taskId)
+      if (!virtualTask || !(virtualTask as any).recur_group_id) return
+      const master = tasks.find(x =>
+        (x as any).recur_group_id === (virtualTask as any).recur_group_id &&
+        !String(x.id).startsWith('virtual_') &&
+        x.status !== 'Concluída'
+      )
+      if (!master) return
+      const updated = (master.subtasks || []).map((s, i) => i === idx ? { ...s, done: !s.done } : s)
+      await sb.from('tasks').update({ subtasks: updated }).eq('id', master.id)
+      setTasks(prev => prev.map(x => x.id === master.id ? { ...x, subtasks: updated } : x))
+      return
+    }
+
     const t = tasks.find(x => x.id === taskId)
     if (!t) return
     const updated = t.subtasks.map((s, i) => i === idx ? { ...s, done: !s.done } : s)
     await sb.from('tasks').update({ subtasks: updated }).eq('id', taskId)
     setTasks(prev => prev.map(x => x.id === taskId ? { ...x, subtasks: updated } : x))
-  }, [tasks])
+  }, [tasks, expandedTasks])
 
   const addSubtask = useCallback(async (taskId: string, text: string): Promise<void> => {
     const t = tasks.find(x => x.id === taskId)
