@@ -11,6 +11,16 @@ html{height:100%;width:100%;overflow:hidden}
   --purple:#7e9ccc;--purplebg:rgba(126,156,204,0.1);
   --border:#1e2a45;--radius:10px;
 }
+[data-theme="light"]{
+  --bg:#f0f2f8;--bg2:#ffffff;--bg3:#e8ecf5;--bg4:#dde3f0;
+  --text:#1a2035;--text2:#4a5578;--text3:#8892b0;
+  --accent:#4f6ef7;--accent2:#6b87ff;--accentbg:rgba(79,110,247,0.1);
+  --red:#e0294a;--redbg:rgba(224,41,74,0.1);
+  --green:#1fa86a;--greenbg:rgba(31,168,106,0.1);
+  --orange:#d97706;--orangebg:rgba(217,119,6,0.1);
+  --purple:#5b7ab0;--purplebg:rgba(91,122,176,0.1);
+  --border:#cdd5e8;--radius:10px;
+}
 body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);height:100%;width:100%;display:flex;overflow:hidden;font-size:14px}
 ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
 

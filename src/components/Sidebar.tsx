@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { User, TeamMember, Task } from '../types'
 import { getInitials, getTodayStr, hashPass, COLORS } from '../lib/utils'
 import type { Page } from '../types'
@@ -32,6 +32,16 @@ export function Sidebar({ page, setPage, currentUser, isAdmin, tasks, atrasadas,
   const [passNova, setPassNova] = useState('')
   const [passConf, setPassConf] = useState('')
   const [passErr, setPassErr] = useState('')
+
+  // Tema claro / escuro
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('pulse-theme') as 'dark' | 'light') || 'dark'
+  })
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme === 'light' ? 'light' : ''
+    localStorage.setItem('pulse-theme', theme)
+  }, [theme])
+  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
 
   const openUserModal = () => {
     setUName(currentUser.name)
@@ -209,6 +219,27 @@ export function Sidebar({ page, setPage, currentUser, isAdmin, tasks, atrasadas,
                   }} />
                 ))}
               </div>
+            </div>
+
+            {/* Tema */}
+            <div className="field">
+              <label className="label">Aparência</label>
+              <button onClick={toggleTheme} style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px',
+                background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 8,
+                color: 'var(--text)', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                transition: 'all .15s', width: '100%',
+              }}>
+                <span style={{ fontSize: 18 }}>{theme === 'dark' ? '☀️' : '🌙'}</span>
+                {theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'}
+                <span style={{
+                  marginLeft: 'auto', padding: '2px 8px', borderRadius: 20, fontSize: 11,
+                  background: theme === 'dark' ? 'var(--bg4)' : 'var(--accentbg)',
+                  color: theme === 'dark' ? 'var(--text3)' : 'var(--accent)',
+                }}>
+                  {theme === 'dark' ? 'Escuro' : 'Claro'}
+                </span>
+              </button>
             </div>
 
             {/* Separador */}
