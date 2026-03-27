@@ -408,8 +408,12 @@ export function useAppData() {
   }, [tasks])
 
   const reorderTasks = useCallback(async (reordered: Task[]): Promise<void> => {
-    setTasks(reordered)
-    const updates = reordered.map((t, i) => sb.from('tasks').update({ sort_order: i }).eq('id', t.id))
+    // Filtra apenas tarefas reais (exclui virtuais geradas pelo expandedTasks)
+    // Sem esse filtro, setTasks recebe centenas de virtuais passadas,
+    // corrompendo atrasadasRecorrentes e causando o bug do contador 122+
+    const realOnly = reordered.filter(t => !String(t.id).startsWith('virtual_'))
+    setTasks(realOnly)
+    const updates = realOnly.map((t, i) => sb.from('tasks').update({ sort_order: i }).eq('id', t.id))
     await Promise.all(updates)
   }, [])
 
