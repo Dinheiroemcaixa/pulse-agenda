@@ -35,6 +35,10 @@ export function useAppData() {
   const [backups, setBackups] = useState<Backup[]>([])
   const [loading, setLoading] = useState(false)
 
+  // Estado local para subtarefas de tarefas virtuais (não persiste no tasks state)
+  // Chave: virtual task ID → array de booleans (done por índice)
+  const [vsOverrides, setVsOverrides] = useState<Record<string, boolean[]>>({})
+
   // ── EXPANDED TASKS (lógica virtual) ──────────────────────
   // Gera ocorrências virtuais para todas as séries recorrentes
   // SEM criar registros no banco
@@ -118,12 +122,18 @@ export function useAppData() {
           }
 
           if (matches) {
+            const virtualId = `virtual_${master.recur_group_id}_${dateStr}`
+            const override = vsOverrides[virtualId]
             result.push({
               ...master,
-              id: `virtual_${master.recur_group_id}_${dateStr}`,
+              id: virtualId,
               date: dateStr,
               status: 'Em Aberto',
-              subtasks: (master.subtasks || []).map(s => ({ ...s })),
+              // Usa override local se existir, senão inicia do zero (done: false)
+              subtasks: (master.subtasks || []).map((s, i) => ({
+                ...s,
+                done: override ? (override[i] ?? false) : false,
+              })),
               completed_at: undefined,
               moved_at: undefined,
               isVirtual: true as any,
@@ -160,7 +170,7 @@ export function useAppData() {
     })
 
     return finalResult
-  }, [tasks])
+  }, [tasks, vsOverrides])
 
   // ── ATRASADAS RECORRENTES ─────────────────────────────────
   // Usa APENAS registros reais do banco (tasks), NÃO expandedTasks.
@@ -526,7 +536,8 @@ export function useAppData() {
     const isVirtual = taskId.startsWith('virtual_')
 
     if (isVirtual) {
-      // Tarefa virtual: localiza o mestre da série e atualiza sua subtarefa
+      // Tarefa virtual: atualiza o override local (não toca no tasks state)
+      // e persiste a alteração no mestre para referência futura
       const virtualTask = expandedTasks.find(x => x.id === taskId)
       if (!virtualTask || !(virtualTask as any).recur_group_id) return
       const master = tasks.find(x =>
@@ -535,9 +546,13 @@ export function useAppData() {
         x.status !== 'Concluída'
       )
       if (!master) return
-      const updated = (master.subtasks || []).map((s, i) => i === idx ? { ...s, done: !s.done } : s)
-      await sb.from('tasks').update({ subtasks: updated }).eq('id', master.id)
-      setTasks(prev => prev.map(x => x.id === master.id ? { ...x, subtasks: updated } : x))
+      // Calcula o novo estado: parte do override existente ou do estado atual da virtual
+      const current = vsOverrides[taskId] ?? (virtualTask.subtasks || []).map(s => s.done)
+      const newDone = current.map((d, i) => i === idx ? !d : d)
+      setVsOverrides(prev => ({ ...prev, [taskId]: newDone }))
+      // Persiste no mestre em background (sem alterar tasks state)
+      const masterUpdated = (master.subtasks || []).map((s, i) => ({ ...s, done: newDone[i] ?? s.done }))
+      await sb.from('tasks').update({ subtasks: masterUpdated }).eq('id', master.id)
       return
     }
 
@@ -546,7 +561,7 @@ export function useAppData() {
     const updated = t.subtasks.map((s, i) => i === idx ? { ...s, done: !s.done } : s)
     await sb.from('tasks').update({ subtasks: updated }).eq('id', taskId)
     setTasks(prev => prev.map(x => x.id === taskId ? { ...x, subtasks: updated } : x))
-  }, [tasks, expandedTasks])
+  }, [tasks, expandedTasks, vsOverrides])
 
   const addSubtask = useCallback(async (taskId: string, text: string): Promise<void> => {
     const t = tasks.find(x => x.id === taskId)
