@@ -22,8 +22,12 @@ export default function App() {
   const [searchQ, setSearchQ] = useState('')
   const [dateFilter, setDateFilter] = useState(getTodayStr())
   const [tagFilter, setTagFilter] = useState('')
-  const [viewingAll, setViewingAll] = useState(false)
-  const [memberFilter, setMemberFilter] = useState('all')
+  const [viewingAll, setViewingAll] = useState(() => {
+    try { return localStorage.getItem('pulse_viewingAll') === 'true' } catch { return false }
+  })
+  const [memberFilter, setMemberFilter] = useState(() => {
+    try { return localStorage.getItem('pulse_memberFilter') || 'all' } catch { return 'all' }
+  })
   const [taskModalOpen, setTaskModalOpen] = useState(false)
   const [editTaskId, setEditTaskId] = useState<string | null>(null)
   const [taskModalDate, setTaskModalDate] = useState<string | undefined>()

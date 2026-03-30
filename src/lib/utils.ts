@@ -28,7 +28,12 @@ export function hashPass(p: string): string {
 }
 
 export function getTodayStr(): string {
-  return new Date().toISOString().split('T')[0]
+  // Usar horário local (não UTC) para evitar bug de virada de dia no Brasil (UTC-3)
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 export function fDate(d: string): string {
@@ -113,7 +118,12 @@ export function getNextOccurrenceAfter(
     else if (recur === 'weekly') matches = new Date(recurStart + 'T00:00:00').getDay() === dow
     else if (recur === 'monthly') matches = new Date(recurStart + 'T00:00:00').getDate() === current.getDate()
     else if (recur === 'custom') matches = recurDays.includes(dayNames[dow])
-    if (matches) return current.toISOString().split('T')[0]
+    if (matches) {
+      const y = current.getFullYear()
+      const m = String(current.getMonth() + 1).padStart(2, '0')
+      const day = String(current.getDate()).padStart(2, '0')
+      return `${y}-${m}-${day}`
+    }
     current.setDate(current.getDate() + 1)
   }
   return null

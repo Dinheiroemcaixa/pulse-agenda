@@ -97,7 +97,10 @@ export function useAppData() {
 
       let count = 0
       while (current <= rangeEnd && count < 1000) {
-        const dateStr = current.toISOString().split('T')[0]
+        const y = current.getFullYear()
+        const mo = String(current.getMonth() + 1).padStart(2, '0')
+        const dy = String(current.getDate()).padStart(2, '0')
+        const dateStr = `${y}-${mo}-${dy}`
         const key = `${master.recur_group_id}_${dateStr}`
 
         // Só gera virtual se não existe registro real para esta data/série
@@ -233,6 +236,35 @@ export function useAppData() {
       await sb.from('tasks').delete().eq('id', t.id)
       updatedTasks = updatedTasks.filter(x => x.id !== t.id)
       updatedAtrasadas = [...updatedAtrasadas, { ...t, status: 'Atrasada' as const, moved_at: todayBR }]
+    }
+
+    // ── AVANÇAR MESTRES RECORRENTES PRESOS NO PASSADO ─────────
+    // Se um mestre recorrente tem date < hoje e status != 'Concluída',
+    // isso indica que ficou preso (bug, falha de rede, etc.).
+    // Solução: avançar silenciosamente para a próxima ocorrência a partir de HOJE.
+    // NÃO criamos registro de concluída pois o usuário não concluiu — apenas corrigimos a data.
+    const mestresPresos = updatedTasks.filter(t =>
+      t.date && t.date < todayStr &&
+      t.status !== 'Concluída' &&
+      t.recur && t.recur !== 'none' &&
+      t.recur_group_id
+    )
+
+    for (const t of mestresPresos) {
+      // Avança para a próxima ocorrência a partir de ontem (para incluir hoje se válido)
+      const ontem = new Date(todayStr + 'T00:00:00')
+      ontem.setDate(ontem.getDate() - 1)
+      const ontemStr = `${ontem.getFullYear()}-${String(ontem.getMonth()+1).padStart(2,'0')}-${String(ontem.getDate()).padStart(2,'0')}`
+      const nextDate = getNextOccurrenceAfter(
+        t.recur!,
+        t.recur_days || [],
+        t.recur_start || t.date,
+        ontemStr
+      )
+      if (nextDate) {
+        await sb.from('tasks').update({ date: nextDate }).eq('id', t.id)
+        updatedTasks = updatedTasks.map(x => x.id === t.id ? { ...x, date: nextDate } : x)
+      }
     }
 
     // Recarrega do banco para consistência

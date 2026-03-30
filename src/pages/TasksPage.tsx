@@ -371,7 +371,13 @@ export function TasksPage(props: Props) {
       {isAdmin && (
         <div className={`scope-banner${viewingAll ? ' team-mode' : ''}`}>
           <span>{viewingAll ? '👥 Mostrando tarefas de toda a equipe' : '📋 Mostrando apenas suas tarefas'}</span>
-          <button className="scope-btn" onClick={() => { props.setViewingAll(!viewingAll); props.setMemberFilter(viewingAll ? currentUser.name : 'all') }}>
+          <button className="scope-btn" onClick={() => {
+            const next = !viewingAll
+            props.setViewingAll(next)
+            props.setMemberFilter(next ? 'all' : currentUser.name)
+            try { localStorage.setItem('pulse_viewingAll', String(next)) } catch {}
+            try { localStorage.setItem('pulse_memberFilter', next ? 'all' : currentUser.name) } catch {}
+          }}>
             {viewingAll ? 'Ver só as minhas' : 'Ver toda a equipe'}
           </button>
         </div>
