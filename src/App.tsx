@@ -22,14 +22,8 @@ export default function App() {
   const [searchQ, setSearchQ] = useState('')
   const [dateFilter, setDateFilter] = useState(getTodayStr())
   const [tagFilter, setTagFilter] = useState('')
-  // Admin sempre vê toda a equipe por padrão
-  // localStorage só é consultado se o admin explicitamente escolheu "só as minhas"
   const [viewingAll, setViewingAll] = useState(() => {
-    try {
-      const saved = localStorage.getItem('pulse_viewingAll')
-      // Se nunca foi salvo, padrão é true (ver toda a equipe)
-      return saved === null ? true : saved === 'true'
-    } catch { return true }
+    try { return localStorage.getItem('pulse_viewingAll') === 'true' } catch { return false }
   })
   const [memberFilter, setMemberFilter] = useState(() => {
     try { return localStorage.getItem('pulse_memberFilter') || 'all' } catch { return 'all' }
