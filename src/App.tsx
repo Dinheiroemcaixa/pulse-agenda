@@ -55,7 +55,10 @@ export default function App() {
   // Launch app after login
   useEffect(() => {
     if (currentUser && !appReady) {
-      data.loadAll().then(() => setAppReady(true))
+      data.loadAll().then(() => {
+        setAppReady(true)
+        data.checkDailyBackup()
+      })
     }
     if (!currentUser) setAppReady(false)
   }, [currentUser])
@@ -240,6 +243,7 @@ export default function App() {
     onUpdateTeam: data.updateTeamMember,
     onSaveBackup: data.saveBackupManual,
     onDeleteBackup: data.deleteBackup,
+    onRestoreBackup: data.restoreFromBackup,
     onUpdateUser: updateUser,
     showToast,
     setPage,

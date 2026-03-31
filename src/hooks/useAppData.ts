@@ -619,28 +619,143 @@ export function useAppData() {
     return true
   }, [])
 
-  // ── BACKUP ────────────────────────────────────────────────
+  // ── BACKUP 2.0 ──────────────────────────────────────────
+  const createFullSnapshot = useCallback(() => {
+    return {
+      tasks,
+      hist,
+      meets,
+      atrasadas,
+      tags,
+      team,
+      version: '2.0',
+      generated_at: new Date().toISOString()
+    }
+  }, [tasks, hist, meets, atrasadas, tags, team])
+
+  const downloadBackupFile = (snapshot: any, label: string) => {
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `pulse_backup_${getTodayStr()}_${label.replace(/\s+/g, '_')}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
   const checkDailyBackup = useCallback(async (): Promise<void> => {
     const todayStr = getTodayStr()
-    const exists = backups.some(b => b.backup_date === todayStr)
-    if (exists) return
+    const autoLabel = `Auto ${new Date().toLocaleDateString('pt-BR')}`
+    
+    // Verifica se já existe um backup automático hoje
+    const { data: existing } = await sb.from('backup_tasks').select('id').ilike('backup_label', 'Auto%').eq('backup_date', todayStr)
+    if (existing && existing.length > 0) return
+
+    // Solicitação do usuário: "substitui o antigo no app"
+    // Remove backups automáticos antigos antes de criar o novo
+    const { data: oldAutos } = await sb.from('backup_tasks').select('id').ilike('backup_label', 'Auto%')
+    if (oldAutos && oldAutos.length > 0) {
+      await sb.from('backup_tasks').delete().in('id', oldAutos.map(b => b.id))
+    }
+
     const id = genId()
-    const label = `Auto ${new Date().toLocaleDateString('pt-BR')}`
-    await sb.from('backup_tasks').insert({ id, backup_date: todayStr, backup_label: label, tasks_snapshot: tasks })
-    setBackups(prev => [{ id, backup_date: todayStr, backup_label: label, created_at: new Date().toISOString() }, ...prev])
-  }, [backups, tasks])
+    const snapshot = createFullSnapshot()
+    
+    const { error } = await sb.from('backup_tasks').insert({ 
+      id, 
+      backup_date: todayStr, 
+      backup_label: autoLabel, 
+      tasks_snapshot: snapshot 
+    })
+
+    if (!error) {
+      setBackups([{ id, backup_date: todayStr, backup_label: autoLabel, created_at: new Date().toISOString() }])
+      // Dispara download para o PC
+      downloadBackupFile(snapshot, 'Automatico')
+    }
+  }, [backups, createFullSnapshot])
 
   const saveBackupManual = useCallback(async (label: string): Promise<void> => {
     const id = genId()
     const todayStr = getTodayStr()
-    await sb.from('backup_tasks').insert({ id, backup_date: todayStr, backup_label: label || `Manual ${new Date().toLocaleDateString('pt-BR')}`, tasks_snapshot: tasks })
-    const { data } = await sb.from('backup_tasks').select('id,backup_date,backup_label,created_at').order('created_at', { ascending: false }).limit(30)
-    setBackups(data || [])
-  }, [tasks])
+    const finalLabel = label || `Manual ${new Date().toLocaleDateString('pt-BR')}`
+    const snapshot = createFullSnapshot()
+
+    const { error } = await sb.from('backup_tasks').insert({ 
+      id, 
+      backup_date: todayStr, 
+      backup_label: finalLabel, 
+      tasks_snapshot: snapshot 
+    })
+
+    if (!error) {
+      const { data } = await sb.from('backup_tasks').select('id,backup_date,backup_label,created_at').order('created_at', { ascending: false }).limit(30)
+      setBackups(data || [])
+      downloadBackupFile(snapshot, finalLabel)
+    }
+  }, [createFullSnapshot])
 
   const deleteBackup = useCallback(async (id: string): Promise<void> => {
     await sb.from('backup_tasks').delete().eq('id', id)
     setBackups(prev => prev.filter(b => b.id !== id))
+  }, [])
+
+  const restoreFromBackup = useCallback(async (backupIdOrSnapshot: string | any): Promise<boolean> => {
+    setLoading(true)
+    let snapshot: any = null
+
+    if (typeof backupIdOrSnapshot === 'string') {
+      const { data, error } = await sb.from('backup_tasks').select('tasks_snapshot').eq('id', backupIdOrSnapshot).single()
+      if (error || !data) { setLoading(false); return false }
+      snapshot = data.tasks_snapshot
+    } else {
+      snapshot = backupIdOrSnapshot
+    }
+
+    if (!snapshot) { setLoading(false); return false }
+
+    try {
+      // 1. Limpar tabelas atuais no Supabase
+      // Nota: Team não é limpo para evitar perder acesso ao app se algo der errado, 
+      // mas as outras tabelas de dados sim.
+      await Promise.all([
+        sb.from('tasks').delete().neq('id', 'placeholder'),
+        sb.from('hist').delete().neq('id', 'placeholder'),
+        sb.from('atrasadas').delete().neq('id', 'placeholder'),
+        sb.from('meets').delete().neq('id', 'placeholder'),
+        sb.from('tags').delete().neq('id', 'placeholder'),
+      ])
+
+      // 2. Inserir dados do backup
+      const inserts = []
+      if (snapshot.tasks?.length) inserts.push(sb.from('tasks').insert(snapshot.tasks))
+      if (snapshot.hist?.length) inserts.push(sb.from('hist').insert(snapshot.hist))
+      if (snapshot.atrasadas?.length) inserts.push(sb.from('atrasadas').insert(snapshot.atrasadas))
+      if (snapshot.meets?.length) inserts.push(sb.from('meets').insert(snapshot.meets))
+      if (snapshot.tags?.length) inserts.push(sb.from('tags').insert(snapshot.tags))
+
+      await Promise.all(inserts)
+      
+      // 3. Atualizar estado local
+      setTasks(snapshot.tasks || [])
+      setHist(snapshot.hist || [])
+      setMeets(snapshot.meets || [])
+      setAtrasadas(snapshot.atrasadas || [])
+      setTags(snapshot.tags || [])
+      if (snapshot.team?.length) {
+        // Opcional: atualizar equipe se contido no backup
+        setTeam(snapshot.team)
+      }
+
+      setLoading(false)
+      return true
+    } catch (err) {
+      console.error('Erro na restauração:', err)
+      setLoading(false)
+      return false
+    }
   }, [])
 
   return {
@@ -654,6 +769,6 @@ export function useAppData() {
     saveTag, deleteTag,
     toggleSubtask, addSubtask, deleteSubtask,
     updateTeamMember,
-    checkDailyBackup, saveBackupManual, deleteBackup,
+    checkDailyBackup, saveBackupManual, deleteBackup, restoreFromBackup,
   }
 }

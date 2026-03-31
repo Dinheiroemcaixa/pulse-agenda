@@ -293,58 +293,124 @@ interface BackupProps {
   isAdmin: boolean
   onSaveBackup: (label: string) => Promise<void>
   onDeleteBackup: (id: string) => Promise<void>
+  onRestoreBackup: (idOrSnapshot: string | any) => Promise<boolean>
   showToast: (msg: string, type?: string) => void
 }
 
-export function BackupPage({ backups, tasks, currentUser, isAdmin, onSaveBackup, onDeleteBackup, showToast }: BackupProps) {
+export function BackupPage({ backups, tasks, currentUser, isAdmin, onSaveBackup, onDeleteBackup, onRestoreBackup, showToast }: BackupProps) {
   const [label, setLabel] = useState('')
   const [saving, setSaving] = useState(false)
+  const [restoring, setRestoring] = useState(false)
   const [restoreConfirm, setRestoreConfirm] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const create = async () => {
     setSaving(true)
-    await onSaveBackup(label || `Manual ${new Date().toLocaleDateString('pt-BR')}`)
+    await onSaveBackup(label)
     setLabel('')
     setSaving(false)
-    showToast('✅ Backup criado!', 'success')
+    showToast('✅ Backup criado e baixado!', 'success')
   }
 
-  const restore = async (backupId: string) => {
-    const { data: bk } = await sb.from('backup_tasks').select('tasks_snapshot').eq('id', backupId).single()
-    if (!bk?.tasks_snapshot) { showToast('❌ Backup não encontrado', 'error'); return }
-    await sb.from('tasks').delete().neq('id', 'x')
-    for (const t of bk.tasks_snapshot) await sb.from('tasks').insert(t)
-    showToast('✅ Backup restaurado! Recarregue a página.', 'success')
-    setRestoreConfirm(null)
+  const handleRestore = async (idOrSnapshot: string | any) => {
+    setRestoring(true)
+    const ok = await onRestoreBackup(idOrSnapshot)
+    setRestoring(false)
+    if (ok) {
+      showToast('✅ Dados restaurados com sucesso!', 'success')
+      setRestoreConfirm(null)
+      // Recarrega a página para garantir que o estado global reflita as mudanças massivas
+      setTimeout(() => window.location.reload(), 1500)
+    } else {
+      showToast('❌ Erro ao restaurar os dados.', 'error')
+    }
+  }
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = async (event) => {
+      try {
+        const snapshot = JSON.parse(event.target?.result as string)
+        if (!snapshot.version || !snapshot.tasks) throw new Error('Formato inválido')
+        const confirmResult = window.confirm('Deseja restaurar os dados deste arquivo? Isso apagará tudo o que você tem agora.')
+        if (confirmResult) handleRestore(snapshot)
+      } catch (err) {
+        showToast('❌ Arquivo de backup inválido ou corrompido.', 'error')
+      }
+    }
+    reader.readAsText(file)
+    e.target.value = '' // Reseta input
   }
 
   return (
     <>
       <div className="topbar">
-        <div><div className="pt">Backup</div><div className="ps">Cópias de segurança das tarefas</div></div>
+        <div><div className="pt">Backup & Segurança</div><div className="ps">Gestão de cópias em nuvem e no PC</div></div>
       </div>
       <div className="content">
-        <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, marginBottom: 20 }}>
-          <div style={{ fontWeight: 700, marginBottom: 10 }}>Criar Backup Manual</div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input className="inp" placeholder="Rótulo (opcional)..." value={label} onChange={e => setLabel(e.target.value)} style={{ flex: 1 }} />
-            <button className="btn-primary" onClick={create} disabled={saving}>{saving ? 'Salvando...' : '💾 Criar Backup'}</button>
+        {/* Card Criar */}
+        <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: 20, marginBottom: 24, boxShadow: 'var(--shadow-sm)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <span style={{ fontSize: 20 }}>💾</span>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>Criar Backup Agora</div>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>📦 {tasks.length} tarefas serão salvas</div>
+          <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16 }}>
+            Isso salvará uma cópia completa dos seus dados (tarefas, histórico, reuniões, equipe e tags) na nuvem e disparará um download para o seu computador.
+          </p>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <input className="inp" placeholder="Nome do backup (ex: Antes de limpar tudo)..." value={label} onChange={e => setLabel(e.target.value)} style={{ flex: 1 }} />
+            <button className="btn-primary" onClick={create} disabled={saving} style={{ minWidth: 160 }}>
+              {saving ? 'Salvando...' : 'Gerar Backup'}
+            </button>
+          </div>
+        </div>
+
+        {/* Card Importar */}
+        <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 12, padding: 20, marginBottom: 32, borderStyle: 'dashed' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <span style={{ fontSize: 20 }}>📂</span>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>Restaurar de arquivo (.json)</div>
+          </div>
+          <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16 }}>
+            Se você tem um arquivo de backup no seu computador, você pode carregá-lo aqui para recuperar todas as informações.
+          </p>
+          <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept=".json" onChange={handleFileUpload} />
+          <button className="mc-btn" onClick={() => fileInputRef.current?.click()} style={{ width: 'auto', padding: '10px 20px', background: 'var(--bg3)', border: '1px solid var(--border)' }}>
+            Selecionar arquivo no PC
+          </button>
+        </div>
+
+        <div className="section-title" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 8, height: 8, background: 'var(--accent)', borderRadius: '50%' }} />
+          Backups na Nuvem (Substituição Automática)
         </div>
 
         <div className="backup-list">
-          {backups.length === 0 && <div className="es"><div className="ei">💾</div><div className="et">Nenhum backup ainda</div></div>}
+          {backups.length === 0 && (
+            <div className="es" style={{ padding: '40px 0' }}>
+              <div className="ei">☁</div>
+              <div className="et">Nenhum backup em nuvem</div>
+              <div style={{ color: 'var(--text3)', fontSize: 13 }}>Seus backups aparecerão aqui após serem gerados.</div>
+            </div>
+          )}
           {backups.map(b => (
-            <div key={b.id} className="backup-card">
-              <div className="backup-icon">💾</div>
+            <div key={b.id} className="backup-card" style={{ padding: '16px 20px' }}>
+              <div className="backup-icon" style={{ background: b.backup_label?.includes('Auto') ? 'var(--accentbg)' : 'var(--greenbg)', color: b.backup_label?.includes('Auto') ? 'var(--accent)' : 'var(--green)' }}>
+                {b.backup_label?.includes('Auto') ? '🤖' : '👤'}
+              </div>
               <div className="backup-info">
-                <div className="backup-label">{b.backup_label}</div>
-                <div className="backup-date">{new Date(b.created_at).toLocaleString('pt-BR')}</div>
+                <div className="backup-label" style={{ fontSize: 15, fontWeight: 600 }}>{b.backup_label}</div>
+                <div className="backup-date" style={{ fontSize: 12 }}>📅 Gerado em: {new Date(b.created_at).toLocaleString('pt-BR')}</div>
               </div>
               <div className="backup-actions">
-                <button className="backup-btn" onClick={() => setRestoreConfirm(b.id)}>↩ Restaurar</button>
-                <button className="backup-btn danger" onClick={async () => { await onDeleteBackup(b.id); showToast('🗑 Backup removido', 'warn') }}>✕</button>
+                <button className="backup-btn" onClick={() => setRestoreConfirm(b.id)} style={{ padding: '8px 16px', borderRadius: 8 }}>
+                  ↩ Restaurar
+                </button>
+                <button className="backup-btn danger" onClick={async () => { if(window.confirm('Excluir este backup da nuvem?')) await onDeleteBackup(b.id); showToast('🗑 Removido', 'warn') }} style={{ padding: '8px 12px', borderRadius: 8 }}>
+                  ✕
+                </button>
               </div>
             </div>
           ))}
@@ -352,13 +418,34 @@ export function BackupPage({ backups, tasks, currentUser, isAdmin, onSaveBackup,
       </div>
 
       {restoreConfirm && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setRestoreConfirm(null)}>
-          <div className="modal confirm-modal">
-            <div className="confirm-title">Restaurar Backup</div>
-            <div className="confirm-body">Isso <strong style={{ color: 'var(--red)' }}>substituirá todas as tarefas atuais</strong> pelas do backup. Ação irreversível.</div>
-            <div className="modal-footer">
-              <button className="bcancel" onClick={() => setRestoreConfirm(null)}>Cancelar</button>
-              <button style={{ background: 'var(--redbg)', border: '1px solid var(--red)', borderRadius: 7, padding: '8px 16px', color: 'var(--red)', cursor: 'pointer', fontWeight: 700 }} onClick={() => restore(restoreConfirm)}>Sim, restaurar</button>
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && !restoring && setRestoreConfirm(null)}>
+          <div className="modal confirm-modal" style={{ maxWidth: 400 }}>
+            <div className="confirm-title" style={{ color: 'var(--red)' }}>⚠️ Alerta de Restauração</div>
+            <div className="confirm-body" style={{ textAlign: 'center', padding: '20px 0' }}>
+              <p style={{ fontWeight: 600, fontSize: 16 }}>Você tem certeza?</p>
+              <p style={{ marginTop: 12, color: 'var(--text2)', lineHeight: 1.5 }}>
+                Esta ação irá <strong>substituir permanentemente</strong> todas as suas tarefas, reuniões, histórico e equipe atuais pelos dados deste backup.
+              </p>
+              <p style={{ marginTop: 8, fontSize: 12, color: 'var(--text3)' }}>O aplicativo será reiniciado após a conclusão.</p>
+            </div>
+            <div className="modal-footer" style={{ borderTop: 'none', gap: 12 }}>
+              <button className="bcancel" onClick={() => setRestoreConfirm(null)} disabled={restoring}>Cancelar</button>
+              <button 
+                style={{ 
+                  background: 'var(--red)', 
+                  border: 'none', 
+                  borderRadius: 10, 
+                  padding: '10px 24px', 
+                  color: '#fff', 
+                  cursor: 'pointer', 
+                  fontWeight: 700,
+                  boxShadow: '0 4px 12px rgba(255, 77, 109, 0.3)'
+                }} 
+                onClick={() => handleRestore(restoreConfirm)}
+                disabled={restoring}
+              >
+                {restoring ? 'Restaurando...' : 'Sim, Restaurar tudo'}
+              </button>
             </div>
           </div>
         </div>
