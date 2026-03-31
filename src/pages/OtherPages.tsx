@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, ChangeEvent } from 'react'
 import type { Task, TeamMember, Meeting, User, Backup } from '../types'
 import { getInitials, genId, getTodayStr, COLORS } from '../lib/utils'
 import { sb } from '../lib/supabase'
@@ -326,7 +326,7 @@ export function BackupPage({ backups, tasks, currentUser, isAdmin, onSaveBackup,
     }
   }
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
@@ -359,11 +359,14 @@ export function BackupPage({ backups, tasks, currentUser, isAdmin, onSaveBackup,
           <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16 }}>
             Isso salvará uma cópia completa dos seus dados (tarefas, histórico, reuniões, equipe e tags) na nuvem e disparará um download para o seu computador.
           </p>
-          <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <input className="inp" placeholder="Nome do backup (ex: Antes de limpar tudo)..." value={label} onChange={e => setLabel(e.target.value)} style={{ flex: 1 }} />
-            <button className="btn-primary" onClick={create} disabled={saving} style={{ minWidth: 160 }}>
-              {saving ? 'Salvando...' : 'Gerar Backup'}
+            <button className="btn-primary" onClick={create} disabled={saving} style={{ minWidth: 180, height: 42 }}>
+              {saving ? 'Salvando...' : '💾 Fazer Backup Manual'}
             </button>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span>📦</span> {tasks.length} tarefas detectadas para o snapshot.
           </div>
         </div>
 
