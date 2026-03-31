@@ -66,7 +66,10 @@ export function HistoryPage({ hist, team, currentUser, isAdmin, onReopen, showTo
   const bars = Array.from({ length: 14 }, (_, i) => {
     const d = new Date(); d.setDate(d.getDate() - (13 - i)); d.setHours(0, 0, 0, 0)
     const label = d.getDate() + '/' + (d.getMonth() + 1)
-    const dStr = d.toLocaleDateString('pt-BR')
+    const day = String(d.getDate()).padStart(2, '0')
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const year = d.getFullYear()
+    const dStr = `${day}/${month}/${year}`
     const count = hist.filter(t => t.completed_at === dStr && (effectiveScope !== 'mine' || t.resp === currentUser.name)).length
     return { label, count }
   })

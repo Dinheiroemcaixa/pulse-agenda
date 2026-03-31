@@ -22,7 +22,7 @@ export function Sidebar({ page, setPage, currentUser, isAdmin, tasks, atrasadas,
   const me = currentUser.name
   const todayOpen = tasks.filter(t => t.status !== 'Concluída' && t.resp === me && t.date === today).length
   const myAtrasadas = atrasadas.filter(a => a.resp === me).length
-  const doneToday = hist.filter(h => h.resp === me && h.completed_at === new Date().toLocaleDateString('pt-BR')).length
+  const doneToday = hist.filter(h => h.resp === me && h.completed_at === today.split('-').reverse().join('/')).length
 
   const [userModalOpen, setUserModalOpen] = useState(false)
   const [uName, setUName] = useState(currentUser.name)

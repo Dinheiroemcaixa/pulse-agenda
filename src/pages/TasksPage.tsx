@@ -51,7 +51,21 @@ export function TasksPage(props: Props) {
   const getTag = (name: string) => tags.find(t => t.name === name)
 
   const getFiltered = () => {
+    const todayStr = getTodayStr()
     let list = tasks.filter(t => t.status !== 'Concluída')
+    
+    // Filtro de visibilidade inteligente (solicitação do usuário)
+    // Se não há filtro de data, oculta instâncias virtuais futuras para não poluir a lista
+    if (!dateFilter) {
+      list = list.filter(t => {
+        const isVirtual = (t as any).isVirtual
+        const isFuture = t.date && t.date > todayStr
+        // Regra: Mostra se (Não é virtual) OU (É hoje/atrasada) OU (É reunião)
+        // Isso permite ver tarefas não-recorrentes futuras e reuniões, mas não as repetições diárias
+        return !isVirtual || !isFuture || t.is_meeting
+      })
+    }
+
     if (filterMode === 'open') list = list.filter(t => !isLate(t) && t.status === 'Em Aberto')
     else if (filterMode === 'late') list = list.filter(t => isLate(t))
     else if (filterMode === 'alta') list = list.filter(t => t.prio === 'Alta')
@@ -168,7 +182,11 @@ export function TasksPage(props: Props) {
               </div>
             </div>
             {expandedNotes[t.id] && t.notes && (
-              <div className="sub-wrap"><div className="notes-display" style={{ padding: '8px 14px' }} dangerouslySetInnerHTML={{ __html: t.notes.replace(/\n/g, '<br>') }} /></div>
+              <div className="sub-wrap">
+                <div className="notes-display" style={{ padding: '8px 14px', whiteSpace: 'pre-wrap', color: 'var(--text2)', fontSize: 13, lineHeight: 1.5 }}>
+                  {t.notes}
+                </div>
+              </div>
             )}
             {isExp && sub.length > 0 && (
               <div className="sub-wrap">
