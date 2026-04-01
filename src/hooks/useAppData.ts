@@ -186,10 +186,12 @@ export function useAppData() {
     )
   }, [tasks])
 
-  // Combina atrasadas do banco (não-recorrentes) + overdue do estado (recorrentes e únicas)
+  // Combina atrasadas do banco (histórico de migrados) + qualquer tarefa da lista atual atrasada
   const allAtrasadas = useMemo(() => {
-    return [...atrasadas, ...atrasadasDaLista]
-  }, [atrasadas, atrasadasDaLista])
+    // Pegar tudo que está atrasado na lista de tarefas reais
+    const overdueFromTasks = tasks.filter(t => isLate(t))
+    return [...atrasadas, ...overdueFromTasks]
+  }, [atrasadas, tasks])
 
   // ── LOAD ALL ─────────────────────────────────────────────
   const loadAll = useCallback(async () => {
@@ -216,8 +218,10 @@ export function useAppData() {
     let updatedTasks: Task[] = tasksRes.data || []
     let updatedAtrasadas: Task[] = atrasadasRes.data || []
 
-    // Mover APENAS tarefas NÃO recorrentes vencidas para Atrasadas
-    // As recorrentes são geridas pela lógica virtual — não precisam ir para atrasadas
+    // ── COMENTADO: MOVER TAREFAS NÃO-RECORRENTES VENCIDAS PARA MESA DE ATRASADAS ──
+    // Decidimos manter as tarefas na lista principal ('tasks') mesmo vencidas
+    // para que continuem aparecendo no filtro de data e no histórico de pendências.
+    /*
     const vencidas = updatedTasks.filter(t =>
       t.date && t.date < todayStr &&
       t.status !== 'Concluída' &&
@@ -232,6 +236,7 @@ export function useAppData() {
       updatedTasks = updatedTasks.filter(x => x.id !== t.id)
       updatedAtrasadas = [...updatedAtrasadas, { ...t, status: 'Atrasada' as const, moved_at: todayBR }]
     }
+    */
 
     // ── AVANÇAR MESTRES RECORRENTES PRESOS NO PASSADO ─────────
     // COMENTADO: Usuário prefere ver como atrasadas em vez de avançar.
