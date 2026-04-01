@@ -175,26 +175,21 @@ export function useAppData() {
     return finalResult
   }, [tasks, vsOverrides])
 
-  // ── ATRASADAS RECORRENTES ─────────────────────────────────
-  // Usa APENAS registros reais do banco (tasks), NÃO expandedTasks.
-  // Isso evita que tarefas virtuais geradas automaticamente para datas
-  // passadas (baseadas em recur_start) apareçam falsamente como atrasadas.
-  // Uma tarefa recorrente só é "atrasada" se o próprio mestre (registro real)
-  // tiver uma data passada e estiver Em Aberto — o que acontece quando o
-  // usuário genuinamente perdeu o prazo e não concluiu.
-  const atrasadasRecorrentes = useMemo(() => {
+  // ── TAREFAS ATRASADAS DA LISTA PRINCIPAL ─────────────────
+  // Captura qualquer tarefa no estado 'tasks' que esteja com data passada
+  // e não concluída. Isso unifica contadores para recorrentes e não-recorrentes.
+  const atrasadasDaLista = useMemo(() => {
     const todayStr = getTodayStr()
     return tasks.filter(t =>
       t.date && t.date < todayStr &&
-      t.status !== 'Concluída' &&
-      t.recur && t.recur !== 'none'
+      t.status !== 'Concluída'
     )
   }, [tasks])
 
-  // Combina atrasadas do banco (não-recorrentes) + recorrentes vencidas
+  // Combina atrasadas do banco (não-recorrentes) + overdue do estado (recorrentes e únicas)
   const allAtrasadas = useMemo(() => {
-    return [...atrasadas, ...atrasadasRecorrentes]
-  }, [atrasadas, atrasadasRecorrentes])
+    return [...atrasadas, ...atrasadasDaLista]
+  }, [atrasadas, atrasadasDaLista])
 
   // ── LOAD ALL ─────────────────────────────────────────────
   const loadAll = useCallback(async () => {
@@ -760,7 +755,7 @@ export function useAppData() {
   return {
     tasks,
     expandedTasks, // ← usado pelo TasksPage para exibir
-    hist, meets, team, tags, atrasadas, atrasadasRecorrentes, allAtrasadas, backups, loading,
+    hist, meets, team, tags, atrasadas, atrasadasDaLista, atrasadasRecorrentes: atrasadasDaLista, allAtrasadas, backups, loading,
     setTasks, setHist, setMeets, setTeam, setTags, setAtrasadas,
     loadAll,
     saveTask, completeTask, deleteTask, cycleStatus, reorderTasks, reopenTask, deleteAtrasada,
