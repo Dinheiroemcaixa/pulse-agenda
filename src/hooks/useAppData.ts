@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react'
 import { sb } from '../lib/supabase'
-import { genId, getTodayStr, isTodayValidForRecur, getNextOccurrenceAfter } from '../lib/utils'
+import { genId, getTodayStr, isTodayValidForRecur, getNextOccurrenceAfter, isLate } from '../lib/utils'
 import type { Task, TeamMember, Meeting, Tag, Backup } from '../types'
 
 // ============================================================
@@ -189,7 +189,7 @@ export function useAppData() {
   // Combina atrasadas do banco (histórico de migrados) + qualquer tarefa da lista atual atrasada
   const allAtrasadas = useMemo(() => {
     // Pegar tudo que está atrasado na lista de tarefas reais
-    const overdueFromTasks = tasks.filter(t => isLate(t))
+    const overdueFromTasks = tasks.filter((t: Task) => isLate(t))
     return [...atrasadas, ...overdueFromTasks]
   }, [atrasadas, tasks])
 
