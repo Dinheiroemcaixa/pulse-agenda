@@ -3,6 +3,8 @@ import type { User, TeamMember, Task } from '../types'
 import { getInitials, getTodayStr, hashPass, COLORS } from '../lib/utils'
 import type { Page } from '../types'
 
+import logoImg from '../assets/logo-dinheiro.png'
+
 interface Props {
   page: Page
   setPage: (p: Page) => void
@@ -76,10 +78,10 @@ export function Sidebar({ page, setPage, currentUser, isAdmin, tasks, atrasadas,
     <>
       <div className="sidebar">
         <div className="logo">
-          <div className="logo-icon">P</div>
+          <img src={logoImg} alt="Dinheiro em Caixa" className="logo-img" />
           <div>
             <div className="logo-text">Pulse Agenda</div>
-            <div className="logo-sub">Gestão de Tarefas</div>
+            <div className="logo-sub">Gestão Inteligente</div>
           </div>
         </div>
 

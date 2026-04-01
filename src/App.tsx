@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import './index.css'
+import logoImg from './assets/logo-dinheiro.png'
 import { useAuth } from './hooks/useAuth'
 import { useAppData } from './hooks/useAppData'
 import { getTodayStr, getInitials, COLORS } from './lib/utils'
@@ -120,7 +121,7 @@ export default function App() {
   if (authLoading) {
     return (
       <div className="loading-screen">
-        <div className="loading-logo">P</div>
+        <img src={logoImg} className="loading-logo" alt="Loading" />
         <div className="loading-text">Carregando...</div>
       </div>
     )
@@ -132,10 +133,10 @@ export default function App() {
       <div className="login-screen">
         <div className="login-card">
           <div className="login-logo">
-            <div className="login-logo-icon">P</div>
+            <img src={logoImg} className="login-logo-img" alt="Dinheiro em Caixa" />
             <div>
               <div className="login-logo-text">Pulse Agenda</div>
-              <div className="login-logo-sub">Gestão de Tarefas</div>
+              <div className="login-logo-sub">Gestão Inteligente</div>
             </div>
           </div>
           <div className="login-tabs">
@@ -193,7 +194,7 @@ export default function App() {
   if (!appReady) {
     return (
       <div className="loading-screen">
-        <div className="loading-logo">P</div>
+        <img src={logoImg} className="loading-logo" alt="Loading" />
         <div className="loading-text">Carregando dados...</div>
       </div>
     )

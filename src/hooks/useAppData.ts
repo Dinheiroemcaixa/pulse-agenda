@@ -505,9 +505,11 @@ export function useAppData() {
       setAtrasadas(prev => prev.filter(x => x.id !== id))
       return
     }
-    // Tarefa mestre recorrente vencida → avança mestre + materializa data como concluída
+    // Tarefa mestre recorrente vencida ou tarefa comum no state tasks
     const t = tasks.find(x => x.id === id)
-    if (t && (t as any).recur_group_id && t.recur && t.recur !== 'none') {
+    if (!t) return
+
+    if ((t as any).recur_group_id && t.recur && t.recur !== 'none') {
       const completedAt = new Date().toLocaleDateString('pt-BR')
       const completedRecord = { ...t, id: genId(), status: 'Concluída' as const, completed_at: completedAt }
       await sb.from('tasks').insert(completedRecord)
@@ -521,6 +523,10 @@ export function useAppData() {
         await sb.from('tasks').delete().eq('id', id)
         setTasks(prev => prev.filter(x => x.id !== id))
       }
+    } else {
+      // Tarefa comum (não recorrente) vinda do tasks state
+      await sb.from('tasks').delete().eq('id', id)
+      setTasks(prev => prev.filter(x => x.id !== id))
     }
   }, [atrasadas, tasks, expandedTasks])
 
