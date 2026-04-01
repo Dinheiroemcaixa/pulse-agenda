@@ -239,10 +239,8 @@ export function useAppData() {
     }
 
     // ── AVANÇAR MESTRES RECORRENTES PRESOS NO PASSADO ─────────
-    // Se um mestre recorrente tem date < hoje e status != 'Concluída',
-    // isso indica que ficou preso (bug, falha de rede, etc.).
-    // Solução: avançar silenciosamente para a próxima ocorrência a partir de HOJE.
-    // NÃO criamos registro de concluída pois o usuário não concluiu — apenas corrigimos a data.
+    // COMENTADO: Usuário prefere ver como atrasadas em vez de avançar.
+    /*
     const mestresPresos = updatedTasks.filter(t =>
       t.date && t.date < todayStr &&
       t.status !== 'Concluída' &&
@@ -266,6 +264,7 @@ export function useAppData() {
         updatedTasks = updatedTasks.map(x => x.id === t.id ? { ...x, date: nextDate } : x)
       }
     }
+    */
 
     // Recarrega do banco para consistência
     const { data: finalTasks } = await sb.from('tasks').select('*').order('sort_order', { ascending: true })
