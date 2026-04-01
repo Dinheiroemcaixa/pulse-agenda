@@ -46,14 +46,12 @@ export function useAppData() {
     const todayStr = getTodayStr()
     const today = new Date(todayStr + 'T00:00:00')
 
-    // Janela de exibição: 180 dias atrás até 365 dias à frente
-    const rangeStart = new Date(today)
-    rangeStart.setDate(rangeStart.getDate() - 180)
-    const rangeEnd = new Date(today)
-    rangeEnd.setDate(rangeEnd.getDate() + 365)
+    // Range de geração (30 dias passados ate 90 dias futuros)
+    const rangeStart = new Date(today); rangeStart.setDate(rangeStart.getDate() - 30)
+    const rangeEnd = new Date(today); rangeEnd.setDate(rangeEnd.getDate() + 90)
 
-    // Todas as tarefas reais (não deletadas)
-    const result: Task[] = [...tasks]
+    // Unificar fonte de dados: Tarefas atuais + Tarefas que foram migradas para 'atrasadas'
+    const result: Task[] = [...tasks, ...atrasadas]
 
     // Lookup de datas já materializadas por série
     // Key: recur_group_id_YYYY-MM-DD
@@ -186,12 +184,12 @@ export function useAppData() {
     )
   }, [tasks])
 
-  // Combina atrasadas do banco (histórico de migrados) + qualquer tarefa da lista atual atrasada
+  // ── UNIFICAÇÃO DE ATRASADAS ──────────────────────────────
+  // Agora usamos a lista expandida como fonte única de verdade.
+  // Qualquer instância (real ou virtual) que esteja atrasada será contada.
   const allAtrasadas = useMemo(() => {
-    // Pegar tudo que está atrasado na lista de tarefas reais
-    const overdueFromTasks = tasks.filter((t: Task) => isLate(t))
-    return [...atrasadas, ...overdueFromTasks]
-  }, [atrasadas, tasks])
+    return expandedTasks.filter((t: Task) => isLate(t))
+  }, [expandedTasks])
 
   // ── LOAD ALL ─────────────────────────────────────────────
   const loadAll = useCallback(async () => {
