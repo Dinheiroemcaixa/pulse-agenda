@@ -47,7 +47,7 @@ export function useAppData() {
     const today = new Date(todayStr + 'T00:00:00')
 
     // Range de geração (30 dias passados ate 90 dias futuros)
-    const rangeStart = new Date(today); rangeStart.setDate(rangeStart.getDate() - 30)
+    const rangeStart = new Date(today); // Começar de hoje (parar dilúvio de virtual atrasadas)
     const rangeEnd = new Date(today); rangeEnd.setDate(rangeEnd.getDate() + 90)
 
     // Unificar fonte de dados: Tarefas atuais + Tarefas que foram migradas para 'atrasadas'
