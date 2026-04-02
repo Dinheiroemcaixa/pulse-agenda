@@ -398,8 +398,13 @@ export function useAppData() {
         getTodayStr()
       )
       if (nextDate) {
-        await sb.from('tasks').update({ date: nextDate }).eq('id', id)
-        setTasks(prev => prev.map(x => x.id === id ? { ...x, date: nextDate } : x))
+        const resetPayload = { 
+          date: nextDate, 
+          status: 'Em Aberto' as const, 
+          subtasks: (t.subtasks || []).map(s => ({ ...s, done: false })) 
+        }
+        await sb.from('tasks').update(resetPayload).eq('id', id)
+        setTasks(prev => prev.map(x => x.id === id ? { ...x, ...resetPayload } : x))
       } else {
         // Série esgotada — sem mais ocorrências futuras
         await sb.from('tasks').delete().eq('id', id)
@@ -517,8 +522,13 @@ export function useAppData() {
 
       const nextDate = getNextOccurrenceAfter(t.recur!, t.recur_days || [], t.recur_start || t.date, getTodayStr())
       if (nextDate) {
-        await sb.from('tasks').update({ date: nextDate }).eq('id', id)
-        setTasks(prev => prev.map(x => x.id === id ? { ...x, date: nextDate } : x))
+        const resetPayload = { 
+          date: nextDate, 
+          status: 'Em Aberto' as const, 
+          subtasks: (t.subtasks || []).map(s => ({ ...s, done: false })) 
+        }
+        await sb.from('tasks').update(resetPayload).eq('id', id)
+        setTasks(prev => prev.map(x => x.id === id ? { ...x, ...resetPayload } : x))
       } else {
         await sb.from('tasks').delete().eq('id', id)
         setTasks(prev => prev.filter(x => x.id !== id))
