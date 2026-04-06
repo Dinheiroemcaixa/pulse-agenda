@@ -424,7 +424,19 @@ export function useAppData() {
   // ── DELETE TASK ───────────────────────────────────────────
   const deleteTask = useCallback(async (id: string, deleteAll = false): Promise<void> => {
     const isVirtual = id.startsWith('virtual_')
-    if (isVirtual) return // Virtuais não têm nada para deletar no banco
+    const todayBR = new Date().toLocaleDateString('pt-BR')
+
+    if (isVirtual) {
+      // Virtual recorrente -> materializa como concluída silenciosamente para não reaparecer
+      const t = expandedTasks.find(x => x.id === id)
+      if (t) {
+        const { isVirtual: _iv, ...payload } = t as any
+        const skipped = { ...payload, id: genId(), status: 'Concluída' as const, completed_at: todayBR }
+        await sb.from('tasks').insert(skipped)
+        setTasks(prev => [...prev, skipped])
+      }
+      return
+    }
 
     const t = tasks.find(x => x.id === id)
     if (!t) return
@@ -433,11 +445,34 @@ export function useAppData() {
       // Deleta todos os registros reais da série
       await sb.from('tasks').delete().eq('recur_group_id', t.recur_group_id)
       setTasks(prev => prev.filter(x => x.recur_group_id !== t.recur_group_id))
+    } else if (!deleteAll && t.recur_group_id && t.recur && t.recur !== 'none') {
+      // RECORRENTE: Avança o mestre em vez de simplesmente deletar
+      // (Isso impede que registros antigos se tornem mestres e criem "fantasmas" no passado)
+      const nextDate = getNextOccurrenceAfter(t.recur!, t.recur_days || [], t.recur_start || t.date || getTodayStr(), getTodayStr())
+      
+      // Materializa a ocorrência atual como concluída para bloqueio
+      const completedRecord = { ...t, id: genId(), status: 'Concluída' as const, completed_at: todayBR }
+      await sb.from('tasks').insert(completedRecord)
+      setTasks(prev => [...prev, completedRecord])
+
+      if (nextDate) {
+        const resetPayload = { 
+          date: nextDate, 
+          status: 'Em Aberto' as const, 
+          subtasks: (t.subtasks || []).map(s => ({ ...s, done: false })) 
+        }
+        await sb.from('tasks').update(resetPayload).eq('id', id)
+        setTasks(prev => prev.map(x => x.id === id ? { ...x, ...resetPayload } : x))
+      } else {
+        await sb.from('tasks').delete().eq('id', id)
+        setTasks(prev => prev.filter(x => x.id !== id))
+      }
     } else {
+      // Tarefa comum ou não recorrente
       await sb.from('tasks').delete().eq('id', id)
       setTasks(prev => prev.filter(x => x.id !== id))
     }
-  }, [tasks])
+  }, [tasks, expandedTasks])
 
   // ── CYCLE STATUS ──────────────────────────────────────────
   const cycleStatus = useCallback(async (id: string): Promise<void> => {
