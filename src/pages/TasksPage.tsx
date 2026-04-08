@@ -24,7 +24,7 @@ interface Props {
   setMemberFilter: (m: string) => void
   openNewTask: (date?: string) => void
   openEditTask: (id: string) => void
-  onComplete: (id: string, fromAtrasadas?: boolean) => Promise<void>
+  onComplete: (id: string, fromAtrasadas?: boolean) => Promise<boolean>
   onDelete: (id: string, deleteAll?: boolean) => Promise<void>
   onCycleStatus: (id: string) => Promise<void>
   onReorder: (tasks: Task[]) => Promise<void>
