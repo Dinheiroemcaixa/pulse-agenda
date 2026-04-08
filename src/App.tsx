@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import './index.css'
-import logoImg from './assets/logo-dinheiro.png'
+// Import moved to page components
 import { useAuth } from './hooks/useAuth'
 import { useAppData } from './hooks/useAppData'
 import { getTodayStr, getInitials, COLORS } from './lib/utils'
@@ -12,6 +12,7 @@ import { AtrasadasPage } from './pages/AtrasadasPage'
 import { TeamPage, MeetingsPage, MessagesPage, BackupPage } from "./pages/OtherPages"
 import { TaskModal } from './components/TaskModal'
 import { Toast } from './components/Toast'
+import { LoginView } from './components/LoginView'
 
 export default function App() {
   const { currentUser, authLoading, login, signup, logout, updateUser } = useAuth()
@@ -121,7 +122,7 @@ export default function App() {
   if (authLoading) {
     return (
       <div className="loading-screen">
-        <img src={logoImg} className="loading-logo" alt="Loading" />
+        <div className="logo-icon loading-logo">P</div>
         <div className="loading-text">Carregando...</div>
       </div>
     )
@@ -130,63 +131,29 @@ export default function App() {
   // LOGIN SCREEN
   if (!currentUser) {
     return (
-      <div className="login-screen">
-        <div className="login-card">
-          <div className="login-logo">
-            <img src={logoImg} className="login-logo-img" alt="Dinheiro em Caixa" />
-            <div>
-              <div className="login-logo-text">Pulse Agenda</div>
-              <div className="login-logo-sub">Gestão Inteligente</div>
-            </div>
-          </div>
-          <div className="login-tabs">
-            <button className={`login-tab${authTab === 'login' ? ' active' : ''}`} onClick={() => { setAuthTab('login'); setAuthErr('') }}>Entrar</button>
-            <button className={`login-tab${authTab === 'signup' ? ' active' : ''}`} onClick={() => { setAuthTab('signup'); setAuthErr('') }}>Cadastrar</button>
-          </div>
-          {authErr && <div className="login-err">{authErr}</div>}
-          {authTab === 'login' ? (
-            <>
-              <div className="login-field">
-                <label className="login-label">E-mail</label>
-                <input className="login-input" type="email" placeholder="seu@email.com" value={lEmail} onChange={e => setLEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleLogin()} />
-              </div>
-              <div className="login-field">
-                <label className="login-label">Senha</label>
-                <input className="login-input" type="password" placeholder="••••••" value={lPass} onChange={e => setLPass(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleLogin()} />
-              </div>
-              <button className="login-btn" disabled={authLoading2} onClick={handleLogin}>{authLoading2 ? 'Entrando...' : 'Entrar'}</button>
-            </>
-          ) : (
-            <>
-              <div className="login-field">
-                <label className="login-label">Nome completo</label>
-                <input className="login-input" placeholder="Seu nome" value={sName} onChange={e => setSName(e.target.value)} />
-              </div>
-              <div className="login-field">
-                <label className="login-label">Cargo / Função</label>
-                <input className="login-input" placeholder="Ex: Analista" value={sRole} onChange={e => setSRole(e.target.value)} />
-              </div>
-              <div className="login-field">
-                <label className="login-label">E-mail</label>
-                <input className="login-input" type="email" placeholder="seu@email.com" value={sEmail} onChange={e => setSEmail(e.target.value)} />
-              </div>
-              <div className="login-field">
-                <label className="login-label">Senha (mín. 4 caracteres)</label>
-                <input className="login-input" type="password" placeholder="••••••" value={sPass} onChange={e => setSPass(e.target.value)} />
-              </div>
-              <div className="login-field">
-                <label className="login-label">Cor do avatar</label>
-                <div className="avatar-row">
-                  {COLORS.map(c => (
-                    <div key={c} className={`av-pick${sColor === c ? ' sel' : ''}`} style={{ background: c }} onClick={() => setSColor(c)} />
-                  ))}
-                </div>
-              </div>
-              <button className="login-btn" disabled={authLoading2} onClick={handleSignup}>{authLoading2 ? 'Cadastrando...' : 'Criar conta'}</button>
-            </>
-          )}
-        </div>
-      </div>
+      <LoginView
+        authTab={authTab}
+        setAuthTab={setAuthTab}
+        lEmail={lEmail}
+        setLEmail={setLEmail}
+        lPass={lPass}
+        setLPass={setLPass}
+        sName={sName}
+        setSName={setSName}
+        sRole={sRole}
+        setSRole={setSRole}
+        sEmail={sEmail}
+        setSEmail={setSEmail}
+        sPass={sPass}
+        setSPass={setSPass}
+        sColor={sColor}
+        setSColor={setSColor}
+        authErr={authErr}
+        setAuthErr={setAuthErr}
+        authLoading2={authLoading2}
+        handleLogin={handleLogin}
+        handleSignup={handleSignup}
+      />
     )
   }
 
@@ -194,8 +161,8 @@ export default function App() {
   if (!appReady) {
     return (
       <div className="loading-screen">
-        <img src={logoImg} className="loading-logo" alt="Loading" />
-        <div className="loading-text">Carregando dados...</div>
+        <div className="logo-icon loading-logo">P</div>
+        <div className="loading-text">Carregando Pulse Agenda...</div>
       </div>
     )
   }
