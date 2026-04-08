@@ -7,7 +7,7 @@ interface Props {
   team: TeamMember[]
   currentUser: User
   isAdmin: boolean
-  onReopen: (histId: string) => Promise<void>
+  onReopen: (histId: string) => Promise<boolean>
   showToast: (msg: string, type?: string) => void
 }
 
@@ -45,7 +45,7 @@ export function HistoryPage({ hist, team, currentUser, isAdmin, onReopen, showTo
   const effectiveScope = isAdmin ? scope : 'mine'
 
   let list = [...hist]
-  if (effectiveScope === 'mine') list = list.filter(t => t.resp === currentUser.name)
+  if (effectiveScope === 'mine') list = list.filter(t => t.resp.trim() === currentUser.name.trim())
   if (search) list = list.filter(t => t.descricao.toLowerCase().includes(search.toLowerCase()))
   if (period > 0) {
     const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - period); cutoff.setHours(0, 0, 0, 0)
@@ -70,7 +70,7 @@ export function HistoryPage({ hist, team, currentUser, isAdmin, onReopen, showTo
     const month = String(d.getMonth() + 1).padStart(2, '0')
     const year = d.getFullYear()
     const dStr = `${day}/${month}/${year}`
-    const count = hist.filter(t => t.completed_at === dStr && (effectiveScope !== 'mine' || t.resp === currentUser.name)).length
+    const count = hist.filter(t => t.completed_at === dStr && (effectiveScope !== 'mine' || t.resp.trim() === currentUser.name.trim())).length
     return { label, count }
   })
   const maxBar = Math.max(...bars.map(b => b.count), 1)

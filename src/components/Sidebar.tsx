@@ -79,10 +79,6 @@ export function Sidebar({ page, setPage, currentUser, isAdmin, tasks, atrasadas,
       <div className="sidebar">
         <div className="logo">
           <img src={logoImg} alt="Dinheiro em Caixa" className="logo-img" />
-          <div>
-            <div className="logo-text">Pulse Agenda</div>
-            <div className="logo-sub">Gestão Inteligente</div>
-          </div>
         </div>
 
         <div className="stats-grid">

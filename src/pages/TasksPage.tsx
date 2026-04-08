@@ -69,8 +69,8 @@ export function TasksPage(props: Props) {
     if (filterMode === 'open') list = list.filter(t => !isLate(t) && t.status === 'Em Aberto')
     else if (filterMode === 'late') list = list.filter(t => isLate(t))
     else if (filterMode === 'alta') list = list.filter(t => t.prio === 'Alta')
-    if (!viewingAll) list = list.filter(t => t.resp === currentUser.name)
-    else if (memberFilter && memberFilter !== 'all') list = list.filter(t => t.resp === memberFilter)
+    if (!viewingAll) list = list.filter(t => t.resp.trim() === currentUser.name.trim())
+    else if (memberFilter && memberFilter !== 'all') list = list.filter(t => t.resp.trim() === memberFilter.trim())
     if (searchQ) list = list.filter(t => t.descricao.toLowerCase().includes(searchQ.toLowerCase()) || t.resp.toLowerCase().includes(searchQ.toLowerCase()))
     if (dateFilter) list = list.filter(t => t.date === dateFilter)
     if (tagFilter) list = list.filter(t => t.tags?.includes(tagFilter))
@@ -289,7 +289,7 @@ export function TasksPage(props: Props) {
       const isToday = dt.getTime() === today.getTime()
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
       let dayTasks = tasks.filter(t => t.date === dateStr && t.status !== 'Concluída')
-      if (!viewingAll) dayTasks = dayTasks.filter(t => t.resp === currentUser.name)
+      if (!viewingAll) dayTasks = dayTasks.filter(t => t.resp.trim() === currentUser.name.trim())
       const isSel = selectedAgendaDay === dateStr
 
       days.push(
@@ -322,7 +322,7 @@ export function TasksPage(props: Props) {
         {selectedAgendaDay && (() => {
           const [sy, sm, sd] = selectedAgendaDay.split('-')
           let panelTasks = tasks.filter(t => t.date === selectedAgendaDay && t.status !== 'Concluída')
-          if (!viewingAll) panelTasks = panelTasks.filter(t => t.resp === currentUser.name)
+          if (!viewingAll) panelTasks = panelTasks.filter(t => t.resp.trim() === currentUser.name.trim())
           return (
             <div className="agenda-panel">
               <div className="agenda-panel-title">
@@ -360,6 +360,9 @@ export function TasksPage(props: Props) {
     <>
       {/* TOPBAR */}
       <div className="topbar">
+        <div className="topbar-brand">
+          <div className="brand-text">Pulse <span>Agenda</span></div>
+        </div>
         <div>
           <div className="pt">{PAGE_TITLES['tasks']}</div>
           <div className="ps">Visualize em Lista, Kanban ou Agenda</div>

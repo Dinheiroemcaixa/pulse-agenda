@@ -278,11 +278,19 @@ export function useAppData() {
     // Se editando uma virtual, materializa como nova tarefa real
     const isVirtual = editId?.startsWith('virtual_')
 
+    // Limpar campos que não pertencem ao banco (como isVirtual)
+    const { isVirtual: _iv, ...cleanData } = taskData as any
+    // Sanitizar responsável
+    if (cleanData.resp) cleanData.resp = cleanData.resp.trim()
+
     if (editId && !isVirtual) {
       // Editar tarefa real existente
-      const { error } = await sb.from('tasks').update(taskData).eq('id', editId)
-      if (error) return false
-      setTasks(prev => prev.map(t => t.id === editId ? { ...t, ...taskData } : t))
+      const { error } = await sb.from('tasks').update(cleanData).eq('id', editId)
+      if (error) {
+        console.error('❌ Erro ao atualizar tarefa:', error)
+        return false
+      }
+      setTasks(prev => prev.map(t => t.id === editId ? { ...t, ...cleanData } : t))
     } else {
       // Nova tarefa ou materialização de virtual
       const id = genId()
@@ -290,19 +298,23 @@ export function useAppData() {
       const maxOrder = allTasks?.[0]?.sort_order ?? -1
 
       // Gerar recur_group_id para novas tarefas recorrentes
-      const recur_group_id = taskData.recur && taskData.recur !== 'none'
-        ? (taskData.recur_group_id || `rg_${id}`)
+      const recur_group_id = cleanData.recur && cleanData.recur !== 'none'
+        ? (cleanData.recur_group_id || `rg_${id}`)
         : undefined
 
       const newTask = {
-        ...taskData,
+        ...cleanData,
         id,
         recur_group_id,
-        sort_order: maxOrder + 1
+        sort_order: maxOrder + 1,
+        created_at: new Date().toISOString()
       } as Task
 
       const { error } = await sb.from('tasks').insert(newTask)
-      if (error) return false
+      if (error) {
+        console.error('❌ Erro Supabase (insert task):', error)
+        return false
+      }
       setTasks(prev => [...prev, newTask])
     }
     return true
@@ -442,7 +454,11 @@ export function useAppData() {
     const t = tasks.find(x => x.id === id)
     if (!t) return
     const newStatus = t.status === 'Em Aberto' ? 'Em Andamento' : 'Em Aberto'
-    await sb.from('tasks').update({ status: newStatus }).eq('id', id)
+    const { error } = await sb.from('tasks').update({ status: newStatus }).eq('id', id)
+    if (error) {
+      console.error('❌ Erro Supabase (cycleStatus):', error)
+      return
+    }
     setTasks(prev => prev.map(x => x.id === id ? { ...x, status: newStatus } : x))
   }, [tasks])
 
@@ -480,7 +496,11 @@ export function useAppData() {
       await Promise.all(ups)
       setTasks(prev => prev.map(t => ({ ...t, sort_order: (t.sort_order || 0) + 1 })))
     }
-    await sb.from('tasks').insert(newTask)
+    const { error } = await sb.from('tasks').insert(newTask)
+    if (error) {
+      console.error('❌ Erro Supabase (reopenTask):', error)
+      return false
+    }
     await sb.from('hist').delete().eq('id', histId)
     setTasks(prev => [newTask, ...prev])
     setHist(prev => prev.filter(x => x.id !== histId))

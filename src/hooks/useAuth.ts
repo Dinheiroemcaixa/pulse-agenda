@@ -46,12 +46,12 @@ export function useAuth() {
     const { data: allUsers } = await sb.from('users').select('id')
     const isFirst = !allUsers || allUsers.length === 0
     const id = genId()
-    const newUser: User = { id, name, role: role || 'Membro', email: email.trim().toLowerCase(), pass_hash: hashPass(pass), color, is_admin: isFirst }
+    const newUser: User = { id, name: name.trim(), role: role || 'Membro', email: email.trim().toLowerCase(), pass_hash: hashPass(pass), color, is_admin: isFirst }
 
     const { error: ue } = await sb.from('users').insert(newUser)
     if (ue) return 'Erro ao criar conta: ' + ue.message
 
-    const { error: te } = await sb.from('team').insert({ id, name, role: role || 'Membro', color, email: email.trim().toLowerCase(), is_admin: isFirst })
+    const { error: te } = await sb.from('team').insert({ id, name: name.trim(), role: role || 'Membro', color, email: email.trim().toLowerCase(), is_admin: isFirst })
     if (te) return 'Erro ao adicionar à equipe: ' + te.message
 
     setCurrentUser(newUser)
@@ -69,7 +69,7 @@ export function useAuth() {
     if (error) return false
     // Sincroniza nome, cargo e cor também na tabela team (usada para exibição da equipe)
     const teamSync: Record<string, unknown> = {}
-    if (data.name !== undefined) teamSync.name = data.name
+    if (data.name !== undefined) teamSync.name = data.name.trim()
     if (data.role !== undefined) teamSync.role = data.role
     if (data.color !== undefined) teamSync.color = data.color
     if (Object.keys(teamSync).length > 0) {

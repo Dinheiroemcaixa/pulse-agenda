@@ -7,7 +7,7 @@ interface Props {
   team: TeamMember[]
   currentUser: User
   isAdmin: boolean
-  onComplete: (id: string, fromAtrasadas: boolean) => Promise<void>
+  onComplete: (id: string, fromAtrasadas: boolean) => Promise<boolean>
   onDeleteAtrasada: (id: string) => Promise<void>
   openEditTask: (id: string) => void
   showToast: (msg: string, type?: string) => void
@@ -21,7 +21,7 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, onComplet
 
   let list = [...atrasadas]
   const effectiveScope = isAdmin ? scope : 'mine'
-  if (effectiveScope === 'mine') list = list.filter(a => a.resp === currentUser.name)
+  if (effectiveScope === 'mine') list = list.filter(a => a.resp.trim() === currentUser.name.trim())
   if (search) list = list.filter(a => a.descricao.toLowerCase().includes(search.toLowerCase()))
 
   // Agrupar por data
@@ -87,7 +87,10 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, onComplet
                       <div className="hist-card-date" style={{ color: 'var(--red)' }}>📅 {fDate(a.date)}</div>
                       <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
                         <button style={{ background: 'var(--greenbg)', border: '1px solid var(--green)', borderRadius: 6, padding: '4px 9px', color: 'var(--green)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
-                          onClick={async () => { await onComplete(a.id, true); showToast('✅ Concluída!', 'success') }}>✓ Concluir</button>
+                          onClick={async () => { 
+                            const ok = await onComplete(a.id, true); 
+                            if (ok) showToast('✅ Concluída!', 'success') 
+                          }}>✓ Concluir</button>
                         <button style={{ background: 'var(--accentbg)', border: '1px solid var(--accent)', borderRadius: 6, padding: '4px 9px', color: 'var(--accent)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
                           onClick={() => openEditTask(a.id)}>✏</button>
                         <button style={{ background: 'var(--redbg)', border: '1px solid var(--red)', borderRadius: 6, padding: '4px 9px', color: 'var(--red)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
