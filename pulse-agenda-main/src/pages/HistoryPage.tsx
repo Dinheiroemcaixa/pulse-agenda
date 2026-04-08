@@ -8,7 +8,7 @@ interface Props {
   team: TeamMember[]
   currentUser: User
   isAdmin: boolean
-  onReopen: (histId: string) => Promise<void>
+  onReopen: (histId: string) => Promise<boolean>
   showToast: (msg: string, type?: string) => void
 }
 
@@ -84,11 +84,10 @@ export function HistoryPage({ hist, team, currentUser, isAdmin, onReopen, showTo
 
   return (
     <>
-      <div className="header-branding">
-        <img src={logoImg} alt="Dinheiro em Caixa" className="header-logo-img" />
-        <span className="header-logo-text">Dinheiro em Caixa</span>
-      </div>
-      <div className="topbar-actions">
+      <div className="topbar">
+        <div className="topbar-brand">
+          <div className="brand-text">Pulse <span>Agenda</span></div>
+        </div>
         <div><div className="pt">Histórico</div><div className="ps">Tarefas concluídas</div></div>
       </div>
       <div className="content">

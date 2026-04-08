@@ -38,11 +38,13 @@ export function TeamPage({ tasks, hist, team, currentUser, isAdmin, setViewingAl
 
   return (
     <>
-      <div className="header-branding">
-        <img src={logoImg} alt="Dinheiro em Caixa" className="header-logo-img" />
-        <span className="header-logo-text">Dinheiro em Caixa</span>
+    <>
+      <div className="topbar">
+        <div className="topbar-brand">
+          <div className="brand-text">Pulse <span>Agenda</span></div>
+        </div>
+        <div><div className="pt">Equipe</div><div className="ps">Membros e produtividade</div></div>
       </div>
-      <div className="topbar"><div><div className="pt">Equipe</div><div className="ps">Membros e produtividade</div></div></div>
       <div className="content">
         <div className="team-grid">
           {team.map(m => {
@@ -129,11 +131,11 @@ export function MeetingsPage({ meets, team, currentUser, isAdmin, onSaveMeet, on
 
   return (
     <>
-      <div className="header-branding">
-        <img src={logoImg} alt="Dinheiro em Caixa" className="header-logo-img" />
-        <span className="header-logo-text">Dinheiro em Caixa</span>
-      </div>
+    <>
       <div className="topbar">
+        <div className="topbar-brand">
+          <div className="brand-text">Pulse <span>Agenda</span></div>
+        </div>
         <div><div className="pt">Reuniões</div><div className="ps">Compromissos agendados</div></div>
         <button className="add-btn" onClick={() => setModalOpen(true)}>+ Nova Reunião</button>
       </div>
@@ -245,11 +247,13 @@ export function MessagesPage({ team, currentUser, showToast }: MsgProps) {
 
   return (
     <>
-      <div className="header-branding">
-        <img src={logoImg} alt="Dinheiro em Caixa" className="header-logo-img" />
-        <span className="header-logo-text">Dinheiro em Caixa</span>
+    <>
+      <div className="topbar">
+        <div className="topbar-brand">
+          <div className="brand-text">Pulse <span>Agenda</span></div>
+        </div>
+        <div><div className="pt">Mensagens</div><div className="ps">Conversas diretas</div></div>
       </div>
-      <div className="topbar"><div><div className="pt">Mensagens</div><div className="ps">Conversas diretas</div></div></div>
       <div className="messages-wrap" style={{ height: 'calc(100vh - 57px)' }}>
         <div className="msg-sidebar">
           <div className="ns" style={{ padding: '8px 0 6px' }}>Conversas</div>
@@ -359,11 +363,11 @@ export function BackupPage({ backups, tasks, currentUser, isAdmin, onSaveBackup,
 
   return (
     <>
-      <div className="header-branding">
-        <img src={logoImg} alt="Dinheiro em Caixa" className="header-logo-img" />
-        <span className="header-logo-text">Dinheiro em Caixa</span>
-      </div>
+    <>
       <div className="topbar">
+        <div className="topbar-brand">
+          <div className="brand-text">Pulse <span>Agenda</span></div>
+        </div>
         <div><div className="pt">Backup & Segurança</div><div className="ps">Gestão de cópias em nuvem e no PC</div></div>
       </div>
       <div className="content">

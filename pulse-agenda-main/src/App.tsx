@@ -101,10 +101,11 @@ export default function App() {
     }
   }
 
-  const handleComplete = async (id: string, fromAtrasadas = false) => {
+  const handleComplete = async (id: string, fromAtrasadas = false): Promise<boolean> => {
     const ok = await data.completeTask(id, fromAtrasadas)
     if (ok) showToast('✅ Concluída!', 'success')
     else showToast('❌ Erro ao concluir', 'error')
+    return ok
   }
 
   const handleDelete = async (id: string, deleteAll = false) => {
@@ -112,10 +113,11 @@ export default function App() {
     showToast('🗑 Removida', 'warn')
   }
 
-  const handleReopen = async (histId: string) => {
+  const handleReopen = async (histId: string): Promise<boolean> => {
     const ok = await data.reopenTask(histId)
     if (ok) showToast('↩ Tarefa reaberta!', 'info')
     else showToast('❌ Erro ao reabrir', 'error')
+    return ok
   }
 
   // LOADING SCREEN

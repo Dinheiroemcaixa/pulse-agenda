@@ -275,14 +275,22 @@ export function useAppData() {
 
   // ── SAVE TASK ─────────────────────────────────────────────
   const saveTask = useCallback(async (taskData: Partial<Task>, editId?: string): Promise<boolean> => {
+    if (!currentUser) return false
     // Se editando uma virtual, materializa como nova tarefa real
     const isVirtual = editId?.startsWith('virtual_')
 
+    // Sanitização básica
+    const cleanedData = { ...taskData }
+    if (cleanedData.resp) cleanedData.resp = cleanedData.resp.trim()
+    
+    // IMPORTANTE: Remover campos virtuais/temporários que não existem no banco
+    delete (cleanedData as any).isVirtual
+
     if (editId && !isVirtual) {
       // Editar tarefa real existente
-      const { error } = await sb.from('tasks').update(taskData).eq('id', editId)
+      const { error } = await sb.from('tasks').update(cleanedData).eq('id', editId)
       if (error) return false
-      setTasks(prev => prev.map(t => t.id === editId ? { ...t, ...taskData } : t))
+      setTasks(prev => prev.map(t => t.id === editId ? { ...t, ...cleanedData } : t))
     } else {
       // Nova tarefa ou materialização de virtual
       const id = genId()
@@ -290,15 +298,16 @@ export function useAppData() {
       const maxOrder = allTasks?.[0]?.sort_order ?? -1
 
       // Gerar recur_group_id para novas tarefas recorrentes
-      const recur_group_id = taskData.recur && taskData.recur !== 'none'
-        ? (taskData.recur_group_id || `rg_${id}`)
+      const recur_group_id = cleanedData.recur && cleanedData.recur !== 'none'
+        ? (cleanedData.recur_group_id || `rg_${id}`)
         : undefined
 
       const newTask = {
-        ...taskData,
+        ...cleanedData,
         id,
         recur_group_id,
-        sort_order: maxOrder + 1
+        sort_order: maxOrder + 1,
+        created_at: new Date().toISOString()
       } as Task
 
       const { error } = await sb.from('tasks').insert(newTask)
@@ -306,7 +315,7 @@ export function useAppData() {
       setTasks(prev => [...prev, newTask])
     }
     return true
-  }, [])
+  }, [currentUser])
 
   // ── COMPLETE TASK ─────────────────────────────────────────
   const completeTask = useCallback(async (id: string, fromAtrasadas = false): Promise<boolean> => {

@@ -79,10 +79,6 @@ export function Sidebar({ page, setPage, currentUser, isAdmin, tasks, atrasadas,
       <div className="sidebar">
         <div className="logo">
           <div className="logo-icon">P</div>
-          <div>
-            <div className="logo-text">Pulse Agenda</div>
-            <div className="logo-sub">Gestão de Tarefas</div>
-          </div>
         </div>
 
         <div className="stats-grid">

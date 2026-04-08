@@ -8,7 +8,7 @@ interface Props {
   team: TeamMember[]
   currentUser: User
   isAdmin: boolean
-  onComplete: (id: string, fromAtrasadas: boolean) => Promise<void>
+  onComplete: (id: string, fromAtrasadas: boolean) => Promise<boolean>
   onDeleteAtrasada: (id: string) => Promise<void>
   openEditTask: (id: string) => void
   showToast: (msg: string, type?: string) => void
@@ -36,11 +36,10 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, onComplet
 
   return (
     <>
-      <div className="header-branding">
-        <img src={logoImg} alt="Dinheiro em Caixa" className="header-logo-img" />
-        <span className="header-logo-text">Dinheiro em Caixa</span>
-      </div>
-      <div className="topbar-actions">
+      <div className="topbar">
+        <div className="topbar-brand">
+          <div className="brand-text">Pulse <span>Agenda</span></div>
+        </div>
         <div>
           <div className="pt">Atrasadas</div>
           <div className="ps">Tarefas que passaram do prazo</div>

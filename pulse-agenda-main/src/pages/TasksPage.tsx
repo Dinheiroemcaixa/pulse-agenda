@@ -25,7 +25,7 @@ interface Props {
   setMemberFilter: (m: string) => void
   openNewTask: (date?: string) => void
   openEditTask: (id: string) => void
-  onComplete: (id: string, fromAtrasadas?: boolean) => Promise<void>
+  onComplete: (id: string, fromAtrasadas?: boolean) => Promise<boolean>
   onDelete: (id: string, deleteAll?: boolean) => Promise<void>
   onCycleStatus: (id: string) => Promise<void>
   onReorder: (tasks: Task[]) => Promise<void>
@@ -361,6 +361,9 @@ export function TasksPage(props: Props) {
     <>
       {/* TOPBAR */}
       <div className="topbar">
+        <div className="topbar-brand">
+          <div className="brand-text">Pulse <span>Agenda</span></div>
+        </div>
         <div>
           <div className="pt">{PAGE_TITLES['tasks']}</div>
           <div className="ps">Visualize em Lista, Kanban ou Agenda</div>
