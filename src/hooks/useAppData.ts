@@ -31,7 +31,6 @@ export function useAppData() {
   const [meets, setMeets] = useState<Meeting[]>([])
   const [team, setTeam] = useState<TeamMember[]>([])
   const [tags, setTags] = useState<Tag[]>([])
-  const [atrasadas, setAtrasadas] = useState<Task[]>([])
   const [backups, setBackups] = useState<Backup[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -50,8 +49,8 @@ export function useAppData() {
     const rangeStart = new Date(today); rangeStart.setDate(rangeStart.getDate() - 30)
     const rangeEnd = new Date(today); rangeEnd.setDate(rangeEnd.getDate() + 90)
 
-    // Unificar fonte de dados: Tarefas atuais + Tarefas que foram migradas para 'atrasadas'
-    const result: Task[] = [...tasks, ...atrasadas]
+    // Unificar fonte de dados: Tarefas atuais
+    const result: Task[] = [...tasks]
 
     // Lookup de datas já materializadas por série
     // Key: recur_group_id_YYYY-MM-DD
@@ -194,13 +193,12 @@ export function useAppData() {
   // ── LOAD ALL ─────────────────────────────────────────────
   const loadAll = useCallback(async () => {
     setLoading(true)
-    const [tasksRes, histRes, meetsRes, teamRes, tagsRes, atrasadasRes, backupsRes] = await Promise.all([
+    const [tasksRes, histRes, meetsRes, teamRes, tagsRes, backupsRes] = await Promise.all([
       sb.from('tasks').select('*').order('sort_order', { ascending: true }),
       sb.from('hist').select('*').order('created_at', { ascending: false }),
       sb.from('meets').select('*').order('created_at', { ascending: false }),
       sb.from('team').select('*'),
       sb.from('tags').select('*'),
-      sb.from('atrasadas').select('*').order('date', { ascending: true }),
       sb.from('backup_tasks').select('id,backup_date,backup_label,created_at').order('created_at', { ascending: false }).limit(30),
     ])
 
@@ -210,66 +208,7 @@ export function useAppData() {
     setTags(tagsRes.data || [])
     setBackups(backupsRes.data || [])
 
-    const todayStr = getTodayStr()
-    const todayBR = new Date().toLocaleDateString('pt-BR')
-
-    let updatedTasks: Task[] = tasksRes.data || []
-    let updatedAtrasadas: Task[] = atrasadasRes.data || []
-
-    // ── COMENTADO: MOVER TAREFAS NÃO-RECORRENTES VENCIDAS PARA MESA DE ATRASADAS ──
-    // Decidimos manter as tarefas na lista principal ('tasks') mesmo vencidas
-    // para que continuem aparecendo no filtro de data e no histórico de pendências.
-    /*
-    const vencidas = updatedTasks.filter(t =>
-      t.date && t.date < todayStr &&
-      t.status !== 'Concluída' &&
-      (!t.recur || t.recur === 'none')  // APENAS não-recorrentes
-    )
-
-    for (const t of vencidas) {
-      const jaEsta = updatedAtrasadas.some(a => a.id === t.id)
-      if (jaEsta) continue
-      await sb.from('atrasadas').upsert({ ...t, status: 'Atrasada', moved_at: todayBR })
-      await sb.from('tasks').delete().eq('id', t.id)
-      updatedTasks = updatedTasks.filter(x => x.id !== t.id)
-      updatedAtrasadas = [...updatedAtrasadas, { ...t, status: 'Atrasada' as const, moved_at: todayBR }]
-    }
-    */
-
-    // ── AVANÇAR MESTRES RECORRENTES PRESOS NO PASSADO ─────────
-    // COMENTADO: Usuário prefere ver como atrasadas em vez de avançar.
-    /*
-    const mestresPresos = updatedTasks.filter(t =>
-      t.date && t.date < todayStr &&
-      t.status !== 'Concluída' &&
-      t.recur && t.recur !== 'none' &&
-      t.recur_group_id
-    )
-
-    for (const t of mestresPresos) {
-      // Avança para a próxima ocorrência a partir de ontem (para incluir hoje se válido)
-      const ontem = new Date(todayStr + 'T00:00:00')
-      ontem.setDate(ontem.getDate() - 1)
-      const ontemStr = `${ontem.getFullYear()}-${String(ontem.getMonth()+1).padStart(2,'0')}-${String(ontem.getDate()).padStart(2,'0')}`
-      const nextDate = getNextOccurrenceAfter(
-        t.recur!,
-        t.recur_days || [],
-        t.recur_start || t.date,
-        ontemStr
-      )
-      if (nextDate) {
-        await sb.from('tasks').update({ date: nextDate }).eq('id', t.id)
-        updatedTasks = updatedTasks.map(x => x.id === t.id ? { ...x, date: nextDate } : x)
-      }
-    }
-    */
-
-    // Recarrega do banco para consistência
-    const { data: finalTasks } = await sb.from('tasks').select('*').order('sort_order', { ascending: true })
-    const { data: finalAtrasadas } = await sb.from('atrasadas').select('*').order('date', { ascending: true })
-
-    setTasks(finalTasks || [])
-    setAtrasadas(finalAtrasadas || [])
+    setTasks(tasksRes.data || [])
     setLoading(false)
   }, [])
 
@@ -330,7 +269,8 @@ export function useAppData() {
     if (isVirtual) {
       t = expandedTasks.find(x => x.id === id)
     } else if (fromAtrasadas) {
-      t = atrasadas.find(x => x.id === id) || expandedTasks.find(x => x.id === id)
+      // Agora 'atrasadas' são apenas tasks com data passada — buscamos no expandedTasks
+      t = expandedTasks.find(x => x.id === id) || tasks.find(x => x.id === id)
     } else {
       t = tasks.find(x => x.id === id)
     }
@@ -379,11 +319,6 @@ export function useAppData() {
         console.warn('Aviso: não materializou virtual como concluída:', error)
       }
 
-    } else if (fromAtrasadas && atrasadas.some(a => a.id === id)) {
-      // Atrasada regular da tabela atrasadas (não-recorrente)
-      await sb.from('atrasadas').delete().eq('id', id)
-      setAtrasadas(prev => prev.filter(x => x.id !== id))
-
     } else if ((t as any).recur_group_id && t.recur && t.recur !== 'none') {
       // ── TAREFA MESTRE RECORRENTE ────────────────────────────
       // NUNCA deletar o mestre — isso quebraria toda a série futura.
@@ -426,7 +361,7 @@ export function useAppData() {
 
     setHist(prev => [histItem as unknown as Task, ...prev])
     return true
-  }, [tasks, atrasadas, expandedTasks])
+  }, [tasks, expandedTasks])
 
   // ── DELETE TASK ───────────────────────────────────────────
   const deleteTask = useCallback(async (id: string, deleteAll = false): Promise<void> => {
@@ -537,12 +472,6 @@ export function useAppData() {
       }
       return
     }
-    // Atrasada real da tabela atrasadas (não-recorrente)
-    if (atrasadas.some(a => a.id === id)) {
-      await sb.from('atrasadas').delete().eq('id', id)
-      setAtrasadas(prev => prev.filter(x => x.id !== id))
-      return
-    }
     // Tarefa mestre recorrente vencida ou tarefa comum no state tasks
     const t = tasks.find(x => x.id === id)
     if (!t) return
@@ -566,7 +495,7 @@ export function useAppData() {
       await sb.from('tasks').delete().eq('id', id)
       setTasks(prev => prev.filter(x => x.id !== id))
     }
-  }, [atrasadas, tasks, expandedTasks])
+  }, [tasks, expandedTasks])
 
   // ── MEETINGS ──────────────────────────────────────────────
   const saveMeet = useCallback(async (meetData: Partial<Meeting>, editId?: string): Promise<boolean> => {
@@ -666,13 +595,13 @@ export function useAppData() {
       tasks,
       hist,
       meets,
-      atrasadas,
+      atrasadas: [],
       tags,
       team,
       version: '2.0',
       generated_at: new Date().toISOString()
     }
-  }, [tasks, hist, meets, atrasadas, tags, team])
+  }, [tasks, hist, meets, tags, team])
 
   const downloadBackupFile = (snapshot: any, label: string) => {
     const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' })
@@ -783,7 +712,7 @@ export function useAppData() {
       setTasks(snapshot.tasks || [])
       setHist(snapshot.hist || [])
       setMeets(snapshot.meets || [])
-      setAtrasadas(snapshot.atrasadas || [])
+      // setAtrasadas removido — tudo unificado em tasks
       setTags(snapshot.tags || [])
       if (snapshot.team?.length) {
         // Opcional: atualizar equipe se contido no backup
@@ -801,9 +730,13 @@ export function useAppData() {
 
   return {
     tasks,
-    expandedTasks, // ← usado pelo TasksPage para exibir
-    hist, meets, team, tags, atrasadas, atrasadasDaLista, atrasadasRecorrentes: atrasadasDaLista, allAtrasadas, backups, loading,
-    setTasks, setHist, setMeets, setTeam, setTags, setAtrasadas,
+    expandedTasks,
+    hist, meets, team, tags, loading,
+    atrasadas: allAtrasadas,
+    atrasadasDaLista: allAtrasadas, 
+    atrasadasRecorrentes: allAtrasadas, 
+    allAtrasadas, backups,
+    setTasks, setHist, setMeets, setTeam, setTags,
     loadAll,
     saveTask, completeTask, deleteTask, cycleStatus, reorderTasks, reopenTask, deleteAtrasada,
     saveMeet, deleteMeet,
