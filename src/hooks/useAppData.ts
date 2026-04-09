@@ -76,9 +76,9 @@ export function useAppData() {
       if (!groups[gid]) {
         groups[gid] = t
       } else {
-        // Pega o mais RECENTE (não o mais antigo como estava no bug)
-        // CORREÇÃO DO BUG: mestre = mais recente
-        if (t.date > groups[gid].date) {
+        // MESTRE = O mais ANTIGO não concluído para servir de âncora para o gerador
+        // Isso impede que surjam "novas" tarefas atrasadas ao deletar as recentes
+        if (t.date < groups[gid].date) {
           groups[gid] = t
         }
       }
@@ -431,7 +431,25 @@ export function useAppData() {
   // ── DELETE TASK ───────────────────────────────────────────
   const deleteTask = useCallback(async (id: string, deleteAll = false): Promise<void> => {
     const isVirtual = id.startsWith('virtual_')
-    if (isVirtual) return // Virtuais não têm nada para deletar no banco
+    
+    if (isVirtual) {
+      // Tarefa virtual: para "deletar" sem apagar a série, 
+      // materializamos ela como 'Concluída' no banco para aquela data específica.
+      const t = expandedTasks.find(x => x.id === id)
+      if (!t) return
+      
+      const { isVirtual: _iv, ...payload } = t as any
+      const completedAt = new Date().toLocaleDateString('pt-BR')
+      const deletedRecord = {
+        ...payload,
+        id: genId(),
+        status: 'Concluída' as const,
+        completed_at: completedAt,
+      }
+      await sb.from('tasks').insert(deletedRecord)
+      setTasks(prev => [...prev, deletedRecord])
+      return
+    }
 
     const t = tasks.find(x => x.id === id)
     if (!t) return
@@ -444,7 +462,7 @@ export function useAppData() {
       await sb.from('tasks').delete().eq('id', id)
       setTasks(prev => prev.filter(x => x.id !== id))
     }
-  }, [tasks])
+  }, [tasks, expandedTasks])
 
   // ── CYCLE STATUS ──────────────────────────────────────────
   const cycleStatus = useCallback(async (id: string): Promise<void> => {

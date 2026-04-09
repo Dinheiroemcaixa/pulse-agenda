@@ -76,9 +76,9 @@ export function useAppData() {
       if (!groups[gid]) {
         groups[gid] = t
       } else {
-        // Pega o mais RECENTE (não o mais antigo como estava no bug)
-        // CORREÇÃO DO BUG: mestre = mais recente
-        if (t.date > groups[gid].date) {
+        // MESTRE = O mais ANTIGO não concluído para servir de âncora para o gerador
+        // Isso impede que surjam "novas" tarefas atrasadas ao deletar as recentes
+        if (t.date < groups[gid].date) {
           groups[gid] = t
         }
       }
@@ -436,14 +436,21 @@ export function useAppData() {
     const todayBR = new Date().toLocaleDateString('pt-BR')
 
     if (isVirtual) {
-      // Virtual recorrente -> materializa como concluída silenciosamente para não reaparecer
+      // Tarefa virtual: para "deletar" sem apagar a série, 
+      // materializamos ela como 'Concluída' no banco para aquela data específica.
       const t = expandedTasks.find(x => x.id === id)
-      if (t) {
-        const { isVirtual: _iv, ...payload } = t as any
-        const skipped = { ...payload, id: genId(), status: 'Concluída' as const, completed_at: todayBR }
-        await sb.from('tasks').insert(skipped)
-        setTasks(prev => [...prev, skipped])
+      if (!t) return
+      
+      const { isVirtual: _iv, ...payload } = t as any
+      const completedAt = new Date().toLocaleDateString('pt-BR')
+      const deletedRecord = {
+        ...payload,
+        id: genId(),
+        status: 'Concluída' as const,
+        completed_at: completedAt,
       }
+      await sb.from('tasks').insert(deletedRecord)
+      setTasks(prev => [...prev, deletedRecord])
       return
     }
 
