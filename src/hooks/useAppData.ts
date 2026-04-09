@@ -45,8 +45,10 @@ export function useAppData() {
     const todayStr = getTodayStr()
     const today = new Date(todayStr + 'T00:00:00')
 
-    // Range de geração (30 dias passados ate 90 dias futuros)
-    const rangeStart = new Date(today); rangeStart.setDate(rangeStart.getDate() - 30)
+    // CORREÇÃO DEFINITIVA: NÃO gerar virtuais no passado.
+    // Tarefas de dias anteriores que não foram concluídas simplesmente não existem mais.
+    // Isso impede o bug de "atrasadas fantasmas" que se multiplicavam ao dar refresh.
+    const rangeStart = new Date(today) // Começa em HOJE, sem olhar para trás
     const rangeEnd = new Date(today); rangeEnd.setDate(rangeEnd.getDate() + 90)
 
     // Unificar fonte de dados: Tarefas atuais
