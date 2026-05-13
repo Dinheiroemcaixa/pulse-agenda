@@ -196,7 +196,7 @@ export function useAppData() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     const [tasksRes, histRes, meetsRes, teamRes, tagsRes, backupsRes] = await Promise.all([
-      sb.from('tasks').select('*').order('sort_order', { ascending: true }),
+      sb.from('tasks').select('*').order('sort_order', { ascending: true }).range(0, 4999),
       sb.from('hist').select('*').order('created_at', { ascending: false }),
       sb.from('meets').select('*').order('created_at', { ascending: false }),
       sb.from('team').select('*'),
