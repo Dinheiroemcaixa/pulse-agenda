@@ -211,7 +211,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   <span className="material-symbols-outlined text-xl group-hover:translate-x-1 transition-transform">arrow_forward</span>
                 </button>
               </>
-            ) : (
+            ) : authTab === 'signup' ? (
               /* SIGNUP FORM */
               <div className="space-y-4">
                 <div className="space-y-2">
