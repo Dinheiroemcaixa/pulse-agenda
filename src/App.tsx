@@ -15,7 +15,7 @@ import { Toast } from './components/Toast'
 import { LoginView } from './components/LoginView'
 
 export default function App() {
-  const { currentUser, authLoading, login, signup, logout, updateUser } = useAuth()
+  const { currentUser, authLoading, login, signup, logout, updateUser, resetPassword } = useAuth()
   const data = useAppData()
   const [appReady, setAppReady] = useState(false)
   const [page, setPage] = useState<Page>('tasks')
@@ -37,7 +37,7 @@ export default function App() {
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Auth forms
-  const [authTab, setAuthTab] = useState<'login' | 'signup'>('login')
+  const [authTab, setAuthTab] = useState<'login' | 'signup' | 'recover'>('login')
   const [lEmail, setLEmail] = useState('')
   const [lPass, setLPass] = useState('')
   const [sName, setSName] = useState('')
@@ -45,6 +45,9 @@ export default function App() {
   const [sEmail, setSEmail] = useState('')
   const [sPass, setSPass] = useState('')
   const [sColor, setSColor] = useState(COLORS[0])
+  const [rEmail, setREmail] = useState('')
+  const [rName, setRName] = useState('')
+  const [rPass, setRPass] = useState('')
   const [authErr, setAuthErr] = useState('')
   const [authLoading2, setAuthLoading2] = useState(false)
 
@@ -77,6 +80,19 @@ export default function App() {
     const err = await signup(sName, sRole, sEmail, sPass, sColor)
     setAuthLoading2(false)
     if (err) setAuthErr(err)
+  }
+
+  const handleRecover = async () => {
+    setAuthErr(''); setAuthLoading2(true)
+    const err = await resetPassword(rEmail, rName, rPass)
+    setAuthLoading2(false)
+    if (err) {
+      setAuthErr(err)
+    } else {
+      showToast('✅ Senha redefinida com sucesso! Faça login.', 'success')
+      setAuthTab('login')
+      setRPass('')
+    }
   }
 
   const openNewTask = (date?: string) => {
@@ -150,11 +166,18 @@ export default function App() {
         setSPass={setSPass}
         sColor={sColor}
         setSColor={setSColor}
+        rEmail={rEmail}
+        setREmail={setREmail}
+        rName={rName}
+        setRName={setRName}
+        rPass={rPass}
+        setRPass={setRPass}
         authErr={authErr}
         setAuthErr={setAuthErr}
         authLoading2={authLoading2}
         handleLogin={handleLogin}
         handleSignup={handleSignup}
+        handleRecover={handleRecover}
       />
     )
   }
