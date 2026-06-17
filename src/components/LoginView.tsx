@@ -2,8 +2,8 @@ import React from 'react';
 import { COLORS } from '../lib/utils';
 
 interface LoginViewProps {
-  authTab: 'login' | 'signup';
-  setAuthTab: (tab: 'login' | 'signup') => void;
+  authTab: 'login' | 'signup' | 'recover';
+  setAuthTab: (tab: 'login' | 'signup' | 'recover') => void;
   lEmail: string;
   setLEmail: (val: string) => void;
   lPass: string;
@@ -18,11 +18,18 @@ interface LoginViewProps {
   setSPass: (val: string) => void;
   sColor: string;
   setSColor: (val: string) => void;
+  rEmail: string;
+  setREmail: (val: string) => void;
+  rName: string;
+  setRName: (val: string) => void;
+  rPass: string;
+  setRPass: (val: string) => void;
   authErr: string;
   setAuthErr: (val: string) => void;
   authLoading2: boolean;
   handleLogin: () => void;
   handleSignup: () => void;
+  handleRecover: () => void;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({
@@ -42,11 +49,18 @@ export const LoginView: React.FC<LoginViewProps> = ({
   setSPass,
   sColor,
   setSColor,
+  rEmail,
+  setREmail,
+  rName,
+  setRName,
+  rPass,
+  setRPass,
   authErr,
   setAuthErr,
   authLoading2,
   handleLogin,
   handleSignup,
+  handleRecover,
 }) => {
   return (
     <main className="min-h-screen flex flex-col md:flex-row relative overflow-hidden bg-background text-on-surface font-body selection:bg-secondary selection:text-on-secondary">
@@ -134,12 +148,14 @@ export const LoginView: React.FC<LoginViewProps> = ({
               </button>
             </div>
             <h3 className="font-headline text-3xl font-bold mt-4">
-              {authTab === 'login' ? 'Seja bem-vindo' : 'Crie sua conta'}
+              {authTab === 'login' ? 'Seja bem-vindo' : authTab === 'signup' ? 'Crie sua conta' : 'Recuperar Senha'}
             </h3>
             <p className="text-on-surface-variant text-sm font-body">
               {authTab === 'login' 
                 ? 'Identifique-se para acessar seu ambiente de trabalho.' 
-                : 'Preencha os dados abaixo para começar sua jornada.'}
+                : authTab === 'signup' 
+                ? 'Preencha os dados abaixo para começar sua jornada.' 
+                : 'Informe seu e-mail e nome completo para redefinir.'}
             </p>
           </header>
 
@@ -170,7 +186,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 <div className="space-y-2">
                   <div className="flex justify-between items-center px-1">
                     <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest" htmlFor="password">SENHA</label>
-                    <button className="text-[10px] font-bold text-primary uppercase tracking-wider hover:text-secondary transition-colors border-none bg-transparent cursor-pointer">Esqueceu a senha?</button>
+                    <button type="button" className="text-[10px] font-bold text-primary uppercase tracking-wider hover:text-secondary transition-colors border-none bg-transparent cursor-pointer" onClick={() => { setAuthTab('recover'); setAuthErr(''); }}>Esqueceu a senha?</button>
                   </div>
                   <div className="relative group">
                     <input 
@@ -277,6 +293,61 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   <span className="material-symbols-outlined text-xl group-hover:translate-x-1 transition-transform">person_add</span>
                 </button>
               </div>
+            ) : (
+              /* RECOVER FORM */
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest ml-1">E-MAIL</label>
+                  <div className="relative group">
+                    <input 
+                      className="w-full bg-surface-container-highest text-on-surface border-none rounded-xl px-5 py-4 focus:ring-1 focus:ring-primary/20 focus:bg-primary-container transition-all placeholder:text-outline/50 new-login-input" 
+                      type="email"
+                      placeholder="seu@email.com" 
+                      value={rEmail}
+                      onChange={(e) => setREmail(e.target.value)}
+                    />
+                    <div className="absolute bottom-0 left-0 h-[2px] w-0 bg-secondary transition-all duration-300 group-focus-within:w-full blur-[0.5px]"></div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest ml-1">NOME COMPLETO</label>
+                  <div className="relative group">
+                    <input 
+                      className="w-full bg-surface-container-highest text-on-surface border-none rounded-xl px-5 py-4 focus:ring-1 focus:ring-primary/20 focus:bg-primary-container transition-all placeholder:text-outline/50 new-login-input" 
+                      placeholder="Igual ao cadastrado" 
+                      value={rName}
+                      onChange={(e) => setRName(e.target.value)}
+                    />
+                    <div className="absolute bottom-0 left-0 h-[2px] w-0 bg-secondary transition-all duration-300 group-focus-within:w-full blur-[0.5px]"></div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-on-surface-variant uppercase tracking-widest ml-1">NOVA SENHA</label>
+                  <div className="relative group">
+                    <input 
+                      className="w-full bg-surface-container-highest text-on-surface border-none rounded-xl px-5 py-4 focus:ring-1 focus:ring-primary/20 focus:bg-primary-container transition-all placeholder:text-outline/50 new-login-input" 
+                      type="password"
+                      placeholder="••••••••" 
+                      value={rPass}
+                      onChange={(e) => setRPass(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleRecover()}
+                    />
+                    <div className="absolute bottom-0 left-0 h-[2px] w-0 bg-secondary transition-all duration-300 group-focus-within:w-full blur-[0.5px]"></div>
+                  </div>
+                </div>
+
+                <button 
+                  className="w-full bg-gradient-to-r from-primary to-primary-container text-on-primary font-headline font-extrabold py-5 rounded-xl text-lg hover:shadow-[0_10px_40px_-10px_rgba(182,196,255,0.4)] active:scale-[0.98] transition-all flex justify-center items-center gap-2 group disabled:opacity-50 mt-6"
+                  type="button"
+                  onClick={handleRecover}
+                  disabled={authLoading2}
+                >
+                  {authLoading2 ? 'Redefinindo...' : 'Redefinir Senha'}
+                  <span className="material-symbols-outlined text-xl group-hover:translate-x-1 transition-transform">lock_reset</span>
+                </button>
+              </div>
             )}
           </div>
 
@@ -287,10 +358,15 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   Ainda não possui uma conta? 
                   <button className="text-secondary font-bold hover:underline underline-offset-4 ml-1 bg-transparent border-none cursor-pointer" onClick={() => setAuthTab('signup')}>Abra sua conta agora</button>
                 </>
-              ) : (
+              ) : authTab === 'signup' ? (
                 <>
                   Já tem uma conta? 
                   <button className="text-primary font-bold hover:underline underline-offset-4 ml-1 bg-transparent border-none cursor-pointer" onClick={() => setAuthTab('login')}>Fazer login</button>
+                </>
+              ) : (
+                <>
+                  Lembrou a senha? 
+                  <button className="text-primary font-bold hover:underline underline-offset-4 ml-1 bg-transparent border-none cursor-pointer" onClick={() => setAuthTab('login')}>Voltar ao login</button>
                 </>
               )}
             </p>

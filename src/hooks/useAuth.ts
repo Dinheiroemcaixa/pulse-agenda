@@ -64,6 +64,26 @@ export function useAuth() {
     setCurrentUser(null)
   }
 
+  const resetPassword = async (email: string, name: string, newPass: string): Promise<string | null> => {
+    if (!email) return 'Preencha o e-mail'
+    if (!name) return 'Preencha seu nome completo'
+    if (newPass.length < 4) return 'A nova senha deve ter ao menos 4 caracteres'
+
+    const trimmedEmail = email.trim().toLowerCase()
+    const { data, error } = await sb.from('users').select('*').eq('email', trimmedEmail).single()
+    
+    if (error || !data) return 'Dados incorretos. Verifique o e-mail e o nome digitado.'
+    
+    if (data.name.trim().toLowerCase() !== name.trim().toLowerCase()) {
+      return 'Dados incorretos. Verifique o e-mail e o nome digitado.'
+    }
+
+    const { error: ue } = await sb.from('users').update({ pass_hash: hashPass(newPass) }).eq('id', data.id)
+    if (ue) return 'Erro ao redefinir senha: ' + ue.message
+
+    return null
+  }
+
   const updateUser = async (id: string, data: Partial<User>): Promise<boolean> => {
     const { error } = await sb.from('users').update(data).eq('id', id)
     if (error) return false
@@ -79,5 +99,5 @@ export function useAuth() {
     return true
   }
 
-  return { currentUser, authLoading, login, signup, logout, updateUser }
+  return { currentUser, authLoading, login, signup, logout, updateUser, resetPassword }
 }
