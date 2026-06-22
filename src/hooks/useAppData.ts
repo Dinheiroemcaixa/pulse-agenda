@@ -204,13 +204,24 @@ export function useAppData() {
       sb.from('backup_tasks').select('id,backup_date,backup_label,created_at').order('created_at', { ascending: false }).limit(30),
     ])
 
-    setHist(histRes.data || [])
+    // Normaliza campos de data (remove parte de hora se houver) para evitar bugs de filtro e recorrência
+    const normalizeDate = (d?: string) => d ? d.substring(0, 10) : d
+
+    setHist((histRes.data || []).map(h => ({
+      ...h,
+      date: normalizeDate(h.date),
+      recur_start: normalizeDate(h.recur_start)
+    })))
     setMeets(meetsRes.data || [])
     setTeam(teamRes.data || [])
     setTags(tagsRes.data || [])
     setBackups(backupsRes.data || [])
 
-    setTasks(tasksRes.data || [])
+    setTasks((tasksRes.data || []).map(t => ({
+      ...t,
+      date: normalizeDate(t.date),
+      recur_start: normalizeDate(t.recur_start)
+    })))
     setLoading(false)
   }, [])
 
@@ -343,8 +354,8 @@ export function useAppData() {
       const nextDate = getNextOccurrenceAfter(
         t.recur!,
         t.recur_days || [],
-        t.recur_start || t.date,
-        getTodayStr()
+        t.recur_start || originalDate,
+        originalDate // Calcula baseado na data atual da tarefa, não no dia de hoje, para não perder histórico
       )
       if (nextDate) {
         await sb.from('tasks').update({ date: nextDate }).eq('id', id)
@@ -484,7 +495,7 @@ export function useAppData() {
       await sb.from('tasks').insert(completedRecord)
       setTasks(prev => [...prev, completedRecord])
 
-      const nextDate = getNextOccurrenceAfter(t.recur!, t.recur_days || [], t.recur_start || t.date, getTodayStr())
+      const nextDate = getNextOccurrenceAfter(t.recur!, t.recur_days || [], t.recur_start || t.date, t.date)
       if (nextDate) {
         await sb.from('tasks').update({ date: nextDate }).eq('id', id)
         setTasks(prev => prev.map(x => x.id === id ? { ...x, date: nextDate } : x))
@@ -619,15 +630,33 @@ export function useAppData() {
 
   const checkDailyBackup = useCallback(async (): Promise<void> => {
     const todayStr = getTodayStr()
-    const autoLabel = `Auto ${new Date().toLocaleDateString('pt-BR')}`
+    const now = new Date()
+    const hour = now.getHours()
+    const period = hour < 12 ? 'Manhã' : 'Tarde'
+    const autoLabel = `Auto ${now.toLocaleDateString('pt-BR')} - ${period}`
     
-    // Verifica se já existe um backup automático hoje
-    const { data: existing } = await sb.from('backup_tasks').select('id').ilike('backup_label', 'Auto%').eq('backup_date', todayStr)
-    if (existing && existing.length > 0) return
+    // Permite até 2 backups automáticos por dia (manhã e tarde)
+    const { data: todayBackups } = await sb.from('backup_tasks')
+      .select('id, backup_label')
+      .ilike('backup_label', 'Auto%')
+      .eq('backup_date', todayStr)
+    
+    if (todayBackups && todayBackups.length >= 2) return // Já tem 2 hoje, não cria mais
 
-    // Solicitação do usuário: "substitui o antigo no app"
-    // Remove backups automáticos antigos antes de criar o novo
-    const { data: oldAutos } = await sb.from('backup_tasks').select('id').ilike('backup_label', 'Auto%')
+    // Verifica se já existe um backup para este período (manhã/tarde)
+    const alreadyHasPeriod = todayBackups?.some(b => b.backup_label.includes(period))
+    if (alreadyHasPeriod) return // Já tem backup deste período
+
+    // Limpa backups automáticos com mais de 7 dias
+    const sevenDaysAgo = new Date(now)
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+    const cutoffDate = sevenDaysAgo.toISOString().split('T')[0] // YYYY-MM-DD
+
+    const { data: oldAutos } = await sb.from('backup_tasks')
+      .select('id, backup_date')
+      .ilike('backup_label', 'Auto%')
+      .lt('backup_date', cutoffDate)
+    
     if (oldAutos && oldAutos.length > 0) {
       await sb.from('backup_tasks').delete().in('id', oldAutos.map(b => b.id))
     }
@@ -643,9 +672,14 @@ export function useAppData() {
     })
 
     if (!error) {
-      setBackups([{ id, backup_date: todayStr, backup_label: autoLabel, created_at: new Date().toISOString() }])
+      // Recarrega lista de backups para refletir o novo + remoção dos antigos
+      const { data: refreshed } = await sb.from('backup_tasks')
+        .select('id,backup_date,backup_label,created_at')
+        .order('created_at', { ascending: false })
+        .limit(30)
+      setBackups(refreshed || [])
       // Dispara download para o PC
-      downloadBackupFile(snapshot, 'Automatico')
+      downloadBackupFile(snapshot, `Automatico_${period}`)
     }
   }, [backups, createFullSnapshot])
 
@@ -695,7 +729,6 @@ export function useAppData() {
       await Promise.all([
         sb.from('tasks').delete().neq('id', 'placeholder'),
         sb.from('hist').delete().neq('id', 'placeholder'),
-        sb.from('atrasadas').delete().neq('id', 'placeholder'),
         sb.from('meets').delete().neq('id', 'placeholder'),
         sb.from('tags').delete().neq('id', 'placeholder'),
       ])
@@ -704,7 +737,6 @@ export function useAppData() {
       const inserts = []
       if (snapshot.tasks?.length) inserts.push(sb.from('tasks').insert(snapshot.tasks))
       if (snapshot.hist?.length) inserts.push(sb.from('hist').insert(snapshot.hist))
-      if (snapshot.atrasadas?.length) inserts.push(sb.from('atrasadas').insert(snapshot.atrasadas))
       if (snapshot.meets?.length) inserts.push(sb.from('meets').insert(snapshot.meets))
       if (snapshot.tags?.length) inserts.push(sb.from('tags').insert(snapshot.tags))
 
