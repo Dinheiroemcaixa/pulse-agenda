@@ -196,7 +196,7 @@ export function useAppData() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     const [tasksRes, histRes, meetsRes, teamRes, tagsRes, backupsRes] = await Promise.all([
-      sb.from('tasks').select('*').order('sort_order', { ascending: true }).range(0, 4999),
+      sb.from('tasks').select('*').order('sort_order', { ascending: true }),
       sb.from('hist').select('*').order('created_at', { ascending: false }),
       sb.from('meets').select('*').order('created_at', { ascending: false }),
       sb.from('team').select('*'),
@@ -247,7 +247,7 @@ export function useAppData() {
       // Nova tarefa ou materialização de virtual
       const id = genId()
       const { data: allTasks } = await sb.from('tasks').select('sort_order').order('sort_order', { ascending: false }).limit(1)
-      const maxOrder = allTasks?.[0]?.sort_order ?? -1
+      const maxOrder = (allTasks && allTasks.length > 0) ? (allTasks[0].sort_order || 0) : 0
 
       // Gerar recur_group_id para novas tarefas recorrentes
       const recur_group_id = cleanData.recur && cleanData.recur !== 'none'

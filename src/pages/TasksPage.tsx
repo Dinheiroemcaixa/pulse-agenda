@@ -69,9 +69,9 @@ export function TasksPage(props: Props) {
     if (filterMode === 'open') list = list.filter(t => !isLate(t) && t.status === 'Em Aberto')
     else if (filterMode === 'late') list = list.filter(t => isLate(t))
     else if (filterMode === 'alta') list = list.filter(t => t.prio === 'Alta')
-    if (!viewingAll) list = list.filter(t => t.resp.trim() === currentUser.name.trim())
-    else if (memberFilter && memberFilter !== 'all') list = list.filter(t => t.resp.trim() === memberFilter.trim())
-    if (searchQ) list = list.filter(t => t.descricao.toLowerCase().includes(searchQ.toLowerCase()) || t.resp.toLowerCase().includes(searchQ.toLowerCase()))
+    if (!viewingAll) list = list.filter(t => (t.resp || '').trim() === (currentUser.name || '').trim())
+    else if (memberFilter && memberFilter !== 'all') list = list.filter(t => (t.resp || '').trim() === memberFilter.trim())
+    if (searchQ) list = list.filter(t => (t.descricao || '').toLowerCase().includes(searchQ.toLowerCase()) || (t.resp || '').toLowerCase().includes(searchQ.toLowerCase()))
     if (dateFilter) list = list.filter(t => t.date === dateFilter)
     if (tagFilter) list = list.filter(t => t.tags?.includes(tagFilter))
     // Ordenar pelo sort_order do banco

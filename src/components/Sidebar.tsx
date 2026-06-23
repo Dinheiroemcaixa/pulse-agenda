@@ -3,7 +3,7 @@ import type { User, TeamMember, Task } from '../types'
 import { getInitials, getTodayStr, hashPass, COLORS } from '../lib/utils'
 import type { Page } from '../types'
 
-import logoImg from '../assets/logo-dinheiro.png'
+import logoImg from '../assets/logo-dinheiro-transparent.png'
 
 interface Props {
   page: Page
