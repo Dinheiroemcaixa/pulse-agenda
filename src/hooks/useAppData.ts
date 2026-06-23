@@ -195,9 +195,25 @@ export function useAppData() {
   // ── LOAD ALL ─────────────────────────────────────────────
   const loadAll = useCallback(async () => {
     setLoading(true)
+    
+    // Auto-paginação para buscar todas as tarefas e driblar o limite de 1000 linhas
+    const fetchAllTasks = async () => {
+      let all: any[] = []
+      let from = 0
+      const step = 1000
+      while (true) {
+        const { data, error } = await sb.from('tasks').select('*').order('sort_order', { ascending: true }).range(from, from + step - 1)
+        if (error || !data || data.length === 0) break
+        all = all.concat(data)
+        if (data.length < step) break
+        from += step
+      }
+      return { data: all }
+    }
+
     const [tasksRes, histRes, meetsRes, teamRes, tagsRes, backupsRes] = await Promise.all([
-      sb.from('tasks').select('*').order('sort_order', { ascending: true }),
-      sb.from('hist').select('*').order('created_at', { ascending: false }),
+      fetchAllTasks(),
+      sb.from('hist').select('*').order('created_at', { ascending: false }).limit(1000),
       sb.from('meets').select('*').order('created_at', { ascending: false }),
       sb.from('team').select('*'),
       sb.from('tags').select('*'),
