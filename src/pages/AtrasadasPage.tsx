@@ -75,9 +75,6 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, onComplet
                           <div className="avsm" style={{ background: mc, width: 18, height: 18, fontSize: 8 }}>{getInitials(a.resp)}</div>
                           <span style={{ fontSize: 11, color: 'var(--text2)' }}>{a.resp.split(' ')[0]}</span>
                         </div>
-                        {a.tags?.map(name => {
-                          return <span key={name} className="tag">{name}</span>
-                        })}
                         <span style={{ fontSize: 10, background: 'var(--redbg)', color: 'var(--red)', borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>
                           ⏰ {diasAtraso} dia{diasAtraso !== 1 ? 's' : ''} atrasada
                         </span>

@@ -1,24 +1,21 @@
 import { useState, useEffect, useRef } from 'react'
-import type { Task, TeamMember, Tag, User, RecurType, Priority } from '../types'
-import { getTodayStr, RECUR_LABELS, COLORS } from '../lib/utils'
+import type { Task, TeamMember, User, RecurType, Priority } from '../types'
+import { getTodayStr, RECUR_LABELS } from '../lib/utils'
 
 interface Props {
   editTask?: Task
   team: TeamMember[]
-  tags: Tag[]
   currentUser: User
   defaultDate?: string
   onSave: (data: Partial<Task>) => Promise<void>
   onClose: () => void
-  onSaveTag: (name: string, color: string, bg: string) => Promise<boolean>
-  onDeleteTag: (id: string) => Promise<void>
   showToast: (msg: string, type?: string) => void
 }
 
 const DAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab']
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
-export function TaskModal({ editTask, team, tags, currentUser, defaultDate, onSave, onClose, onSaveTag, onDeleteTag, showToast }: Props) {
+export function TaskModal({ editTask, team, currentUser, defaultDate, onSave, onClose, showToast }: Props) {
   const [desc, setDesc] = useState(editTask?.descricao || '')
   const [resp, setResp] = useState(editTask?.resp || currentUser.name)
   const [date, setDate] = useState(editTask?.date || defaultDate || getTodayStr())
@@ -26,7 +23,6 @@ export function TaskModal({ editTask, team, tags, currentUser, defaultDate, onSa
   const [allDay, setAllDay] = useState(editTask?.all_day !== false)
   const [timeStart, setTimeStart] = useState(editTask?.time_start || '09:00')
   const [timeEnd, setTimeEnd] = useState(editTask?.time_end || '10:00')
-  const [selTags, setSelTags] = useState<string[]>(editTask?.tags || [])
   const [recur, setRecur] = useState<RecurType>(editTask?.recur || 'none')
   const [recurDays, setRecurDays] = useState<string[]>(editTask?.recur_days || [])
   const [subtasks, setSubtasks] = useState(editTask?.subtasks?.map(s => ({ ...s })) || [])
@@ -34,11 +30,6 @@ export function TaskModal({ editTask, team, tags, currentUser, defaultDate, onSa
   const [recurOpen, setRecurOpen] = useState(false)
   const [subInput, setSubInput] = useState('')
   const [saving, setSaving] = useState(false)
-
-  // Tag modal
-  const [tagModalOpen, setTagModalOpen] = useState(false)
-  const [newTagName, setNewTagName] = useState('')
-  const [newTagColor, setNewTagColor] = useState(COLORS[0])
 
   const descRef = useRef<HTMLInputElement>(null)
   useEffect(() => { setTimeout(() => descRef.current?.focus(), 100) }, [])
@@ -56,19 +47,16 @@ export function TaskModal({ editTask, team, tags, currentUser, defaultDate, onSa
       all_day: allDay,
       time_start: allDay ? undefined : timeStart,
       time_end: allDay ? undefined : timeEnd,
-      tags: selTags,
+      tags: editTask?.tags || [],
       recur,
       recur_days: recur === 'custom' ? recurDays : [],
       recur_start: recurStart,
+      recur_group_id: editTask?.recur_group_id,
       subtasks,
       notes: notes.trim() || undefined,
       is_meeting: editTask?.is_meeting || false,
     })
     setSaving(false)
-  }
-
-  const toggleTag = (name: string) => {
-    setSelTags(prev => prev.includes(name) ? prev.filter(t => t !== name) : [...prev, name])
   }
 
   const toggleRecurDay = (day: string) => {
@@ -81,20 +69,8 @@ export function TaskModal({ editTask, team, tags, currentUser, defaultDate, onSa
     setSubInput('')
   }
 
-  const saveTag = async () => {
-    if (!newTagName.trim()) { showToast('⚠ Preencha o nome', 'warn'); return }
-    const hex = newTagColor
-    const r = parseInt(hex.slice(1, 3), 16)
-    const g = parseInt(hex.slice(3, 5), 16)
-    const b = parseInt(hex.slice(5, 7), 16)
-    const ok = await onSaveTag(newTagName.trim(), hex, `rgba(${r},${g},${b},0.15)`)
-    if (ok) { setTagModalOpen(false); setNewTagName('') }
-    else showToast('❌ Erro ao criar tag', 'error')
-  }
-
   return (
-    <>
-      <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
         <div className="modal" style={{ width: 520 }}>
           <div className="modal-title">{editTask ? 'Editar Tarefa' : 'Nova Tarefa'}</div>
 
@@ -166,20 +142,6 @@ export function TaskModal({ editTask, team, tags, currentUser, defaultDate, onSa
             </div>
           </div>
 
-          <div className="field">
-            <label className="label">Tags</label>
-            <div className="tag-sel-wrap">
-              {tags.map(tg => (
-                <span key={tg.id} className={`tag-sel-item${selTags.includes(tg.name) ? ' sel' : ''}`}
-                  style={{ background: tg.bg, color: tg.color, borderColor: selTags.includes(tg.name) ? tg.color : 'transparent' }}
-                  onClick={() => toggleTag(tg.name)}>
-                  {tg.name}
-                  <span style={{ marginLeft: 4, opacity: 0.6, fontSize: 10 }} onClick={e => { e.stopPropagation(); onDeleteTag(tg.id) }}>✕</span>
-                </span>
-              ))}
-              <button className="tbtn" style={{ width: 'auto', padding: '3px 10px', fontSize: 11 }} onClick={() => setTagModalOpen(true)}>+ Tag</button>
-            </div>
-          </div>
 
           <div className="field">
             <label className="label">Subtarefas</label>
@@ -210,30 +172,5 @@ export function TaskModal({ editTask, team, tags, currentUser, defaultDate, onSa
           </div>
         </div>
       </div>
-
-      {tagModalOpen && (
-        <div className="modal-overlay" style={{ zIndex: 600 }} onClick={e => e.target === e.currentTarget && setTagModalOpen(false)}>
-          <div className="modal modal-sm">
-            <div className="modal-title">Nova Tag</div>
-            <div className="field">
-              <label className="label">Nome</label>
-              <input className="inp" placeholder="Ex: Urgente" value={newTagName} onChange={e => setNewTagName(e.target.value)} autoFocus />
-            </div>
-            <div className="field">
-              <label className="label">Cor</label>
-              <div className="color-picker">
-                {COLORS.map(c => (
-                  <div key={c} className={`cp${newTagColor === c ? ' sel' : ''}`} style={{ background: c }} onClick={() => setNewTagColor(c)} />
-                ))}
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="bcancel" onClick={() => setTagModalOpen(false)}>Cancelar</button>
-              <button className="btn-primary" onClick={saveTag}>Criar Tag</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
   )
 }

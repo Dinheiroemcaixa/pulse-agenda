@@ -37,7 +37,7 @@ export interface Task {
   all_day: boolean
   time_start?: string
   time_end?: string
-  tags: string[]
+  tags?: string[]
   recur: RecurType
   recur_days?: string[]
   recur_start?: string

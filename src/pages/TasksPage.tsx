@@ -1,25 +1,22 @@
 import { useState, useRef } from 'react'
-import type { Task, TeamMember, Tag, User, ViewMode, FilterMode } from '../types'
+import type { Task, TeamMember, User, ViewMode, FilterMode } from '../types'
 import { isLate, dateTimeLabel, dateStatus, getInitials, getTodayStr, priorityClass, RECUR_LABELS, MONTHS_LONG } from '../lib/utils'
 
 interface Props {
   tasks: Task[]
   team: TeamMember[]
-  tags: Tag[]
   currentUser: User
   isAdmin: boolean
   viewMode: ViewMode
   filterMode: FilterMode
   searchQ: string
   dateFilter: string
-  tagFilter: string
   viewingAll: boolean
   memberFilter: string
   setViewMode: (v: ViewMode) => void
   setFilterMode: (f: FilterMode) => void
   setSearchQ: (q: string) => void
   setDateFilter: (d: string) => void
-  setTagFilter: (t: string) => void
   setViewingAll: (v: boolean) => void
   setMemberFilter: (m: string) => void
   openNewTask: (date?: string) => void
@@ -31,14 +28,12 @@ interface Props {
   onToggleSub: (taskId: string, idx: number) => Promise<void>
   onAddSub: (taskId: string, text: string) => Promise<void>
   onDeleteSub: (taskId: string, idx: number) => Promise<void>
-  onSaveTag: (name: string, color: string, bg: string) => Promise<boolean>
-  onDeleteTag: (id: string) => Promise<void>
   showToast: (msg: string, type?: string) => void
   setPage: (p: any) => void
 }
 
 export function TasksPage(props: Props) {
-  const { tasks, team, tags, currentUser, isAdmin, viewMode, filterMode, searchQ, dateFilter, tagFilter, viewingAll, memberFilter } = props
+  const { tasks, team, currentUser, isAdmin, viewMode, filterMode, searchQ, dateFilter, viewingAll, memberFilter } = props
   const [expandedTasks, setExpandedTasks] = useState<Record<string, boolean>>({})
   const [expandedNotes, setExpandedNotes] = useState<Record<string, boolean>>({})
   const [subInputs, setSubInputs] = useState<Record<string, string>>({})
@@ -48,7 +43,6 @@ export function TasksPage(props: Props) {
   const dragSrc = useRef<string | null>(null)
 
   const getMember = (name: string) => team.find(m => m.name === name)
-  const getTag = (name: string) => tags.find(t => t.name === name)
 
   const getFiltered = () => {
     const todayStr = getTodayStr()
@@ -72,10 +66,27 @@ export function TasksPage(props: Props) {
     if (!viewingAll) list = list.filter(t => (t.resp || '').trim() === (currentUser.name || '').trim())
     else if (memberFilter && memberFilter !== 'all') list = list.filter(t => (t.resp || '').trim() === memberFilter.trim())
     if (searchQ) list = list.filter(t => (t.descricao || '').toLowerCase().includes(searchQ.toLowerCase()) || (t.resp || '').toLowerCase().includes(searchQ.toLowerCase()))
-    if (dateFilter) list = list.filter(t => t.date === dateFilter)
-    if (tagFilter) list = list.filter(t => t.tags?.includes(tagFilter))
-    // Ordenar pelo sort_order do banco
-    list.sort((a, b) => (a.sort_order ?? 9999) - (b.sort_order ?? 9999))
+    
+    if (dateFilter) {
+      if (filterMode === 'late') {
+        // No modo Atrasadas, garante que todas as atrasadas sejam exibidas independentemente de dateFilter
+        list = list.filter(t => isLate(t))
+      } else if (dateFilter === todayStr) {
+        // Ao visualizar Hoje, mantém visíveis as tarefas de hoje e qualquer pendência atrasada
+        // garantindo que tarefas que venceram anteriormente não desapareçam da rotina operacional
+        list = list.filter(t => t.date === dateFilter || isLate(t))
+      } else {
+        list = list.filter(t => t.date === dateFilter)
+      }
+    }
+
+    // Ordenação: tarefas atrasadas no topo para atenção operacional imediata, seguidas pelo sort_order
+    list.sort((a, b) => {
+      const aLate = isLate(a) ? 1 : 0
+      const bLate = isLate(b) ? 1 : 0
+      if (aLate !== bLate) return bLate - aLate
+      return (a.sort_order ?? 9999) - (b.sort_order ?? 9999)
+    })
     return list
   }
 
@@ -93,10 +104,6 @@ export function TasksPage(props: Props) {
     await props.onReorder(reordered)
   }
 
-  const tagsHtml = (taskTags: string[]) => taskTags?.map(name => {
-    const tg = getTag(name)
-    return tg ? <span key={name} className="tag" style={{ background: tg.bg, color: tg.color }}>{name}</span> : null
-  })
 
   const recurLabel = (t: Task) => {
     if (!t.recur || t.recur === 'none') return null
@@ -157,7 +164,6 @@ export function TasksPage(props: Props) {
               <div className="ti2">
                 <div className="tn">{t.descricao}</div>
                 <div className="tt">
-                  {tagsHtml(t.tags)}
                   {recurLabel(t)}
                   {sub.length > 0 && (
                     <span style={{ fontSize: 10, color: 'var(--text3)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }} onClick={() => setExpandedTasks(prev => ({ ...prev, [t.id]: !prev[t.id] }))}>
@@ -248,7 +254,6 @@ export function TasksPage(props: Props) {
                       onDragStart={e => { e.dataTransfer.setData('text/plain', t.id); setTimeout(() => e.currentTarget.classList.add('dragging'), 0) }}
                       onDragEnd={e => e.currentTarget.classList.remove('dragging')}>
                       <div className="kcard-title">{t.descricao}</div>
-                      <div className="tt">{tagsHtml(t.tags)}</div>
                       <div className="kcard-meta">
                         <span className={`kcard-date${isLate(t) ? ' late' : ''}`}>📅 {dateTimeLabel(t)}</span>
                         <div className="kcard-av" style={{ background: m?.color || '#4f6ef7' }}>{getInitials(t.resp)}</div>
@@ -299,10 +304,9 @@ export function TasksPage(props: Props) {
             {d}
             {dayTasks.length > 0 && <span style={{ float: 'right', background: 'var(--accent)', color: '#fff', borderRadius: 8, padding: '0 5px', fontSize: 9, fontWeight: 700 }}>{dayTasks.length}</span>}
           </div>
-          {dayTasks.slice(0, 3).map(t => {
-            const tg = t.tags?.length ? getTag(t.tags[0]) : null
-            return <div key={t.id} className="agenda-dot" style={{ background: tg?.bg || 'var(--accentbg)', color: isLate(t) ? 'var(--red)' : (tg?.color || 'var(--accent)') }}>{t.descricao}</div>
-          })}
+          {dayTasks.slice(0, 3).map(t => (
+            <div key={t.id} className="agenda-dot" style={{ background: 'var(--accentbg)', color: isLate(t) ? 'var(--red)' : 'var(--accent)' }}>{t.descricao}</div>
+          ))}
           {dayTasks.length > 3 && <div style={{ fontSize: 10, color: 'var(--text3)' }}>+{dayTasks.length - 3} mais</div>}
         </div>
       )
@@ -332,11 +336,10 @@ export function TasksPage(props: Props) {
               {panelTasks.length === 0 && <div className="agenda-panel-empty">Nenhuma tarefa neste dia</div>}
               {panelTasks.map(t => {
                 const m = getMember(t.resp)
-                const tg = t.tags?.length ? getTag(t.tags[0]) : null
                 return (
                   <div key={t.id} className="agenda-task-item">
                     <div className="agenda-task-done" onClick={() => props.onComplete(t.id)} />
-                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: isLate(t) ? 'var(--red)' : (tg?.color || 'var(--accent)'), flexShrink: 0 }} />
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: isLate(t) ? 'var(--red)' : 'var(--accent)', flexShrink: 0 }} />
                     <div className="agenda-task-name">{t.descricao}</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       {!t.all_day && t.time_start && <span style={{ fontSize: 11, color: 'var(--text3)' }}>🕐 {t.time_start}{t.time_end ? '–' + t.time_end : ''}</span>}
@@ -425,18 +428,6 @@ export function TasksPage(props: Props) {
           <input type="date" value={dateFilter} onChange={e => props.setDateFilter(e.target.value)} />
           <button className="date-filter-today" onClick={() => props.setDateFilter(getTodayStr())}>Hoje</button>
           {dateFilter && <button className="date-filter-clear" onClick={() => props.setDateFilter('')}>× Limpar</button>}
-          {tags.length > 0 && (
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 11, color: 'var(--text3)' }}>🏷 Tag:</span>
-              {tags.map(tg => (
-                <span key={tg.id} className={`tag-pill${tagFilter === tg.name ? ' active' : ''}`}
-                  style={{ background: tg.bg, color: tg.color, borderColor: tagFilter === tg.name ? tg.color : 'transparent' }}
-                  onClick={() => props.setTagFilter(tagFilter === tg.name ? '' : tg.name)}>
-                  {tg.name}
-                </span>
-              ))}
-            </div>
-          )}
         </div>
       )}
 

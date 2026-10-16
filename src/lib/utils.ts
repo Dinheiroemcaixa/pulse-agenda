@@ -1,4 +1,4 @@
-import type { Task, RecurType, Tag } from '../types'
+import type { Task, RecurType } from '../types'
 
 export const MONTHS_SHORT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
 export const MONTHS_LONG = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
@@ -89,9 +89,6 @@ export function isTodayValidForRecur(
   return false
 }
 
-export function getTagStyle(tag: Tag | undefined): { color: string; bg: string } {
-  return tag ? { color: tag.color, bg: tag.bg } : { color: '#4f6ef7', bg: 'rgba(79,110,247,0.12)' }
-}
 
 export function priorityClass(p: string): string {
   return p === 'Alta' ? 'p-alta' : p === 'Baixa' ? 'p-baixa' : 'p-media'

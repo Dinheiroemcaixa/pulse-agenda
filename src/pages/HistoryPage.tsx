@@ -154,7 +154,6 @@ export function HistoryPage({ hist, team, currentUser, isAdmin, onReopen, showTo
                           <div className="avsm" style={{ background: mc, width: 18, height: 18, fontSize: 8 }}>{getInitials(t.resp)}</div>
                           <span style={{ fontSize: 11, color: 'var(--text2)' }}>{t.resp.split(' ')[0]}</span>
                         </div>
-                        {t.tags?.map(name => <span key={name} className="tag">{name}</span>)}
                         {onTimeT === true && <span style={{ fontSize: 10, background: 'var(--greenbg)', color: 'var(--green)', borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>✓ No prazo</span>}
                         {onTimeT === false && <span style={{ fontSize: 10, background: 'var(--redbg)', color: 'var(--red)', borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>✗ Atrasada</span>}
                       </div>

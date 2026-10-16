@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from 'react'
 import { sb } from '../lib/supabase'
 import { genId, getTodayStr, isTodayValidForRecur, getNextOccurrenceAfter, isLate } from '../lib/utils'
-import type { Task, TeamMember, Meeting, Tag, Backup } from '../types'
+import type { Task, TeamMember, Meeting, Backup } from '../types'
 
 // ============================================================
 // LÓGICA DE RECORRÊNCIA — ARQUITETURA VIRTUAL
@@ -30,7 +30,6 @@ export function useAppData() {
   const [hist, setHist] = useState<Task[]>([])
   const [meets, setMeets] = useState<Meeting[]>([])
   const [team, setTeam] = useState<TeamMember[]>([])
-  const [tags, setTags] = useState<Tag[]>([])
   const [backups, setBackups] = useState<Backup[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -39,36 +38,38 @@ export function useAppData() {
   const [vsOverrides, setVsOverrides] = useState<Record<string, boolean[]>>({})
 
   // ── EXPANDED TASKS (lógica virtual) ──────────────────────
-  // Gera ocorrências virtuais para todas as séries recorrentes
-  // SEM criar registros no banco
+  // Gera ocorrências para séries recorrentes desde a data inicial de cada série
+  // SEM criar registros antecipados no banco
   const expandedTasks = useMemo(() => {
     const todayStr = getTodayStr()
     const today = new Date(todayStr + 'T00:00:00')
 
-    // CORREÇÃO DEFINITIVA: NÃO gerar virtuais no passado.
-    // Tarefas de dias anteriores que não foram concluídas simplesmente não existem mais.
-    // Isso impede o bug de "atrasadas fantasmas" que se multiplicavam ao dar refresh.
-    const rangeStart = new Date(today) // Começa em HOJE, sem olhar para trás
-    const rangeEnd = new Date(today); rangeEnd.setDate(rangeEnd.getDate() + 90)
+    const rangeEnd = new Date(today)
+    rangeEnd.setDate(rangeEnd.getDate() + 90)
 
     // Unificar fonte de dados: Tarefas atuais
     const result: Task[] = [...tasks]
 
     // Lookup de datas já materializadas por série
-    // Key: recur_group_id_YYYY-MM-DD
+    // Garante que ocorrências já gravadas em tasks (físicas) OU concluídas em hist
+    // NUNCA sejam geradas novamente como virtuais (deduplicação absoluta).
     const materializedKeys = new Set<string>()
     tasks.forEach(t => {
       if (t.recur_group_id && t.date) {
         materializedKeys.add(`${t.recur_group_id}_${t.date}`)
       }
     })
+    hist.forEach(h => {
+      if (h.recur_group_id && h.date) {
+        materializedKeys.add(`${h.recur_group_id}_${h.date}`)
+      }
+    })
 
     // Agrupa mestres por série — pega o mais RECENTE não concluído
-    // CORREÇÃO DO BUG: mestres devem ser não-concluídos
     const recurrenceMasters = tasks.filter(t =>
       t.recur && t.recur !== 'none' &&
       t.recur_group_id &&
-      t.status !== 'Concluída'  // ← CORREÇÃO: exclui concluídas
+      t.status !== 'Concluída'
     )
 
     const groups: Record<string, Task> = {}
@@ -78,20 +79,22 @@ export function useAppData() {
         groups[gid] = t
       } else {
         // MESTRE = O mais ANTIGO não concluído para servir de âncora para o gerador
-        // Isso impede que surjam "novas" tarefas atrasadas ao deletar as recentes
         if (t.date < groups[gid].date) {
           groups[gid] = t
         }
       }
     })
 
-    // Para cada série, gera ocorrências virtuais no range
+    // Para cada série, gera ocorrências virtuais desde a data de início da série até rangeEnd
     Object.values(groups).forEach(master => {
       const recurStart = master.recur_start || master.date
-      const masterDate = new Date(recurStart + 'T00:00:00')
+      let masterDate = new Date(recurStart + 'T00:00:00')
+      if (isNaN(masterDate.getTime())) {
+        masterDate = new Date(today)
+      }
 
-      // Itera dia a dia dentro do range
-      const current = new Date(Math.max(masterDate.getTime(), rangeStart.getTime()))
+      // Itera dia a dia a partir da data de início da série (sem descartar pendências passadas)
+      const current = new Date(masterDate)
       current.setHours(0, 0, 0, 0)
 
       let count = 0
@@ -102,7 +105,7 @@ export function useAppData() {
         const dateStr = `${y}-${mo}-${dy}`
         const key = `${master.recur_group_id}_${dateStr}`
 
-        // Só gera virtual se não existe registro real para esta data/série
+        // Só gera virtual se não existe registro real para esta data/série (nem em tasks nem em hist)
         if (!materializedKeys.has(key)) {
           const recurDays = Array.isArray(master.recur_days) ? master.recur_days : []
           const dayOfWeek = current.getDay()
@@ -172,7 +175,7 @@ export function useAppData() {
     })
 
     return finalResult
-  }, [tasks, vsOverrides])
+  }, [tasks, hist, vsOverrides])
 
   // ── TAREFAS ATRASADAS DA LISTA PRINCIPAL ─────────────────
   // Captura qualquer tarefa no estado 'tasks' que esteja com data passada
@@ -211,12 +214,26 @@ export function useAppData() {
       return { data: all }
     }
 
-    const [tasksRes, histRes, meetsRes, teamRes, tagsRes, backupsRes] = await Promise.all([
+    // Auto-paginação para buscar todo o histórico de tarefas concluídas sem perda de dados
+    const fetchAllHist = async () => {
+      let all: any[] = []
+      let from = 0
+      const step = 1000
+      while (true) {
+        const { data, error } = await sb.from('hist').select('*').order('created_at', { ascending: false }).range(from, from + step - 1)
+        if (error || !data || data.length === 0) break
+        all = all.concat(data)
+        if (data.length < step) break
+        from += step
+      }
+      return { data: all }
+    }
+
+    const [tasksRes, histRes, meetsRes, teamRes, backupsRes] = await Promise.all([
       fetchAllTasks(),
-      sb.from('hist').select('*').order('created_at', { ascending: false }).limit(1000),
+      fetchAllHist(),
       sb.from('meets').select('*').order('created_at', { ascending: false }),
       sb.from('team').select('*'),
-      sb.from('tags').select('*'),
       sb.from('backup_tasks').select('id,backup_date,backup_label,created_at').order('created_at', { ascending: false }).limit(30),
     ])
 
@@ -230,7 +247,6 @@ export function useAppData() {
     })))
     setMeets(meetsRes.data || [])
     setTeam(teamRes.data || [])
-    setTags(tagsRes.data || [])
     setBackups(backupsRes.data || [])
 
     setTasks((tasksRes.data || []).map(t => ({
@@ -293,22 +309,21 @@ export function useAppData() {
     const isVirtual = id.startsWith('virtual_')
 
     // Busca a tarefa de acordo com a origem
-    // fromAtrasadas=true pode vir da tabela atrasadas (não-recorrente) OU de atrasadasRecorrentes (virtual/mestre)
     let t: Task | undefined
     if (isVirtual) {
       t = expandedTasks.find(x => x.id === id)
     } else if (fromAtrasadas) {
-      // Agora 'atrasadas' são apenas tasks com data passada — buscamos no expandedTasks
       t = expandedTasks.find(x => x.id === id) || tasks.find(x => x.id === id)
     } else {
-      t = tasks.find(x => x.id === id)
+      t = tasks.find(x => x.id === id) || expandedTasks.find(x => x.id === id)
     }
 
     if (!t) return false
 
     const completedAt = new Date().toLocaleDateString('pt-BR')
+    const histId = isVirtual ? genId() : t.id
     const histItem = {
-      id: genId(),
+      id: histId,
       descricao: t.descricao,
       resp: t.resp,
       date: t.date || null,
@@ -342,7 +357,7 @@ export function useAppData() {
       }
       const { error } = await sb.from('tasks').insert(completedPayload)
       if (!error) {
-        // Atualiza estado local para remover virtual imediatamente do atrasadasRecorrentes
+        // Atualiza estado local para remover virtual imediatamente das pendências
         setTasks(prev => [...prev, completedPayload])
       } else {
         console.warn('Aviso: não materializou virtual como concluída:', error)
@@ -350,10 +365,8 @@ export function useAppData() {
 
     } else if ((t as any).recur_group_id && t.recur && t.recur !== 'none') {
       // ── TAREFA MESTRE RECORRENTE ────────────────────────────
-      // NUNCA deletar o mestre — isso quebraria toda a série futura.
-      // Em vez disso:
-      //   1. Materializa a data original como concluída (bloqueia re-geração virtual)
-      //   2. Avança o mestre para a próxima ocorrência após hoje
+      // 1. Materializa a data original como concluída (bloqueia re-geração virtual)
+      // 2. Avança o mestre para a próxima ocorrência
       const originalDate = t.date
       const completedRecord = {
         ...(t as any),
@@ -366,12 +379,13 @@ export function useAppData() {
       await sb.from('tasks').insert(completedRecord)
       setTasks(prev => [...prev, completedRecord])
 
-      // Avança o mestre para a próxima ocorrência depois de HOJE
+      // Avança o mestre para a próxima ocorrência
+      const baseDate = originalDate < getTodayStr() ? getTodayStr() : originalDate
       const nextDate = getNextOccurrenceAfter(
         t.recur!,
         t.recur_days || [],
         t.recur_start || originalDate,
-        originalDate // Calcula baseado na data atual da tarefa, não no dia de hoje, para não perder histórico
+        baseDate
       )
       if (nextDate) {
         await sb.from('tasks').update({ date: nextDate }).eq('id', id)
@@ -457,20 +471,20 @@ export function useAppData() {
   const reopenTask = useCallback(async (histId: string): Promise<boolean> => {
     const h = hist.find(x => x.id === histId)
     if (!h) return false
-    const todayStr = getTodayStr()
+    const originalDate = h.date || getTodayStr()
     const { data: allTasks } = await sb.from('tasks').select('sort_order').order('sort_order', { ascending: false }).limit(1)
     const maxOrder = allTasks?.[0]?.sort_order ?? -1
     const newTask: Task = {
       ...h,
-      id: genId(),
-      date: todayStr,
+      id: h.id || genId(),
+      date: originalDate,
       status: 'Em Aberto',
-      recur: 'none',
-      recur_days: [],
-      recur_start: undefined,
-      recur_group_id: undefined,
+      recur: h.recur || 'none',
+      recur_days: h.recur_days || [],
+      recur_start: h.recur_start,
+      recur_group_id: h.recur_group_id,
       completed_at: undefined,
-      sort_order: 0,
+      sort_order: maxOrder + 1,
     } as Task
     const allCurrent = await sb.from('tasks').select('id,sort_order').order('sort_order', { ascending: true })
     if (allCurrent.data) {
@@ -547,20 +561,6 @@ export function useAppData() {
     setMeets(prev => prev.filter(m => m.id !== id))
   }, [])
 
-  // ── TAGS ──────────────────────────────────────────────────
-  const saveTag = useCallback(async (name: string, color: string, bg: string): Promise<boolean> => {
-    const id = genId()
-    const newTag = { id, name, color, bg }
-    const { error } = await sb.from('tags').insert(newTag)
-    if (error) return false
-    setTags(prev => [...prev, newTag])
-    return true
-  }, [])
-
-  const deleteTag = useCallback(async (id: string): Promise<void> => {
-    await sb.from('tags').delete().eq('id', id)
-    setTags(prev => prev.filter(t => t.id !== id))
-  }, [])
 
   // ── SUBTASKS ──────────────────────────────────────────────
   const toggleSubtask = useCallback(async (taskId: string, idx: number): Promise<void> => {
@@ -625,12 +625,12 @@ export function useAppData() {
       hist,
       meets,
       atrasadas: [],
-      tags,
+      tags: [],
       team,
       version: '2.0',
       generated_at: new Date().toISOString()
     }
-  }, [tasks, hist, meets, tags, team])
+  }, [tasks, hist, meets, team])
 
   const downloadBackupFile = (snapshot: any, label: string) => {
     const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' })
@@ -763,7 +763,6 @@ export function useAppData() {
       setHist(snapshot.hist || [])
       setMeets(snapshot.meets || [])
       // setAtrasadas removido — tudo unificado em tasks
-      setTags(snapshot.tags || [])
       if (snapshot.team?.length) {
         // Opcional: atualizar equipe se contido no backup
         setTeam(snapshot.team)
@@ -781,16 +780,15 @@ export function useAppData() {
   return {
     tasks,
     expandedTasks,
-    hist, meets, team, tags, loading,
+    hist, meets, team, loading,
     atrasadas: allAtrasadas,
     atrasadasDaLista: allAtrasadas, 
     atrasadasRecorrentes: allAtrasadas, 
     allAtrasadas, backups,
-    setTasks, setHist, setMeets, setTeam, setTags,
+    setTasks, setHist, setMeets, setTeam,
     loadAll,
     saveTask, completeTask, deleteTask, cycleStatus, reorderTasks, reopenTask, deleteAtrasada,
     saveMeet, deleteMeet,
-    saveTag, deleteTag,
     toggleSubtask, addSubtask, deleteSubtask,
     updateTeamMember,
     checkDailyBackup, saveBackupManual, deleteBackup, restoreFromBackup,

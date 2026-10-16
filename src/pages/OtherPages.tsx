@@ -373,7 +373,7 @@ export function BackupPage({ backups, tasks, currentUser, isAdmin, onSaveBackup,
             <div style={{ fontWeight: 700, fontSize: 16 }}>Criar Backup Agora</div>
           </div>
           <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16 }}>
-            Isso salvará uma cópia completa dos seus dados (tarefas, histórico, reuniões, equipe e tags) na nuvem e disparará um download para o seu computador.
+            Isso salvará uma cópia completa dos seus dados (tarefas, histórico, reuniões e equipe) na nuvem e disparará um download para o seu computador.
           </p>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <input className="inp" placeholder="Nome do backup (ex: Antes de limpar tudo)..." value={label} onChange={e => setLabel(e.target.value)} style={{ flex: 1 }} />

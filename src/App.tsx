@@ -23,7 +23,6 @@ export default function App() {
   const [filterMode, setFilterMode] = useState<FilterMode>('all')
   const [searchQ, setSearchQ] = useState('')
   const [dateFilter, setDateFilter] = useState(getTodayStr())
-  const [tagFilter, setTagFilter] = useState('')
   const [viewingAll, setViewingAll] = useState(() => {
     try { return localStorage.getItem('pulse_viewingAll') === 'true' } catch { return false }
   })
@@ -199,7 +198,6 @@ export default function App() {
     hist: data.hist,
     meets: data.meets,
     team: data.team,
-    tags: data.tags,
     atrasadas: data.allAtrasadas,
     backups: data.backups,
     currentUser,
@@ -208,14 +206,12 @@ export default function App() {
     filterMode,
     searchQ,
     dateFilter,
-    tagFilter,
     viewingAll,
     memberFilter,
     setViewMode,
     setFilterMode,
     setSearchQ,
     setDateFilter,
-    setTagFilter,
     setViewingAll,
     setMemberFilter,
     openNewTask,
@@ -231,8 +227,6 @@ export default function App() {
     onDeleteAtrasada: data.deleteAtrasada,
     onSaveMeet: data.saveMeet,
     onDeleteMeet: data.deleteMeet,
-    onSaveTag: data.saveTag,
-    onDeleteTag: data.deleteTag,
     onUpdateTeam: data.updateTeamMember,
     onSaveBackup: data.saveBackupManual,
     onDeleteBackup: data.deleteBackup,
@@ -271,13 +265,10 @@ export default function App() {
         <TaskModal
           editTask={editTaskId ? data.expandedTasks.find(t => t.id === editTaskId) : undefined}
           team={data.team}
-          tags={data.tags}
           currentUser={currentUser}
           defaultDate={taskModalDate}
           onSave={handleSaveTask}
           onClose={() => setTaskModalOpen(false)}
-          onSaveTag={data.saveTag}
-          onDeleteTag={data.deleteTag}
           showToast={showToast}
         />
       )}
