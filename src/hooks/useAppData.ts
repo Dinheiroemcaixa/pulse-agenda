@@ -1,7 +1,8 @@
 import { useState, useCallback, useMemo } from 'react'
 import { sb } from '../lib/supabase'
 import { genId, getTodayStr, isTodayValidForRecur, getNextOccurrenceAfter, isLate } from '../lib/utils'
-import type { Task, TeamMember, Meeting, Backup } from '../types'
+import type { Task, TeamMember, Meeting, Backup, Pop } from '../types'
+import { fetchPopsApi } from '../lib/popsApi'
 
 // ============================================================
 // LÓGICA DE RECORRÊNCIA — ARQUITETURA VIRTUAL
@@ -31,6 +32,7 @@ export function useAppData() {
   const [meets, setMeets] = useState<Meeting[]>([])
   const [team, setTeam] = useState<TeamMember[]>([])
   const [backups, setBackups] = useState<Backup[]>([])
+  const [pops, setPops] = useState<Pop[]>([])
   const [loading, setLoading] = useState(false)
 
   // Estado local para subtarefas de tarefas virtuais (não persiste no tasks state)
@@ -254,7 +256,17 @@ export function useAppData() {
       date: normalizeDate(t.date),
       recur_start: normalizeDate(t.recur_start)
     })))
+
+    // Carregar procedimentos operacionais padrão (POP)
+    const popsData = await fetchPopsApi()
+    setPops(popsData)
+
     setLoading(false)
+  }, [])
+
+  const loadPops = useCallback(async () => {
+    const data = await fetchPopsApi()
+    setPops(data)
   }, [])
 
   // ── SAVE TASK ─────────────────────────────────────────────
@@ -784,9 +796,9 @@ export function useAppData() {
     atrasadas: allAtrasadas,
     atrasadasDaLista: allAtrasadas, 
     atrasadasRecorrentes: allAtrasadas, 
-    allAtrasadas, backups,
-    setTasks, setHist, setMeets, setTeam,
-    loadAll,
+    allAtrasadas, backups, pops,
+    setTasks, setHist, setMeets, setTeam, setPops,
+    loadAll, loadPops,
     saveTask, completeTask, deleteTask, cycleStatus, reorderTasks, reopenTask, deleteAtrasada,
     saveMeet, deleteMeet,
     toggleSubtask, addSubtask, deleteSubtask,

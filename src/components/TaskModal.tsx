@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
-import type { Task, TeamMember, User, RecurType, Priority } from '../types'
+import type { Task, TeamMember, User, RecurType, Priority, Pop } from '../types'
 import { getTodayStr, RECUR_LABELS } from '../lib/utils'
+import { resolveTaskPopId, linkTaskToPopApi } from '../lib/popsApi'
 
 interface Props {
   editTask?: Task
   team: TeamMember[]
   currentUser: User
+  pops?: Pop[]
   defaultDate?: string
   onSave: (data: Partial<Task>) => Promise<void>
   onClose: () => void
@@ -15,7 +17,7 @@ interface Props {
 const DAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab']
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
-export function TaskModal({ editTask, team, currentUser, defaultDate, onSave, onClose, showToast }: Props) {
+export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate, onSave, onClose, showToast }: Props) {
   const [desc, setDesc] = useState(editTask?.descricao || '')
   const [resp, setResp] = useState(editTask?.resp || currentUser.name)
   const [date, setDate] = useState(editTask?.date || defaultDate || getTodayStr())
@@ -27,6 +29,11 @@ export function TaskModal({ editTask, team, currentUser, defaultDate, onSave, on
   const [recurDays, setRecurDays] = useState<string[]>(editTask?.recur_days || [])
   const [subtasks, setSubtasks] = useState(editTask?.subtasks?.map(s => ({ ...s })) || [])
   const [notes, setNotes] = useState(editTask?.notes || '')
+  const [popId, setPopId] = useState<string>(() => {
+    if (editTask?.pop_id) return editTask.pop_id
+    if (editTask?.id) return resolveTaskPopId(editTask.id) || ''
+    return ''
+  })
   const [recurOpen, setRecurOpen] = useState(false)
   const [subInput, setSubInput] = useState('')
   const [saving, setSaving] = useState(false)
@@ -38,6 +45,7 @@ export function TaskModal({ editTask, team, currentUser, defaultDate, onSave, on
     if (!desc.trim()) { showToast('⚠ Preencha a descrição', 'warn'); return }
     setSaving(true)
     const recurStart = editTask?.recur_start || (recur !== 'none' ? date : undefined)
+    const selectedPopId = popId || undefined
     await onSave({
       descricao: desc.trim(),
       resp,
@@ -55,7 +63,11 @@ export function TaskModal({ editTask, team, currentUser, defaultDate, onSave, on
       subtasks,
       notes: notes.trim() || undefined,
       is_meeting: editTask?.is_meeting || false,
+      pop_id: selectedPopId,
     })
+    if (editTask?.id) {
+      await linkTaskToPopApi(editTask.id, selectedPopId || null)
+    }
     setSaving(false)
   }
 
@@ -158,6 +170,33 @@ export function TaskModal({ editTask, team, currentUser, defaultDate, onSave, on
               <input className="inp" placeholder="Nova subtarefa..." value={subInput} onChange={e => setSubInput(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && addSubtask()} style={{ flex: 1 }} />
               <button className="tbtn" style={{ width: 'auto', padding: '0 12px' }} onClick={addSubtask}>+ Add</button>
+            </div>
+          </div>
+
+          <div className="field">
+            <label className="label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Procedimento Padrão (POP)</span>
+              {popId ? (
+                <span style={{ fontSize: 11, color: 'var(--accent, #2563eb)', fontWeight: 600 }}>● Vinculado</span>
+              ) : (
+                <span style={{ fontSize: 11, color: 'var(--text3)' }}>Opcional</span>
+              )}
+            </label>
+            <select
+              className="inp"
+              value={popId}
+              onChange={e => setPopId(e.target.value)}
+              style={{ cursor: 'pointer' }}
+            >
+              <option value="">Nenhum POP associado (execução livre)</option>
+              {pops.map(p => (
+                <option key={p.id} value={p.id} disabled={!p.active && p.id !== popId}>
+                  📘 {p.title} {!p.active ? '(Inativo)' : ''}
+                </option>
+              ))}
+            </select>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+              Vincula instruções passo a passo para orientar quem for executar ou substituir esta tarefa.
             </div>
           </div>
 

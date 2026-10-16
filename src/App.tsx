@@ -10,6 +10,7 @@ import { TasksPage } from './pages/TasksPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { AtrasadasPage } from './pages/AtrasadasPage'
 import { TeamPage, MeetingsPage, MessagesPage, BackupPage } from "./pages/OtherPages"
+import { PopsPage } from './pages/PopsPage'
 import { TaskModal } from './components/TaskModal'
 import { Toast } from './components/Toast'
 import { LoginView } from './components/LoginView'
@@ -200,6 +201,8 @@ export default function App() {
     team: data.team,
     atrasadas: data.allAtrasadas,
     backups: data.backups,
+    pops: data.pops,
+    onRefreshPops: data.loadPops,
     currentUser,
     isAdmin,
     viewMode,
@@ -259,6 +262,7 @@ export default function App() {
         {page === 'meetings' && <MeetingsPage {...pageProps} />}
         {page === 'messages' && <MessagesPage {...pageProps} />}
         {page === 'backup' && <BackupPage {...pageProps} />}
+        {page === 'pops' && <PopsPage {...pageProps} pops={data.pops} onRefreshPops={data.loadPops} />}
       </div>
 
       {taskModalOpen && (
@@ -266,6 +270,7 @@ export default function App() {
           editTask={editTaskId ? data.expandedTasks.find(t => t.id === editTaskId) : undefined}
           team={data.team}
           currentUser={currentUser}
+          pops={data.pops}
           defaultDate={taskModalDate}
           onSave={handleSaveTask}
           onClose={() => setTaskModalOpen(false)}

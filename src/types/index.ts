@@ -23,6 +23,30 @@ export interface Subtask {
   done: boolean
 }
 
+export interface PopStep {
+  id: string
+  order: number
+  title: string
+  instruction: string
+}
+
+export interface Pop {
+  id: string
+  title: string
+  objective: string
+  when_to_use: string
+  prerequisites: string
+  steps: PopStep[]
+  cautions: string
+  expected_result: string
+  contact_notes?: string
+  responsible?: string
+  active: boolean
+  version: number
+  created_at: string
+  updated_at: string
+}
+
 export type RecurType = 'none' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'custom'
 export type Priority = 'Alta' | 'Média' | 'Baixa'
 export type TaskStatus = 'Em Aberto' | 'Em Andamento' | 'Concluída' | 'Atrasada'
@@ -50,6 +74,7 @@ export interface Task {
   moved_at?: string
   created_at?: string
   isVirtual?: boolean       // true = gerada no front-end, não existe no banco ainda
+  pop_id?: string           // ID do POP associado à tarefa
 }
 
 export interface Meeting {
@@ -77,6 +102,7 @@ export interface Backup {
   created_at: string
 }
 
-export type Page = 'tasks' | 'team' | 'history' | 'atrasadas' | 'meetings' | 'messages' | 'backup'
+export type Page = 'tasks' | 'team' | 'history' | 'atrasadas' | 'meetings' | 'messages' | 'backup' | 'pops'
 export type ViewMode = 'list' | 'kanban' | 'agenda'
 export type FilterMode = 'all' | 'open' | 'late' | 'alta'
+

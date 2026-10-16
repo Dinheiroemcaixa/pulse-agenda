@@ -1,6 +1,8 @@
 import { useState, useRef } from 'react'
-import type { Task, TeamMember, User, ViewMode, FilterMode } from '../types'
+import type { Task, TeamMember, User, ViewMode, FilterMode, Pop } from '../types'
 import { isLate, dateTimeLabel, dateStatus, getInitials, getTodayStr, priorityClass, RECUR_LABELS, MONTHS_LONG } from '../lib/utils'
+import { PopRunnerModal } from '../components/PopRunnerModal'
+import { resolveTaskPopId } from '../lib/popsApi'
 
 interface Props {
   tasks: Task[]
@@ -13,6 +15,8 @@ interface Props {
   dateFilter: string
   viewingAll: boolean
   memberFilter: string
+  pops?: Pop[]
+  onRefreshPops?: () => Promise<void>
   setViewMode: (v: ViewMode) => void
   setFilterMode: (f: FilterMode) => void
   setSearchQ: (q: string) => void
@@ -40,6 +44,7 @@ export function TasksPage(props: Props) {
   const [confirmDel, setConfirmDel] = useState<{ id: string; isRecurring: boolean } | null>(null)
   const [agendaDate, setAgendaDate] = useState(new Date())
   const [selectedAgendaDay, setSelectedAgendaDay] = useState<string | null>(null)
+  const [activePopTask, setActivePopTask] = useState<Task | null>(null)
   const dragSrc = useRef<string | null>(null)
 
   const getMember = (name: string) => team.find(m => m.name === name)
@@ -151,6 +156,27 @@ export function TasksPage(props: Props) {
                 <div className="tn">{t.descricao}</div>
                 <div className="tt">
                   {recurLabel(t)}
+                  {(t.pop_id || resolveTaskPopId(t.id)) && (
+                    <span
+                      onClick={e => { e.stopPropagation(); setActivePopTask(t) }}
+                      title="POP — Como executar esta tarefa passo a passo"
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: 'var(--accent, #2563eb)',
+                        background: 'rgba(37, 99, 235, 0.08)',
+                        border: '1px solid rgba(37, 99, 235, 0.25)',
+                        padding: '1px 6px',
+                        borderRadius: 4,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 3,
+                      }}
+                    >
+                      📘 POP
+                    </span>
+                  )}
                   {sub.length > 0 && (
                     <span style={{ fontSize: 10, color: 'var(--text3)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }} onClick={() => setExpandedTasks(prev => ({ ...prev, [t.id]: !prev[t.id] }))}>
                       📌 {doneSub}/{sub.length}
@@ -168,6 +194,17 @@ export function TasksPage(props: Props) {
               <div><span className={`pb ${priorityClass(t.prio)}`}>{t.prio}</span></div>
               <div>{statusBadge(t)}</div>
               <div className="ra">
+                <button
+                  className="act"
+                  title="POP — Como executar"
+                  onClick={() => setActivePopTask(t)}
+                  style={{
+                    color: (t.pop_id || resolveTaskPopId(t.id)) ? 'var(--accent, #2563eb)' : 'var(--text3)',
+                    fontWeight: (t.pop_id || resolveTaskPopId(t.id)) ? 700 : 400
+                  }}
+                >
+                  📘
+                </button>
                 {t.notes && <button className="act" onClick={() => setExpandedNotes(prev => ({ ...prev, [t.id]: !prev[t.id] }))}>📝</button>}
                 <button className="act edt" onClick={() => props.openEditTask(t.id)}>✎</button>
                 <button className="act del" onClick={() => setConfirmDel({ id: t.id, isRecurring: !!(t.recur && t.recur !== 'none') })}>✕</button>
@@ -244,9 +281,23 @@ export function TasksPage(props: Props) {
                         <span className={`kcard-date${isLate(t) ? ' late' : ''}`}>📅 {dateTimeLabel(t)}</span>
                         <div className="kcard-av" style={{ background: m?.color || '#4f6ef7' }}>{getInitials(t.resp)}</div>
                       </div>
-                      <div style={{ marginTop: 6 }}><span className={`pb ${priorityClass(t.prio)}`}>{t.prio}</span></div>
+                      <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span className={`pb ${priorityClass(t.prio)}`}>{t.prio}</span>
+                        {(t.pop_id || resolveTaskPopId(t.id)) && (
+                          <span
+                            onClick={e => { e.stopPropagation(); setActivePopTask(t) }}
+                            style={{ fontSize: 10, background: 'rgba(37, 99, 235, 0.08)', color: 'var(--accent, #2563eb)', border: '1px solid rgba(37, 99, 235, 0.25)', padding: '1px 5px', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
+                            title="POP associado — Ver procedimento"
+                          >
+                            📘 POP
+                          </span>
+                        )}
+                      </div>
                       <div className="kcard-actions">
                         <div className="kcard-done" onClick={() => props.onComplete(t.id)}>✓ Concluir</div>
+                        <div className="kcard-edit" title="POP — Como executar" onClick={() => setActivePopTask(t)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          📘
+                        </div>
                         <div className="kcard-edit" onClick={() => props.openEditTask(t.id)}>✎</div>
                       </div>
                     </div>
@@ -447,6 +498,22 @@ export function TasksPage(props: Props) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* POP RUNNER MODAL (COMO EXECUTAR) */}
+      {activePopTask && (
+        <PopRunnerModal
+          task={activePopTask}
+          pops={props.pops || []}
+          isAdmin={isAdmin}
+          onClose={() => setActivePopTask(null)}
+          onOpenLibrary={() => {
+            setActivePopTask(null)
+            props.setPage('pops')
+          }}
+          onRefreshPops={props.onRefreshPops}
+          showToast={props.showToast}
+        />
       )}
     </>
   )
