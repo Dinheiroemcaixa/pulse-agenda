@@ -2,17 +2,17 @@ import { sb } from './supabase'
 import { genId } from './utils'
 import type { Pop, PopStep, Task } from '../types'
 
-const POPS_LOCAL_STORAGE_KEY = 'pulse_pops_cache_v1'
+const POPS_LOCAL_STORAGE_KEY = 'pulse_pops_cache_v4'
 const TASK_POP_LINKS_KEY = 'pulse_task_pop_links_v1'
 
 // POPs iniciais modelo para a equipe de BPO Financeiro
-const DEFAULT_POPS: Pop[] = [
+export const DEFAULT_POPS: Pop[] = [
   {
     id: 'pop_fechamento_caixa',
-    title: 'Fechamento Diário de Caixa e Conciliação',
+    title: 'POP — Fechamento Diário de Caixa dos Clientes',
     objective: 'Garantir que todas as entradas e saídas do dia estejam conferidas com os extratos bancários e sem divergências.',
     when_to_use: 'Diariamente ao final do expediente ou no início do dia subsequente para conferência do saldo.',
-    prerequisites: 'Acesso ao internet banking dos clientes, sistema ERP e extrato consolidado OFX/PDF.',
+    prerequisites: 'Acesso ao internet banking dos clientes; Sistema ERP; Extrato consolidado OFX/PDF',
     steps: [
       {
         id: 's1',
@@ -74,15 +74,44 @@ const DEFAULT_POPS: Pop[] = [
     title: 'Programação de Pagamentos e PIX/TED',
     objective: 'Efetuar a programação de contas a pagar no internet banking dentro dos prazos de desconto e vencimento.',
     when_to_use: 'Sempre que houver boletos ou pagamentos aprovados para a data presente ou datas futuras.',
-    prerequisites: 'Comprovante de autorização de pagamento do cliente e chave PIX/código de barras verificado.',
+    prerequisites: 'Comprovante de autorização de pagamento do cliente; Chave PIX ou código de barras conferido; Acesso ao Internet Banking',
     steps: [
-      { id: 's1', order: 1, title: 'Conferir Favorecido e Valor', instruction: 'Verificar se o nome do beneficiário e o valor coincidem com o documento fiscal original.' },
-      { id: 's2', order: 2, title: 'Agendar no Internet Banking', instruction: 'Inserir a data exata de débito e anexar a descrição padronizada da despesa.' },
-      { id: 's3', order: 3, title: 'Gerar Comprovante de Agendamento', instruction: 'Salvar o comprovante em PDF na pasta de pagamentos do cliente e notificar a autorização.' }
+      {
+        id: 's1',
+        order: 1,
+        title: 'Conferir Favorecido e Valor',
+        instruction: 'Verificar se o nome do beneficiário e o valor coincidem com o documento fiscal original.',
+        media: [
+          { name: 'Conferência de boleto x NF', type: 'image' },
+          { name: 'Planilha de pagamentos aprovados.xlsx', type: 'doc', size: '64 KB', extension: 'XLSX' }
+        ],
+        tip: 'Confira sempre o CNPJ do favorecido antes de confirmar o agendamento.',
+        tipType: 'info'
+      },
+      {
+        id: 's2',
+        order: 2,
+        title: 'Agendar no Internet Banking',
+        instruction: 'Inserir a data exata de débito e anexar a descrição padronizada da despesa.',
+        media: [
+          { name: 'Agendar PIX/TED no banco · 1:15', type: 'video' }
+        ]
+      },
+      {
+        id: 's3',
+        order: 3,
+        title: 'Gerar Comprovante de Agendamento',
+        instruction: 'Salvar o comprovante em PDF na pasta de pagamentos do cliente e notificar a autorização.',
+        media: [
+          { name: 'Comprovante_Agendamento.pdf', type: 'doc', size: '128 KB', extension: 'PDF' }
+        ],
+        tip: 'Se o pagamento exigir dupla aprovação, avise imediatamente o gestor financeiro.',
+        tipType: 'warn'
+      }
     ],
     cautions: 'Conferir atentamente os dígitos da chave PIX e data de débito para não antecipar saídas indevidamente.',
     expected_result: 'Pagamentos programados com comprovante arquivado e sem encargos por atraso.',
-    contact_notes: 'Área de Tesouraria / BPO Financeiro',
+    contact_notes: 'Gestora Financeira Raffaela Lima',
     responsible: 'Raffaela Lima',
     estimated_time: '15 min',
     active: true,
@@ -92,16 +121,52 @@ const DEFAULT_POPS: Pop[] = [
   }
 ]
 
+function hydrateBuiltInPops(list: Pop[]): Pop[] {
+  const result = [...list]
+  for (const defPop of DEFAULT_POPS) {
+    const idx = result.findIndex(p => p.id === defPop.id)
+    if (idx === -1) {
+      result.push(defPop)
+    } else {
+      const cur = result[idx]
+      const hasMedia = Array.isArray(cur.steps) && cur.steps.some(s => Array.isArray(s.media) && s.media.length > 0)
+      const normalizedTitle = cur.title === 'Fechamento Diário de Caixa e Conciliação' ? defPop.title : (cur.title || defPop.title)
+      if (!hasMedia || cur.title === 'Fechamento Diário de Caixa e Conciliação') {
+        result[idx] = {
+          ...defPop,
+          ...cur,
+          title: normalizedTitle,
+          prerequisites: defPop.prerequisites,
+          contact_notes: defPop.contact_notes,
+          estimated_time: cur.estimated_time || defPop.estimated_time,
+          steps: hasMedia ? cur.steps : defPop.steps
+        }
+      }
+    }
+  }
+  return result
+}
+
 // Carrega POPs do cache local
-function getLocalPops(): Pop[] {
+export function getLocalPops(): Pop[] {
   try {
+    // Limpa caches legados desatualizados para garantir carregamento do layout novo
+    localStorage.removeItem('pulse_pops_cache_v1')
+    localStorage.removeItem('pulse_pops_cache_v2')
+    localStorage.removeItem('pulse_pops_cache_v3')
     const raw = localStorage.getItem(POPS_LOCAL_STORAGE_KEY)
     if (!raw) {
       localStorage.setItem(POPS_LOCAL_STORAGE_KEY, JSON.stringify(DEFAULT_POPS))
       return DEFAULT_POPS
     }
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_POPS
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      localStorage.setItem(POPS_LOCAL_STORAGE_KEY, JSON.stringify(DEFAULT_POPS))
+      return DEFAULT_POPS
+    }
+    const hydrated = hydrateBuiltInPops(parsed)
+    localStorage.setItem(POPS_LOCAL_STORAGE_KEY, JSON.stringify(hydrated))
+    return hydrated
   } catch {
     return DEFAULT_POPS
   }
@@ -147,14 +212,16 @@ export function setLocalTaskPopLink(taskId: string, popId: string | null): void 
 export async function fetchPopsApi(): Promise<Pop[]> {
   try {
     const { data, error } = await sb.from('pops').select('*').order('title', { ascending: true })
-    if (error || !data) {
-      // Tabela ainda não existe no Supabase — fallback suave para local
+    if (error || !data || data.length === 0) {
+      // Tabela ainda não existe ou está vazia no Supabase — fallback suave para local hidratado
       return getLocalPops()
     }
-    const formatted = data.map((p: any) => ({
-      ...p,
-      steps: typeof p.steps === 'string' ? JSON.parse(p.steps) : (p.steps || [])
-    })) as Pop[]
+    const formatted = hydrateBuiltInPops(
+      data.map((p: any) => ({
+        ...p,
+        steps: typeof p.steps === 'string' ? JSON.parse(p.steps) : (p.steps || [])
+      })) as Pop[]
+    )
     setLocalPops(formatted)
     return formatted
   } catch {
@@ -275,14 +342,11 @@ export function resolveTaskPopId(taskOrId: Task | string | undefined | null, loc
     if (taskOrId.descricao && links[taskOrId.descricao.trim()]) return links[taskOrId.descricao.trim()]
 
     const desc = (taskOrId.descricao || '').toLowerCase()
-    if (desc.includes('fechamento') || desc.includes('caixa') || desc.includes('concili') || desc.includes('extrato') || desc.includes('banco') || desc.includes('dda') || desc.includes('saldo')) {
-      return 'pop_fechamento_caixa'
-    }
     if (desc.includes('pagamento') || desc.includes('pix') || desc.includes('ted') || desc.includes('boleto') || desc.includes('agendamento')) {
       return 'pop_agendamento_pix_ted'
     }
-    return undefined
+    return 'pop_fechamento_caixa'
   }
   if (links[taskOrId]) return links[taskOrId]
-  return undefined
+  return 'pop_fechamento_caixa'
 }

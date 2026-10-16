@@ -1,21 +1,26 @@
 import { useState } from 'react'
-import type { Task, TeamMember, User } from '../types'
+import type { Task, TeamMember, User, Pop, Page } from '../types'
 import { getInitials, fDate } from '../lib/utils'
+import { PopRunnerModal } from '../components/PopRunnerModal'
 
 interface Props {
   atrasadas: Task[]
   team: TeamMember[]
   currentUser: User
   isAdmin: boolean
+  pops?: Pop[]
+  onRefreshPops?: () => Promise<void>
+  setPage?: (p: Page) => void
   onComplete: (id: string, fromAtrasadas: boolean) => Promise<boolean>
   onDeleteAtrasada: (id: string) => Promise<void>
   openEditTask: (id: string) => void
   showToast: (msg: string, type?: string) => void
 }
 
-export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, onComplete, onDeleteAtrasada, openEditTask, showToast }: Props) {
+export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onRefreshPops, setPage, onComplete, onDeleteAtrasada, openEditTask, showToast }: Props) {
   const [search, setSearch] = useState('')
   const [scope, setScope] = useState<'mine' | 'all'>('mine')
+  const [activePopTask, setActivePopTask] = useState<Task | null>(null)
 
   const getMember = (name: string) => team.find(m => m.name === name)
 
@@ -83,6 +88,22 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, onComplet
                     <div className="hist-card-right">
                       <div className="hist-card-date" style={{ color: 'var(--red)' }}>📅 {fDate(a.date)}</div>
                       <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+                        <button
+                          type="button"
+                          onClick={() => setActivePopTask(a)}
+                          style={{
+                            height: 26,
+                            padding: '0 9px',
+                            borderRadius: 6,
+                            border: '1px solid #3b52d6',
+                            background: '#1b2550',
+                            color: '#a9b8ff',
+                            font: "600 11px 'IBM Plex Sans', sans-serif",
+                            cursor: 'pointer'
+                          }}
+                        >
+                          POP
+                        </button>
                         <button style={{ background: 'var(--greenbg)', border: '1px solid var(--green)', borderRadius: 6, padding: '4px 9px', color: 'var(--green)', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}
                           onClick={async () => { 
                             const ok = await onComplete(a.id, true); 
@@ -101,6 +122,21 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, onComplet
           )
         })}
       </div>
+
+      {activePopTask && (
+        <PopRunnerModal
+          task={activePopTask}
+          pops={pops || []}
+          isAdmin={isAdmin}
+          onClose={() => setActivePopTask(null)}
+          onOpenLibrary={() => {
+            setActivePopTask(null)
+            setPage?.('pops')
+          }}
+          onRefreshPops={onRefreshPops}
+          showToast={showToast}
+        />
+      )}
     </>
   )
 }

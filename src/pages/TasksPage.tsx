@@ -156,28 +156,6 @@ export function TasksPage(props: Props) {
                 <div className="tn">{t.descricao}</div>
                 <div className="tt">
                   {recurLabel(t)}
-                  {(t.pop_id || resolveTaskPopId(t)) && (
-                    <button
-                      type="button"
-                      onClick={e => { e.stopPropagation(); setActivePopTask(t) }}
-                      title="POP — Como executar esta tarefa passo a passo"
-                      style={{
-                        height: 22,
-                        padding: '0 8px',
-                        borderRadius: 5,
-                        border: '1px solid #3b52d6',
-                        background: '#1b2550',
-                        color: '#a9b8ff',
-                        font: "600 11px 'IBM Plex Sans', sans-serif",
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 3
-                      }}
-                    >
-                      POP
-                    </button>
-                  )}
                   {sub.length > 0 && (
                     <span style={{ fontSize: 10, color: 'var(--text3)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }} onClick={() => setExpandedTasks(prev => ({ ...prev, [t.id]: !prev[t.id] }))}>
                       📌 {doneSub}/{sub.length}
@@ -423,6 +401,23 @@ export function TasksPage(props: Props) {
                       <div className="avsm" style={{ background: m?.color || '#4f6ef7', width: 18, height: 18, fontSize: 8 }}>{getInitials(t.resp)}</div>
                       <span className={`pb ${priorityClass(t.prio)}`} style={{ fontSize: 10, padding: '1px 5px' }}>{t.prio}</span>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setActivePopTask(t)}
+                      style={{
+                        height: 24,
+                        padding: '0 8px',
+                        borderRadius: 6,
+                        border: '1px solid #3b52d6',
+                        background: '#1b2550',
+                        color: '#a9b8ff',
+                        font: "600 11px 'IBM Plex Sans', sans-serif",
+                        cursor: 'pointer',
+                        flexShrink: 0
+                      }}
+                    >
+                      POP
+                    </button>
                     <button className="act edt" onClick={() => props.openEditTask(t.id)} style={{ flexShrink: 0 }}>✎</button>
                   </div>
                 )
