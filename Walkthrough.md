@@ -58,3 +58,18 @@ O arquivo [20261016160000_access_control_and_settings.sql](file:///c:/Users/BPO0
 - **Suíte de Autorização e Segurança (`verify_access_control.mjs`)**: 6/6 baterias aprovadas (preservação de contas legadas, bloqueio de usuário pendente, bloqueio de acesso administrativo por Gestora/Operador, bloqueio de auto-promoção no perfil, isolamento de tarefas por operador, aprovação/suspensão/reativação/recusa e auditoria pelo Programador).
 - **Integridade do Banco de Produção**: Confirmado `DB Users count: 5`, `DB Team count: 5` (nenhuma escrita ou alteração no banco de produção).
 - **Typecheck & Build**: `npx tsc --noEmit` e `npm run build` concluídos com código `0`.
+
+
+---
+
+## 6. Exclusão em Massa no Card Atrasados (`modernizacao-v3`)
+
+### Arquivos Alterados
+- [`src/pages/AtrasadasPage.tsx`](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/pages/AtrasadasPage.tsx):
+  - Adicionada caixa de seleção individual em cada tarefa atrasada e barra superior com controle **Selecionar todos** (com suporte a estado `indeterminate` e contagem de tarefas exibidas pelos filtros ativos `search` e `scope`) e opção **Desmarcar todas**.
+  - Adicionado botão **Excluir selecionadas (N)** com modal de confirmação explícita (`"Deseja excluir N tarefa(s) atrasada(s)? Essa ação não poderá ser desfeita."`) e opção de cancelamento segura.
+  - Adicionada proteção contra duplo clique e execução concorrente (`bulkDeleteLockRef`, `singleDeleteLockRef`, `isBulkDeleting`, `deletingSingleId`).
+  - Reutilizadas integralmente as guardas de autorização (`isUserActive`, `canAccessModule(currentUser, 'atrasadas')` e `canAccessTaskRecord(currentUser, task)`).
+  - Tratamento de erros por item e falhas parciais (`executeBulkDeleteAtrasadas`), diferenciando sucesso total, exclusão parcial e falha total, e limpando da seleção apenas os itens efetivamente excluídos.
+- [`src/hooks/useAppData.ts`](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/hooks/useAppData.ts):
+  - Atualizada [`deleteAtrasada`](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/hooks/useAppData.ts#L578-L664) para retornar `Promise<boolean>` após validar `{ error }` nas operações do Supabase e sincronizar referências em lote (`tasksRef` / `expandedTasksRef`), preservando exatamente o ciclo de vida atual de tarefas comuns, recorrentes mestres e virtuais recorrentes sem alterar o histórico (`hist`).

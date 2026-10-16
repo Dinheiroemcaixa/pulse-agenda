@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useRef } from 'react'
 import { sb } from '../lib/supabase'
 import { genId, getTodayStr, isTodayValidForRecur, getNextOccurrenceAfter, isLate } from '../lib/utils'
 import type { Task, TeamMember, Meeting, Backup, Pop, User } from '../types'
@@ -570,41 +570,98 @@ export function useAppData(currentUser?: User | null) {
     return true
   }, [currentUser, hist])
 
-  const deleteAtrasada = useCallback(async (id: string): Promise<void> => {
-    if (!currentUser || !isUserActive(currentUser)) return
-    // Virtual recorrente → materializa como concluída silenciosamente (sem hist)
+  const tasksRef = useRef<Task[]>(tasks)
+  tasksRef.current = tasks
+  const expandedTasksRef = useRef<Task[]>(expandedTasks)
+  expandedTasksRef.current = expandedTasks
+
+  const deleteAtrasada = useCallback(async (id: string): Promise<boolean> => {
+    if (!currentUser || !isUserActive(currentUser) || !canAccessModule(currentUser, 'atrasadas')) return false
+
+    const liveTasks = tasksRef.current
+    const liveExpanded = expandedTasksRef.current
+
+    // Virtual recorrente → materializa como concluída silenciosamente (sem hist),
+    // exceto se o mestre da série já tiver avançado para esta mesma data durante uma exclusão em massa
+    let promotedMaster: Task | undefined
     if (id.startsWith('virtual_')) {
-      const t = expandedTasks.find(x => x.id === id)
-      if (t && canAccessTaskRecord(currentUser, t)) {
-        const { isVirtual: _iv, ...payload } = t as any
-        const skipped = { ...payload, id: genId(), status: 'Concluída' as const, completed_at: new Date().toLocaleDateString('pt-BR') }
-        await sb.from('tasks').insert(skipped)
-        setTasks(prev => [...prev, skipped])
+      const vt = liveExpanded.find(x => x.id === id)
+      if (!vt || !canAccessTaskRecord(currentUser, vt)) return false
+
+      if (vt.recur_group_id && vt.date) {
+        promotedMaster = liveTasks.find(
+          x => x.recur_group_id === vt.recur_group_id && x.status !== 'Concluída' && x.date === vt.date
+        )
       }
-      return
+
+      if (!promotedMaster) {
+        const { isVirtual: _iv, ...payload } = vt as any
+        const skipped = { ...payload, id: genId(), status: 'Concluída' as const, completed_at: new Date().toLocaleDateString('pt-BR') }
+        const { error } = await sb.from('tasks').insert(skipped)
+        if (error) {
+          console.error('❌ Erro Supabase (deleteAtrasada virtual):', error)
+          return false
+        }
+        const nextTasks = [...tasksRef.current, skipped]
+        tasksRef.current = nextTasks
+        setTasks(nextTasks)
+        return true
+      }
     }
+
     // Tarefa mestre recorrente vencida ou tarefa comum no state tasks
-    const t = tasks.find(x => x.id === id)
-    if (!t || !canAccessTaskRecord(currentUser, t)) return
+    const t = promotedMaster || liveTasks.find(x => x.id === id)
+    if (!t || !canAccessTaskRecord(currentUser, t)) return false
+    const realId = t.id
 
     if ((t as any).recur_group_id && t.recur && t.recur !== 'none') {
       const completedAt = new Date().toLocaleDateString('pt-BR')
       const completedRecord = { ...t, id: genId(), status: 'Concluída' as const, completed_at: completedAt }
-      await sb.from('tasks').insert(completedRecord)
-      setTasks(prev => [...prev, completedRecord])
-
-      const nextDate = getNextOccurrenceAfter(t.recur!, t.recur_days || [], t.recur_start || t.date, t.date)
-      if (nextDate) {
-        await sb.from('tasks').update({ date: nextDate }).eq('id', id)
-        setTasks(prev => prev.map(x => x.id === id ? { ...x, date: nextDate } : x))
-      } else {
-        await sb.from('tasks').delete().eq('id', id)
-        setTasks(prev => prev.filter(x => x.id !== id))
+      const { error: insErr } = await sb.from('tasks').insert(completedRecord)
+      if (insErr) {
+        console.error('❌ Erro Supabase (deleteAtrasada recur insert):', insErr)
+        return false
       }
+
+      let nextDate = getNextOccurrenceAfter(t.recur!, t.recur_days || [], t.recur_start || t.date, t.date)
+      while (
+        nextDate &&
+        tasksRef.current.some(x => x.recur_group_id === t.recur_group_id && x.date === nextDate && x.status === 'Concluída')
+      ) {
+        nextDate = getNextOccurrenceAfter(t.recur!, t.recur_days || [], t.recur_start || t.date, nextDate)
+      }
+
+      if (nextDate) {
+        const { error: updErr } = await sb.from('tasks').update({ date: nextDate }).eq('id', realId)
+        if (updErr) {
+          console.error('❌ Erro Supabase (deleteAtrasada recur update):', updErr)
+          return false
+        }
+        const nextTasks = [...tasksRef.current, completedRecord].map(x => x.id === realId ? { ...x, date: nextDate } : x)
+        tasksRef.current = nextTasks
+        setTasks(nextTasks)
+      } else {
+        const { error: delErr } = await sb.from('tasks').delete().eq('id', realId)
+        if (delErr) {
+          console.error('❌ Erro Supabase (deleteAtrasada recur delete):', delErr)
+          return false
+        }
+        const nextTasks = [...tasksRef.current, completedRecord].filter(x => x.id !== realId)
+        tasksRef.current = nextTasks
+        setTasks(nextTasks)
+      }
+      return true
     } else {
       // Tarefa comum (não recorrente) vinda do tasks state
-      await sb.from('tasks').delete().eq('id', id)
-      setTasks(prev => prev.filter(x => x.id !== id))
+      const { error } = await sb.from('tasks').delete().eq('id', realId)
+      if (error) {
+        console.error('❌ Erro Supabase (deleteAtrasada single):', error)
+        return false
+      }
+      const nextTasks = tasksRef.current.filter(x => x.id !== realId)
+      tasksRef.current = nextTasks
+      setTasks(nextTasks)
+      return true
     }
   }, [currentUser, tasks, expandedTasks])
 
