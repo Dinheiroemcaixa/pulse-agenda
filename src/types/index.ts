@@ -23,11 +23,23 @@ export interface Subtask {
   done: boolean
 }
 
+export interface PopStepMedia {
+  id?: string
+  name: string
+  url?: string
+  type: 'image' | 'video' | 'doc'
+  size?: string
+  extension?: string
+}
+
 export interface PopStep {
   id: string
   order: number
   title: string
   instruction: string
+  media?: PopStepMedia[]
+  tip?: string
+  tipType?: 'info' | 'warn'
 }
 
 export interface Pop {
@@ -41,6 +53,7 @@ export interface Pop {
   expected_result: string
   contact_notes?: string
   responsible?: string
+  estimated_time?: string
   active: boolean
   version: number
   created_at: string
