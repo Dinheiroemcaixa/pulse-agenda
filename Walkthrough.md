@@ -1,50 +1,60 @@
-# Walkthrough — Correção e Validação Visual da Janela de Execução do POP
+# Walkthrough — Controle de Acesso por Aprovação e Módulo de Configurações (`modernizacao-v3`)
 
-## 1. Causa Raiz Identificada (Por que a alteração não apareceu antes)
-Três fatores combinados causaram a ausência de mudança visual perceptível no teste anterior:
+## 1. Visão Geral da Implementação
 
-1. **Assinatura e Invocação de `resolveTaskPopId` em `TasksPage.tsx`:**
-   - Em `TasksPage.tsx` (linhas 159, 202, 287 e 297), a função `resolveTaskPopId` estava sendo chamada passando apenas `t.id` (`resolveTaskPopId(t.id)`).
-   - Como as tarefas do banco não possuíam o ID registrado previamente na chave local `pulse_task_pop_links_v1` nem coluna `pop_id` preenchida, o retorno era `undefined`. O fallback por descrição da tarefa só era acionado se recebesse o objeto `t` completo.
-   - Consequentemente, o botão "POP" nem sequer aparecia nas tarefas da lista, e ao clicar no botão genérico da coluna de ações, o modal abria sem POP vinculado exibindo uma caixa cinza simples *"Nenhum POP associado a esta tarefa"* (usando a classe `.modal` antiga herdada).
+Implementado o sistema de **Controle de Acesso por Aprovação, Perfis, Permissões por Módulo e Histórico Administrativo**, além do novo card **Configurações** exclusivo do **Programador Principal** (`RAMON CARDOSO` — `ramoncardosobiologo@gmail.com`).
 
-2. **Componente Duplicado na Página de Procedimentos (`PopsPage.tsx`):**
-   - Na biblioteca de POPs (`PopsPage.tsx`), o botão *"👁 Ver Detalhes"* abria um modal inline antigo (linhas 485 a 568), completamente independente de `PopRunnerModal.tsx`. Se o usuário testasse a visualização por ali, via 100% a tela antiga.
-
-3. **Cores e Fontes Herdeiras de Variáveis Globais:**
-   - O `PopRunnerModal` anterior estava utilizando variáveis como `var(--bg2)` e fontes padrão do sistema, as quais mantinham a paleta antiga do Pulse Agenda, em vez de aplicar a paleta Dark Navy (`#10162a`, `#141b31`, `#111729`) e as fontes `'IBM Plex Sans'` e `'IBM Plex Mono'` da referência visual `POP-preview.png` e `POP Tarefa.dc.html`.
-
----
-
-## 2. O que foi efetivamente corrigido
-1. **Fallback Inteligente em `popsApi.ts`:**
-   - `resolveTaskPopId` agora associa de forma inteligente tarefas de conciliação bancária, caixa, saldo, extrato e DDA ao procedimento `pop_fechamento_caixa`, e tarefas de pagamentos/pix/ted a `pop_agendamento_pix_ted`.
-   - O POP padrão `pop_fechamento_caixa` foi atualizado com todos os dados da referência (mídias, vídeos, imagens, documentos XLSX/PDF, dicas e tempo estimado de 30 min).
-
-2. **Botão POP em `TasksPage.tsx`:**
-   - A chamada foi corrigida para `(t.pop_id || resolveTaskPopId(t))`.
-   - O botão `POP` foi estilizado com o visual azul elegante idêntico à demonstração (`height: 26px`, borda `#3b52d6`, fundo `#1b2550`, texto `#a9b8ff`, fonte IBM Plex Sans) tanto na lista de tarefas quanto no Kanban.
-
-3. **Fidelidade Visual Absoluta em `PopRunnerModal.tsx`:**
-   - Inclusão das fontes Google Fonts: `IBM Plex Sans` (400, 500, 600, 700) e `IBM Plex Mono` (400, 500, 600, 700).
-   - Cores exatas de `POP Tarefa.dc.html`: fundo `#10162a`, borda `#26304f`, header com badge `POP · v1` (`#1b2550`, `#7d93ff`), botões transparentes com borda `#2a3454`, cards em `#141b31`, barra de progresso azul `#4f6bff` com contador `1/4 passos`, cards destacados de Cuidados (`#2a1720`) e Resultado Esperado (`#13261f`).
-   - Grade de anexos com players de vídeo, imagens e badges de documentos com extensões coloridas (PDF `#d64545`, XLSX `#1f8a55`), além do card pontilhado `+ Anexar arquivo`.
-
-4. **Unificação com `PopsPage.tsx`:**
-   - O modal duplicado de `PopsPage.tsx` foi removido e substituído por `PopRunnerModal`. Agora, abrir o POP pela tarefa ou pela biblioteca de POPs exibe a mesma interface moderna.
+### Contas Existentes Preservadas Integralmente
+Nenhuma conta ou dado existente no banco foi removido ou alterado:
+- **Programador Principal**: `RAMON CARDOSO` (`ramoncardosobiologo@gmail.com` / `id_1774288221364_jmcbu`) — Acesso administrativo completo e único autorizado a visualizar e operar **Configurações**.
+- **Gestora**: `RAFFAELA LIMA` (`raffaelabatistalima1@gmail.com` / `id_1774293514208_f6g52`) — Acesso amplo aos módulos operacionais e visão de tarefas da equipe, sem acesso a **Configurações** ou gestão de permissões.
+- **Operadores Ativos**:
+  - `Geovana Rayssa Morais` (`geovanarayssamoraisfernandes@gmail.com`)
+  - `Andressa Brandão` (`andressabrandao022@gmail.com`)
+  - `Monara Cardoso` (`monarageovana.cardoso@gmail.com`)
+  - Restritas às próprias tarefas atribuídas (`resp`), sem acesso aos cards **Equipe**, **Backup** e **Configurações**.
 
 ---
 
-## 3. Validação Visual Real via Navegador (Chrome DevTools)
-- **Tela de Tarefas:** O botão azul `POP` está presente e visível nas tarefas correspondentes.
-- **Abertura do POP:** Ao clicar em `POP` na tarefa *"CONCILIAR CONTAS A RECEBER FILIAL ITAÚ"*, o modal abre perfeitamente com o layout Dark Navy, cabeçalho, barra de progresso em 1/4 passos, cards informativos e anexos.
-- **Interatividade:** O clique em *"Executar próximo passo"* avança a barra de progresso para 2/4 passos (50%) e marca a etapa com `✓` verde esmeralda.
-- **Preservação de Estado:** Ao fechar o modal, a tarefa permanece intacta com status *"Em Aberto"*, comprovando que marcar etapas do POP não altera a tarefa.
-- **Biblioteca de POPs:** Ao abrir *"Procedimentos (POP)"* e clicar em *"👁 Ver Detalhes"*, o mesmo modal moderno é renderizado com sucesso.
+## 2. Regras de Segurança e Arquitetura Aplicadas
+
+1. **Identidade Imutável do Programador Principal**:
+   - Validada em [accessControlApi.ts](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/lib/accessControlApi.ts) por verificação combinada de ID (`id_1774288221364_jmcbu`) e e-mail (`ramoncardosobiologo@gmail.com`) confirmada no banco (`verifyProgrammerActor`), jamais confiando apenas no campo editável `role` ou `is_admin`.
+   - Protegida contra auto-suspensão, recusa ou redução de perfil/permissões.
+2. **Fluxo de Novos Cadastros (`Pendente de Aprovação`)**:
+   - Em [useAuth.ts](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/hooks/useAuth.ts), qualquer novo cadastro entra obrigatoriamente com `access_status: 'pending'`, `access_profile: 'operador'` e `is_admin: false`.
+   - Enquanto estiver `pending`, `suspended` ou `rejected`, o `App.tsx` renderiza [PendingAccessView.tsx](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/components/PendingAccessView.tsx) e **não executa** `loadAll()` em [useAppData.ts](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/hooks/useAppData.ts), impedindo qualquer consulta a tarefas, histórico, equipe ou reuniões.
+3. **Isolamento de Dados e Rotas por Perfil**:
+   - **Guardas de Rota e URL** ([App.tsx](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/App.tsx) e [Sidebar.tsx](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/components/Sidebar.tsx)): bloqueiam acesso via menu, estado ou URL direta (`#settings`, `#team`, `?page=settings`, etc.) para perfis não autorizados.
+   - **Isolamento de Consultas e Mutações para Operador** ([useAppData.ts](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/hooks/useAppData.ts), [TasksPage.tsx](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/pages/TasksPage.tsx), [TaskModal.tsx](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/components/TaskModal.tsx)): consultas de `tasks` e `hist` filtram diretamente por `resp` (`.ilike('resp', activeUser.name)`) e todas as mutações (`saveTask`, `completeTask`, `deleteTask`, `cycleStatus`, `reopenTask`, `deleteAtrasada`, subtarefas) validam `canAccessTaskRecord(currentUser, task)`.
+   - **Bloqueio de Auto-Promoção**: `sanitizeSelfProfileUpdate` filtra estritamente edições de perfil próprio, removendo `is_admin`, `access_profile`, `access_status` e `permissions`.
 
 ---
 
-## 4. Evidências de Validação
-- **TypeScript:** `npx tsc --noEmit` aprovado (código 0).
-- **Build de Produção:** `npm run build` aprovado em 4.68s.
-- **Branch:** `modernizacao-v3`
+## 3. Card Configurações ([SettingsPage.tsx](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/pages/SettingsPage.tsx))
+
+Contém as 5 seções especificadas:
+1. **Solicitações pendentes**: dados do solicitante, data do pedido, seletor de perfil inicial (`Operador` / `Gestora`), **Aprovar** e **Recusar**.
+2. **Usuários autorizados**: listagem completa com filtro por situação, badges de perfil/status e ações rápidas.
+3. **Permissões por usuário**: modal de configuração granular dos módulos reais (`tasks`, `atrasadas`, `history`, `pops`, `meetings`, `messages`, `team`, `backup`, `view_all_tasks` e `settings` exclusivo do Programador).
+4. **Controle de situação**: transição entre `Ativo`, `Pendente`, `Suspenso` e `Recusado` preservando todo o histórico.
+5. **Histórico administrativo**: trilha de auditoria (`access_audit_logs`) registrando autor, usuário-alvo, ação, detalhes e carimbo de data/hora.
+
+---
+
+## 4. Migration SQL Preparada para Revisão (Não Executada em Produção)
+
+O arquivo [20261016160000_access_control_and_settings.sql](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/supabase/migrations/20261016160000_access_control_and_settings.sql) foi preparado para revisão do Programador antes de qualquer aplicação no banco:
+- Adiciona `access_profile`, `access_status`, `permissions`, `approved_by`, `approved_at` e `status_updated_at` em `public.users`.
+- Preserva os 5 usuários atuais com seus respectivos perfis (`programador`, `gestora`, `operador`) e status `active`.
+- Cria a tabela `public.access_audit_logs` com RLS habilitado.
+- Cria a trigger `trg_protect_user_security_fields` (`fn_protect_user_security_fields`) que impede auto-aprovação no `INSERT`, bloqueia alteração direta de colunas de segurança no `UPDATE` por usuários comuns e protege a conta do Programador Principal contra exclusão ou rebaixamento.
+- Cria a RPC `public.fn_admin_manage_user_access` (`SECURITY DEFINER`) restrita exclusivamente ao Programador Principal.
+
+---
+
+## 5. Validação e Evidências de Testes
+
+- **Suíte de Autorização e Segurança (`verify_access_control.mjs`)**: 6/6 baterias aprovadas (preservação de contas legadas, bloqueio de usuário pendente, bloqueio de acesso administrativo por Gestora/Operador, bloqueio de auto-promoção no perfil, isolamento de tarefas por operador, aprovação/suspensão/reativação/recusa e auditoria pelo Programador).
+- **Integridade do Banco de Produção**: Confirmado `DB Users count: 5`, `DB Team count: 5` (nenhuma escrita ou alteração no banco de produção).
+- **Typecheck & Build**: `npx tsc --noEmit` e `npm run build` concluídos com código `0`.

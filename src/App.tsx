@@ -1,9 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import './index.css'
-// Import moved to page components
 import { useAuth } from './hooks/useAuth'
 import { useAppData } from './hooks/useAppData'
-import { getTodayStr, getInitials, COLORS } from './lib/utils'
+import { getTodayStr, COLORS } from './lib/utils'
+import {
+  canAccessModule,
+  canViewAllTasks,
+  isProgrammer,
+  isUserActive,
+} from './lib/accessControlApi'
 import type { Page, ViewMode, FilterMode, Task } from './types'
 import { Sidebar } from './components/Sidebar'
 import { TasksPage } from './pages/TasksPage'
@@ -11,15 +16,19 @@ import { HistoryPage } from './pages/HistoryPage'
 import { AtrasadasPage } from './pages/AtrasadasPage'
 import { TeamPage, MeetingsPage, MessagesPage, BackupPage } from "./pages/OtherPages"
 import { PopsPage } from './pages/PopsPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { TaskModal } from './components/TaskModal'
 import { Toast } from './components/Toast'
 import { LoginView } from './components/LoginView'
+import { PendingAccessView } from './components/PendingAccessView'
+
+const VALID_PAGES: Page[] = ['tasks', 'team', 'history', 'atrasadas', 'meetings', 'messages', 'backup', 'pops', 'settings']
 
 export default function App() {
-  const { currentUser, authLoading, login, signup, logout, updateUser, resetPassword } = useAuth()
-  const data = useAppData()
+  const { currentUser, authLoading, login, signup, logout, updateUser, resetPassword, refreshCurrentUser } = useAuth()
+  const data = useAppData(currentUser)
   const [appReady, setAppReady] = useState(false)
-  const [page, setPage] = useState<Page>('tasks')
+  const [page, setPageState] = useState<Page>('tasks')
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [filterMode, setFilterMode] = useState<FilterMode>('all')
   const [searchQ, setSearchQ] = useState('')
@@ -57,15 +66,68 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 2800)
   }, [])
 
-  // Launch app after login
+  // Guarda central de navegação: impede acesso a rotas não autorizadas (ex: settings ou team)
+  const setPage = useCallback((targetPage: Page) => {
+    if (!currentUser || !isUserActive(currentUser)) return
+    if (!canAccessModule(currentUser, targetPage)) {
+      showToast('🔒 Acesso negado: você não possui autorização para acessar este módulo.', 'warn')
+      setPageState('tasks')
+      if (window.location.hash) {
+        window.history.replaceState(null, '', window.location.pathname)
+      }
+      return
+    }
+    setPageState(targetPage)
+  }, [currentUser, showToast])
+
+  // Intercepta tentativas de acesso direto via URL (hash #settings, #team, ?page=settings, etc.)
   useEffect(() => {
-    if (currentUser && !appReady) {
-      data.loadAll().then(() => {
+    if (!currentUser || !isUserActive(currentUser)) return
+
+    const checkUrlRouteGuard = () => {
+      const hashRoute = window.location.hash.replace(/^#\/?/, '').trim().toLowerCase()
+      const searchParams = new URLSearchParams(window.location.search)
+      const queryRoute = (searchParams.get('page') || '').trim().toLowerCase()
+      const candidate = (hashRoute || queryRoute) as Page
+
+      if (candidate && VALID_PAGES.includes(candidate)) {
+        if (!canAccessModule(currentUser, candidate)) {
+          showToast('🔒 Acesso direto bloqueado: rota não autorizada para seu perfil.', 'warn')
+          setPageState('tasks')
+          window.history.replaceState(null, '', window.location.pathname)
+        } else {
+          setPageState(candidate)
+        }
+      }
+    }
+
+    checkUrlRouteGuard()
+    window.addEventListener('hashchange', checkUrlRouteGuard)
+    window.addEventListener('popstate', checkUrlRouteGuard)
+    return () => {
+      window.removeEventListener('hashchange', checkUrlRouteGuard)
+      window.removeEventListener('popstate', checkUrlRouteGuard)
+    }
+  }, [currentUser, showToast])
+
+  // Redireciona automaticamente caso a página atual deixe de ser permitida para o usuário logado
+  useEffect(() => {
+    if (currentUser && isUserActive(currentUser) && !canAccessModule(currentUser, page)) {
+      setPageState('tasks')
+    }
+  }, [currentUser, page])
+
+  // Launch app after login ONLY if user is active (approved)
+  useEffect(() => {
+    if (currentUser && isUserActive(currentUser) && !appReady) {
+      data.loadAll(currentUser).then(() => {
         setAppReady(true)
         data.checkDailyBackup()
       })
     }
-    if (!currentUser) setAppReady(false)
+    if (!currentUser || !isUserActive(currentUser)) {
+      setAppReady(false)
+    }
   }, [currentUser])
 
   const handleLogin = async () => {
@@ -182,6 +244,20 @@ export default function App() {
     )
   }
 
+  // BLOQUEIO DE USUÁRIOS PENDENTES DE APROVAÇÃO, SUSPENSOS OU RECUSADOS
+  if (!isUserActive(currentUser)) {
+    return (
+      <>
+        <PendingAccessView
+          user={currentUser}
+          onRefresh={refreshCurrentUser}
+          onLogout={logout}
+        />
+        {toast && <Toast msg={toast.msg} type={toast.type} />}
+      </>
+    )
+  }
+
   // APP LOADING
   if (!appReady) {
     return (
@@ -192,7 +268,7 @@ export default function App() {
     )
   }
 
-  const isAdmin = currentUser.is_admin === true
+  const isAdmin = canViewAllTasks(currentUser)
 
   const pageProps = {
     tasks: data.expandedTasks, // expandedTasks inclui virtuais para exibição
@@ -209,8 +285,8 @@ export default function App() {
     filterMode,
     searchQ,
     dateFilter,
-    viewingAll,
-    memberFilter,
+    viewingAll: isAdmin ? viewingAll : false,
+    memberFilter: isAdmin ? memberFilter : currentUser.name,
     setViewMode,
     setFilterMode,
     setSearchQ,
@@ -255,14 +331,23 @@ export default function App() {
         showToast={showToast}
       />
       <div className="main">
-        {page === 'tasks' && <TasksPage {...pageProps} />}
-        {page === 'history' && <HistoryPage {...pageProps} />}
-        {page === 'atrasadas' && <AtrasadasPage {...pageProps} />}
-        {page === 'team' && <TeamPage {...pageProps} />}
-        {page === 'meetings' && <MeetingsPage {...pageProps} />}
-        {page === 'messages' && <MessagesPage {...pageProps} />}
-        {page === 'backup' && <BackupPage {...pageProps} />}
-        {page === 'pops' && <PopsPage {...pageProps} pops={data.pops} onRefreshPops={data.loadPops} />}
+        {page === 'tasks' && canAccessModule(currentUser, 'tasks') && <TasksPage {...pageProps} />}
+        {page === 'history' && canAccessModule(currentUser, 'history') && <HistoryPage {...pageProps} />}
+        {page === 'atrasadas' && canAccessModule(currentUser, 'atrasadas') && <AtrasadasPage {...pageProps} />}
+        {page === 'team' && canAccessModule(currentUser, 'team') && <TeamPage {...pageProps} />}
+        {page === 'meetings' && canAccessModule(currentUser, 'meetings') && <MeetingsPage {...pageProps} />}
+        {page === 'messages' && canAccessModule(currentUser, 'messages') && <MessagesPage {...pageProps} />}
+        {page === 'backup' && canAccessModule(currentUser, 'backup') && <BackupPage {...pageProps} />}
+        {page === 'pops' && canAccessModule(currentUser, 'pops') && (
+          <PopsPage {...pageProps} pops={data.pops} onRefreshPops={data.loadPops} />
+        )}
+        {page === 'settings' && isProgrammer(currentUser) && canAccessModule(currentUser, 'settings') && (
+          <SettingsPage
+            currentUser={currentUser}
+            showToast={showToast}
+            onRefreshCurrentUser={refreshCurrentUser}
+          />
+        )}
       </div>
 
       {taskModalOpen && (
@@ -282,3 +367,4 @@ export default function App() {
     </div>
   )
 }
+

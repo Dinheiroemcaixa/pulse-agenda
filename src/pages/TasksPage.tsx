@@ -37,7 +37,8 @@ interface Props {
 }
 
 export function TasksPage(props: Props) {
-  const { tasks, team, currentUser, isAdmin, viewMode, filterMode, searchQ, dateFilter, viewingAll, memberFilter } = props
+  const { tasks, team, currentUser, isAdmin, viewMode, filterMode, searchQ, dateFilter, viewingAll: rawViewingAll, memberFilter } = props
+  const viewingAll = isAdmin && rawViewingAll
   const [expandedTasks, setExpandedTasks] = useState<Record<string, boolean>>({})
   const [expandedNotes, setExpandedNotes] = useState<Record<string, boolean>>({})
   const [subInputs, setSubInputs] = useState<Record<string, string>>({})

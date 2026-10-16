@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import type { Task, TeamMember, User, RecurType, Priority, Pop } from '../types'
 import { getTodayStr, RECUR_LABELS } from '../lib/utils'
 import { resolveTaskPopId, linkTaskToPopApi } from '../lib/popsApi'
+import { canViewAllTasks } from '../lib/accessControlApi'
 
 interface Props {
   editTask?: Task
@@ -18,8 +19,9 @@ const DAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab']
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
 export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate, onSave, onClose, showToast }: Props) {
+  const canAssignOthers = canViewAllTasks(currentUser)
   const [desc, setDesc] = useState(editTask?.descricao || '')
-  const [resp, setResp] = useState(editTask?.resp || currentUser.name)
+  const [resp, setResp] = useState(canAssignOthers ? (editTask?.resp || currentUser.name) : currentUser.name)
   const [date, setDate] = useState(editTask?.date || defaultDate || getTodayStr())
   const [prio, setPrio] = useState<Priority>(editTask?.prio || 'Média')
   const [allDay, setAllDay] = useState(editTask?.all_day !== false)
@@ -48,7 +50,7 @@ export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate,
     const selectedPopId = popId || undefined
     await onSave({
       descricao: desc.trim(),
-      resp,
+      resp: canAssignOthers ? resp : currentUser.name,
       date,
       prio,
       status: editTask?.status || 'Em Aberto',
@@ -94,12 +96,22 @@ export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate,
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div className="field">
               <label className="label">Responsável</label>
-              <select className="inp" value={resp} onChange={e => setResp(e.target.value)}>
-                {team.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+              <select
+                className="inp"
+                value={canAssignOthers ? resp : currentUser.name}
+                disabled={!canAssignOthers}
+                onChange={e => setResp(e.target.value)}
+              >
+                {canAssignOthers ? (
+                  team.map(m => <option key={m.id} value={m.name}>{m.name}</option>)
+                ) : (
+                  <option value={currentUser.name}>{currentUser.name}</option>
+                )}
               </select>
             </div>
             <div className="field">
               <label className="label">Prioridade</label>
+
               <select className="inp" value={prio} onChange={e => setPrio(e.target.value as Priority)}>
                 <option>Alta</option>
                 <option>Média</option>

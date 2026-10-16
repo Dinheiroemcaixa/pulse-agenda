@@ -1,8 +1,15 @@
 import { useState, useCallback, useMemo } from 'react'
 import { sb } from '../lib/supabase'
 import { genId, getTodayStr, isTodayValidForRecur, getNextOccurrenceAfter, isLate } from '../lib/utils'
-import type { Task, TeamMember, Meeting, Backup, Pop } from '../types'
+import type { Task, TeamMember, Meeting, Backup, Pop, User } from '../types'
 import { fetchPopsApi } from '../lib/popsApi'
+import {
+  canAccessModule,
+  canAccessTaskRecord,
+  canViewAllTasks,
+  filterTasksForUser,
+  isUserActive,
+} from '../lib/accessControlApi'
 
 // ============================================================
 // LÓGICA DE RECORRÊNCIA — ARQUITETURA VIRTUAL
@@ -26,13 +33,14 @@ import { fetchPopsApi } from '../lib/popsApi'
 //  - Mestre do grupo = ocorrência mais RECENTE (não mais antiga)
 // ============================================================
 
-export function useAppData() {
+export function useAppData(currentUser?: User | null) {
   const [tasks, setTasks] = useState<Task[]>([])
   const [hist, setHist] = useState<Task[]>([])
   const [meets, setMeets] = useState<Meeting[]>([])
   const [team, setTeam] = useState<TeamMember[]>([])
   const [backups, setBackups] = useState<Backup[]>([])
   const [pops, setPops] = useState<Pop[]>([])
+
   const [loading, setLoading] = useState(false)
 
   // Estado local para subtarefas de tarefas virtuais (não persiste no tasks state)
@@ -198,37 +206,61 @@ export function useAppData() {
   }, [expandedTasks])
 
   // ── LOAD ALL ─────────────────────────────────────────────
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (userOverride?: User | null) => {
+    const activeUser = userOverride ?? currentUser
+    // Bloqueia carregamento de dados internos para usuários pendentes, suspensos, recusados ou não autenticados
+    if (!activeUser || !isUserActive(activeUser)) {
+      setTasks([])
+      setHist([])
+      setMeets([])
+      setTeam([])
+      setBackups([])
+      setPops([])
+      setLoading(false)
+      return
+    }
+
     setLoading(true)
-    
-    // Auto-paginação para buscar todas as tarefas e driblar o limite de 1000 linhas
+    const canSeeAll = canViewAllTasks(activeUser)
+    const canSeeBackup = canAccessModule(activeUser, 'backup')
+    const userRespName = (activeUser.name || '').trim()
+
+    // Auto-paginação para buscar tarefas respeitando escopo de propriedade/atribuição
     const fetchAllTasks = async () => {
       let all: any[] = []
       let from = 0
       const step = 1000
       while (true) {
-        const { data, error } = await sb.from('tasks').select('*').order('sort_order', { ascending: true }).range(from, from + step - 1)
+        let q = sb.from('tasks').select('*').order('sort_order', { ascending: true })
+        if (!canSeeAll) {
+          q = q.ilike('resp', userRespName)
+        }
+        const { data, error } = await q.range(from, from + step - 1)
         if (error || !data || data.length === 0) break
         all = all.concat(data)
         if (data.length < step) break
         from += step
       }
-      return { data: all }
+      return { data: filterTasksForUser(activeUser, all) }
     }
 
-    // Auto-paginação para buscar todo o histórico de tarefas concluídas sem perda de dados
+    // Auto-paginação para buscar histórico respeitando escopo de propriedade/atribuição
     const fetchAllHist = async () => {
       let all: any[] = []
       let from = 0
       const step = 1000
       while (true) {
-        const { data, error } = await sb.from('hist').select('*').order('created_at', { ascending: false }).range(from, from + step - 1)
+        let q = sb.from('hist').select('*').order('created_at', { ascending: false })
+        if (!canSeeAll) {
+          q = q.ilike('resp', userRespName)
+        }
+        const { data, error } = await q.range(from, from + step - 1)
         if (error || !data || data.length === 0) break
         all = all.concat(data)
         if (data.length < step) break
         from += step
       }
-      return { data: all }
+      return { data: filterTasksForUser(activeUser, all) }
     }
 
     const [tasksRes, histRes, meetsRes, teamRes, backupsRes] = await Promise.all([
@@ -236,7 +268,9 @@ export function useAppData() {
       fetchAllHist(),
       sb.from('meets').select('*').order('created_at', { ascending: false }),
       sb.from('team').select('*'),
-      sb.from('backup_tasks').select('id,backup_date,backup_label,created_at').order('created_at', { ascending: false }).limit(30),
+      canSeeBackup
+        ? sb.from('backup_tasks').select('id,backup_date,backup_label,created_at').order('created_at', { ascending: false }).limit(30)
+        : Promise.resolve({ data: [] as Backup[] }),
     ])
 
     // Normaliza campos de data (remove parte de hora se houver) para evitar bugs de filtro e recorrência
@@ -262,24 +296,39 @@ export function useAppData() {
     setPops(popsData)
 
     setLoading(false)
-  }, [])
+  }, [currentUser])
 
   const loadPops = useCallback(async () => {
+    if (!currentUser || !isUserActive(currentUser)) return
     const data = await fetchPopsApi()
     setPops(data)
-  }, [])
+  }, [currentUser])
 
   // ── SAVE TASK ─────────────────────────────────────────────
   const saveTask = useCallback(async (taskData: Partial<Task>, editId?: string): Promise<boolean> => {
+    if (!currentUser || !isUserActive(currentUser) || !canAccessModule(currentUser, 'tasks')) {
+      return false
+    }
+
     // Se editando uma virtual, materializa como nova tarefa real
     const isVirtual = editId?.startsWith('virtual_')
 
     // Limpar campos que não pertencem ao banco (como isVirtual)
     const { isVirtual: _iv, ...cleanData } = taskData as any
-    // Sanitizar responsável
-    if (cleanData.resp) cleanData.resp = cleanData.resp.trim()
+
+    // Se o usuário for Operador (sem permissão de gerir tarefas de terceiros), força atribuição a si mesmo
+    if (!canViewAllTasks(currentUser)) {
+      cleanData.resp = currentUser.name.trim()
+    } else if (cleanData.resp) {
+      cleanData.resp = cleanData.resp.trim()
+    }
 
     if (editId && !isVirtual) {
+      const existingTask = tasks.find(t => t.id === editId)
+      if (existingTask && !canAccessTaskRecord(currentUser, existingTask)) {
+        console.error('❌ Acesso negado: tentativa de editar tarefa de terceiro sem autorização.')
+        return false
+      }
       // Editar tarefa real existente
       const { error } = await sb.from('tasks').update(cleanData).eq('id', editId)
       if (error) {
@@ -314,10 +363,11 @@ export function useAppData() {
       setTasks(prev => [...prev, newTask])
     }
     return true
-  }, [])
+  }, [currentUser, tasks])
 
   // ── COMPLETE TASK ─────────────────────────────────────────
   const completeTask = useCallback(async (id: string, fromAtrasadas = false): Promise<boolean> => {
+    if (!currentUser || !isUserActive(currentUser)) return false
     const isVirtual = id.startsWith('virtual_')
 
     // Busca a tarefa de acordo com a origem
@@ -330,7 +380,8 @@ export function useAppData() {
       t = tasks.find(x => x.id === id) || expandedTasks.find(x => x.id === id)
     }
 
-    if (!t) return false
+    if (!t || !canAccessTaskRecord(currentUser, t)) return false
+
 
     const completedAt = new Date().toLocaleDateString('pt-BR')
     const histId = isVirtual ? genId() : t.id
@@ -416,17 +467,18 @@ export function useAppData() {
 
     setHist(prev => [histItem as unknown as Task, ...prev])
     return true
-  }, [tasks, expandedTasks])
+  }, [currentUser, tasks, expandedTasks])
 
   // ── DELETE TASK ───────────────────────────────────────────
   const deleteTask = useCallback(async (id: string, deleteAll = false): Promise<void> => {
+    if (!currentUser || !isUserActive(currentUser)) return
     const isVirtual = id.startsWith('virtual_')
     
     if (isVirtual) {
       // Tarefa virtual: para "deletar" sem apagar a série, 
       // materializamos ela como 'Concluída' no banco para aquela data específica.
       const t = expandedTasks.find(x => x.id === id)
-      if (!t) return
+      if (!t || !canAccessTaskRecord(currentUser, t)) return
       
       const { isVirtual: _iv, ...payload } = t as any
       const completedAt = new Date().toLocaleDateString('pt-BR')
@@ -442,7 +494,7 @@ export function useAppData() {
     }
 
     const t = tasks.find(x => x.id === id)
-    if (!t) return
+    if (!t || !canAccessTaskRecord(currentUser, t)) return
 
     if (deleteAll && t.recur_group_id) {
       // Deleta todos os registros reais da série
@@ -452,15 +504,16 @@ export function useAppData() {
       await sb.from('tasks').delete().eq('id', id)
       setTasks(prev => prev.filter(x => x.id !== id))
     }
-  }, [tasks, expandedTasks])
+  }, [currentUser, tasks, expandedTasks])
 
   // ── CYCLE STATUS ──────────────────────────────────────────
   const cycleStatus = useCallback(async (id: string): Promise<void> => {
+    if (!currentUser || !isUserActive(currentUser)) return
     const isVirtual = id.startsWith('virtual_')
     if (isVirtual) return // Não altera status de virtual sem materializar
 
     const t = tasks.find(x => x.id === id)
-    if (!t) return
+    if (!t || !canAccessTaskRecord(currentUser, t)) return
     const newStatus = t.status === 'Em Aberto' ? 'Em Andamento' : 'Em Aberto'
     const { error } = await sb.from('tasks').update({ status: newStatus }).eq('id', id)
     if (error) {
@@ -468,21 +521,23 @@ export function useAppData() {
       return
     }
     setTasks(prev => prev.map(x => x.id === id ? { ...x, status: newStatus } : x))
-  }, [tasks])
+  }, [currentUser, tasks])
 
   const reorderTasks = useCallback(async (reordered: Task[]): Promise<void> => {
+    if (!currentUser || !isUserActive(currentUser)) return
     // Filtra apenas tarefas reais (exclui virtuais geradas pelo expandedTasks)
     // Sem esse filtro, setTasks recebe centenas de virtuais passadas,
     // corrompendo atrasadasRecorrentes e causando o bug do contador 122+
-    const realOnly = reordered.filter(t => !String(t.id).startsWith('virtual_'))
+    const realOnly = reordered.filter(t => !String(t.id).startsWith('virtual_') && canAccessTaskRecord(currentUser, t))
     setTasks(realOnly)
     const updates = realOnly.map((t, i) => sb.from('tasks').update({ sort_order: i }).eq('id', t.id))
     await Promise.all(updates)
-  }, [])
+  }, [currentUser])
 
   const reopenTask = useCallback(async (histId: string): Promise<boolean> => {
+    if (!currentUser || !isUserActive(currentUser) || !canAccessModule(currentUser, 'history')) return false
     const h = hist.find(x => x.id === histId)
-    if (!h) return false
+    if (!h || !canAccessTaskRecord(currentUser, h)) return false
     const originalDate = h.date || getTodayStr()
     const { data: allTasks } = await sb.from('tasks').select('sort_order').order('sort_order', { ascending: false }).limit(1)
     const maxOrder = allTasks?.[0]?.sort_order ?? -1
@@ -513,13 +568,14 @@ export function useAppData() {
     setTasks(prev => [newTask, ...prev])
     setHist(prev => prev.filter(x => x.id !== histId))
     return true
-  }, [hist])
+  }, [currentUser, hist])
 
   const deleteAtrasada = useCallback(async (id: string): Promise<void> => {
+    if (!currentUser || !isUserActive(currentUser)) return
     // Virtual recorrente → materializa como concluída silenciosamente (sem hist)
     if (id.startsWith('virtual_')) {
       const t = expandedTasks.find(x => x.id === id)
-      if (t) {
+      if (t && canAccessTaskRecord(currentUser, t)) {
         const { isVirtual: _iv, ...payload } = t as any
         const skipped = { ...payload, id: genId(), status: 'Concluída' as const, completed_at: new Date().toLocaleDateString('pt-BR') }
         await sb.from('tasks').insert(skipped)
@@ -529,7 +585,7 @@ export function useAppData() {
     }
     // Tarefa mestre recorrente vencida ou tarefa comum no state tasks
     const t = tasks.find(x => x.id === id)
-    if (!t) return
+    if (!t || !canAccessTaskRecord(currentUser, t)) return
 
     if ((t as any).recur_group_id && t.recur && t.recur !== 'none') {
       const completedAt = new Date().toLocaleDateString('pt-BR')
@@ -550,10 +606,11 @@ export function useAppData() {
       await sb.from('tasks').delete().eq('id', id)
       setTasks(prev => prev.filter(x => x.id !== id))
     }
-  }, [tasks, expandedTasks])
+  }, [currentUser, tasks, expandedTasks])
 
   // ── MEETINGS ──────────────────────────────────────────────
   const saveMeet = useCallback(async (meetData: Partial<Meeting>, editId?: string): Promise<boolean> => {
+    if (!currentUser || !isUserActive(currentUser) || !canAccessModule(currentUser, 'meetings')) return false
     if (editId) {
       const { error } = await sb.from('meets').update(meetData).eq('id', editId)
       if (error) return false
@@ -566,23 +623,25 @@ export function useAppData() {
       setMeets(prev => [newMeet, ...prev])
     }
     return true
-  }, [])
+  }, [currentUser])
 
   const deleteMeet = useCallback(async (id: string): Promise<void> => {
+    if (!currentUser || !isUserActive(currentUser) || !canAccessModule(currentUser, 'meetings')) return
     await sb.from('meets').delete().eq('id', id)
     setMeets(prev => prev.filter(m => m.id !== id))
-  }, [])
+  }, [currentUser])
 
 
   // ── SUBTASKS ──────────────────────────────────────────────
   const toggleSubtask = useCallback(async (taskId: string, idx: number): Promise<void> => {
+    if (!currentUser || !isUserActive(currentUser)) return
     const isVirtual = taskId.startsWith('virtual_')
 
     if (isVirtual) {
       // Tarefa virtual: atualiza o override local (não toca no tasks state)
       // e persiste a alteração no mestre para referência futura
       const virtualTask = expandedTasks.find(x => x.id === taskId)
-      if (!virtualTask || !(virtualTask as any).recur_group_id) return
+      if (!virtualTask || !canAccessTaskRecord(currentUser, virtualTask) || !(virtualTask as any).recur_group_id) return
       const master = tasks.find(x =>
         (x as any).recur_group_id === (virtualTask as any).recur_group_id &&
         !String(x.id).startsWith('virtual_') &&
@@ -600,35 +659,40 @@ export function useAppData() {
     }
 
     const t = tasks.find(x => x.id === taskId)
-    if (!t) return
+    if (!t || !canAccessTaskRecord(currentUser, t)) return
     const updated = t.subtasks.map((s, i) => i === idx ? { ...s, done: !s.done } : s)
     await sb.from('tasks').update({ subtasks: updated }).eq('id', taskId)
     setTasks(prev => prev.map(x => x.id === taskId ? { ...x, subtasks: updated } : x))
-  }, [tasks, expandedTasks, vsOverrides])
+  }, [currentUser, tasks, expandedTasks, vsOverrides])
 
   const addSubtask = useCallback(async (taskId: string, text: string): Promise<void> => {
+    if (!currentUser || !isUserActive(currentUser)) return
     const t = tasks.find(x => x.id === taskId)
-    if (!t) return
+    if (!t || !canAccessTaskRecord(currentUser, t)) return
     const updated = [...t.subtasks, { text, done: false }]
     await sb.from('tasks').update({ subtasks: updated }).eq('id', taskId)
     setTasks(prev => prev.map(x => x.id === taskId ? { ...x, subtasks: updated } : x))
-  }, [tasks])
+  }, [currentUser, tasks])
 
   const deleteSubtask = useCallback(async (taskId: string, idx: number): Promise<void> => {
+    if (!currentUser || !isUserActive(currentUser)) return
     const t = tasks.find(x => x.id === taskId)
-    if (!t) return
+    if (!t || !canAccessTaskRecord(currentUser, t)) return
     const updated = t.subtasks.filter((_, i) => i !== idx)
     await sb.from('tasks').update({ subtasks: updated }).eq('id', taskId)
     setTasks(prev => prev.map(x => x.id === taskId ? { ...x, subtasks: updated } : x))
-  }, [tasks])
+  }, [currentUser, tasks])
 
   // ── TEAM ──────────────────────────────────────────────────
   const updateTeamMember = useCallback(async (id: string, data: Partial<TeamMember>): Promise<boolean> => {
-    const { error } = await sb.from('team').update(data).eq('id', id)
+    if (!currentUser || !isUserActive(currentUser) || !canAccessModule(currentUser, 'team')) return false
+    // Remove campos sensíveis (como is_admin) de edições operacionais de equipe
+    const { is_admin: _ia, ...safeTeamData } = data
+    const { error } = await sb.from('team').update(safeTeamData).eq('id', id)
     if (error) return false
-    setTeam(prev => prev.map(m => m.id === id ? { ...m, ...data } : m))
+    setTeam(prev => prev.map(m => m.id === id ? { ...m, ...safeTeamData } : m))
     return true
-  }, [])
+  }, [currentUser])
 
   // ── BACKUP 2.0 ──────────────────────────────────────────
   const createFullSnapshot = useCallback(() => {

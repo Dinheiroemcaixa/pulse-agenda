@@ -1,3 +1,35 @@
+export type AccessProfile = 'programador' | 'gestora' | 'operador'
+export type AccessStatus = 'active' | 'pending' | 'suspended' | 'rejected'
+export type AppModule = 'tasks' | 'atrasadas' | 'history' | 'pops' | 'team' | 'meetings' | 'messages' | 'backup' | 'settings'
+
+export interface UserPermissions {
+  tasks: boolean
+  atrasadas: boolean
+  history: boolean
+  pops: boolean
+  team: boolean
+  meetings: boolean
+  messages: boolean
+  backup: boolean
+  settings: boolean
+  view_all_tasks: boolean
+}
+
+export interface AccessAuditLog {
+  id: string
+  actor_id: string
+  actor_name: string
+  actor_email: string
+  target_user_id: string
+  target_user_name: string
+  target_user_email: string
+  action: 'APPROVE_USER' | 'REJECT_USER' | 'SUSPEND_USER' | 'REACTIVATE_USER' | 'UPDATE_PERMISSIONS' | 'UPDATE_PROFILE'
+  details: string
+  previous_state?: Record<string, unknown>
+  new_state?: Record<string, unknown>
+  created_at: string
+}
+
 export interface User {
   id: string
   name: string
@@ -7,6 +39,13 @@ export interface User {
   color: string
   is_admin: boolean
   avatar?: string
+  access_profile?: AccessProfile
+  access_status?: AccessStatus
+  permissions?: UserPermissions
+  created_at?: string
+  approved_by?: string
+  approved_at?: string
+  status_updated_at?: string
 }
 
 export interface TeamMember {
@@ -115,7 +154,8 @@ export interface Backup {
   created_at: string
 }
 
-export type Page = 'tasks' | 'team' | 'history' | 'atrasadas' | 'meetings' | 'messages' | 'backup' | 'pops'
+export type Page = 'tasks' | 'team' | 'history' | 'atrasadas' | 'meetings' | 'messages' | 'backup' | 'pops' | 'settings'
 export type ViewMode = 'list' | 'kanban' | 'agenda'
 export type FilterMode = 'all' | 'open' | 'late' | 'alta'
+
 
