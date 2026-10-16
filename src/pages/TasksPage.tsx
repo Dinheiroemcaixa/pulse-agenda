@@ -63,30 +63,16 @@ export function TasksPage(props: Props) {
     if (filterMode === 'open') list = list.filter(t => !isLate(t) && t.status === 'Em Aberto')
     else if (filterMode === 'late') list = list.filter(t => isLate(t))
     else if (filterMode === 'alta') list = list.filter(t => t.prio === 'Alta')
-    if (!viewingAll) list = list.filter(t => (t.resp || '').trim() === (currentUser.name || '').trim())
-    else if (memberFilter && memberFilter !== 'all') list = list.filter(t => (t.resp || '').trim() === memberFilter.trim())
+    if (!viewingAll) list = list.filter(t => (t.resp || '').trim().toLowerCase() === (currentUser.name || '').trim().toLowerCase())
+    else if (memberFilter && memberFilter !== 'all') list = list.filter(t => (t.resp || '').trim().toLowerCase() === memberFilter.trim().toLowerCase())
     if (searchQ) list = list.filter(t => (t.descricao || '').toLowerCase().includes(searchQ.toLowerCase()) || (t.resp || '').toLowerCase().includes(searchQ.toLowerCase()))
     
-    if (dateFilter) {
-      if (filterMode === 'late') {
-        // No modo Atrasadas, garante que todas as atrasadas sejam exibidas independentemente de dateFilter
-        list = list.filter(t => isLate(t))
-      } else if (dateFilter === todayStr) {
-        // Ao visualizar Hoje, mantém visíveis as tarefas de hoje e qualquer pendência atrasada
-        // garantindo que tarefas que venceram anteriormente não desapareçam da rotina operacional
-        list = list.filter(t => t.date === dateFilter || isLate(t))
-      } else {
-        list = list.filter(t => t.date === dateFilter)
-      }
+    if (dateFilter && filterMode !== 'late') {
+      list = list.filter(t => t.date === dateFilter)
     }
 
-    // Ordenação: tarefas atrasadas no topo para atenção operacional imediata, seguidas pelo sort_order
-    list.sort((a, b) => {
-      const aLate = isLate(a) ? 1 : 0
-      const bLate = isLate(b) ? 1 : 0
-      if (aLate !== bLate) return bLate - aLate
-      return (a.sort_order ?? 9999) - (b.sort_order ?? 9999)
-    })
+    // Ordenar pelo sort_order do banco
+    list.sort((a, b) => (a.sort_order ?? 9999) - (b.sort_order ?? 9999))
     return list
   }
 
