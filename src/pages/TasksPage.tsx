@@ -377,32 +377,21 @@ export function TasksPage(props: Props) {
         <button className="add-btn" onClick={() => props.openNewTask()}>+ Nova Tarefa</button>
       </div>
 
-      {/* SECONDARY TOOLBAR: DATE & SCOPE */}
-      <div className="filter-toolbar">
-        {viewMode !== 'agenda' && (
-          <div className="date-filter-bar">
-            <span className="filter-label">📅 Data:</span>
-            <input type="date" value={dateFilter} onChange={e => props.setDateFilter(e.target.value)} />
-            <button className="date-filter-today" onClick={() => props.setDateFilter(getTodayStr())}>Hoje</button>
-            {dateFilter && <button className="date-filter-clear" onClick={() => props.setDateFilter('')}>× Limpar</button>}
-          </div>
-        )}
-
-        {isAdmin && (
-          <div className={`scope-banner${viewingAll ? ' team-mode' : ''}`}>
-            <span>{viewingAll ? '👥 Toda a equipe' : '📋 Minhas tarefas'}</span>
-            <button className="scope-btn" onClick={() => {
-              const next = !viewingAll
-              props.setViewingAll(next)
-              props.setMemberFilter(next ? 'all' : currentUser.name)
-              try { localStorage.setItem('pulse_viewingAll', String(next)) } catch {}
-              try { localStorage.setItem('pulse_memberFilter', next ? 'all' : currentUser.name) } catch {}
-            }}>
-              {viewingAll ? 'Ver só as minhas' : 'Ver toda a equipe'}
-            </button>
-          </div>
-        )}
-      </div>
+      {/* SCOPE BANNER */}
+      {isAdmin && (
+        <div className={`scope-banner${viewingAll ? ' team-mode' : ''}`}>
+          <span>{viewingAll ? '👥 Mostrando tarefas de toda a equipe' : '📋 Mostrando apenas suas tarefas'}</span>
+          <button className="scope-btn" onClick={() => {
+            const next = !viewingAll
+            props.setViewingAll(next)
+            props.setMemberFilter(next ? 'all' : currentUser.name)
+            try { localStorage.setItem('pulse_viewingAll', String(next)) } catch {}
+            try { localStorage.setItem('pulse_memberFilter', next ? 'all' : currentUser.name) } catch {}
+          }}>
+            {viewingAll ? 'Ver só as minhas' : 'Ver toda a equipe'}
+          </button>
+        </div>
+      )}
 
       {/* MEMBER FILTER */}
       {viewingAll && (
@@ -415,6 +404,16 @@ export function TasksPage(props: Props) {
               {m.name === currentUser.name && <span style={{ fontSize: 9, opacity: 0.6 }}> (eu)</span>}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* DATE FILTER */}
+      {viewMode !== 'agenda' && (
+        <div className="date-filter-bar">
+          <span style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 600 }}>Data:</span>
+          <input type="date" value={dateFilter} onChange={e => props.setDateFilter(e.target.value)} />
+          <button className="date-filter-today" onClick={() => props.setDateFilter(getTodayStr())}>Hoje</button>
+          {dateFilter && <button className="date-filter-clear" onClick={() => props.setDateFilter('')}>× Limpar</button>}
         </div>
       )}
 
