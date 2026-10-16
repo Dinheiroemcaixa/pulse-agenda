@@ -156,26 +156,27 @@ export function TasksPage(props: Props) {
                 <div className="tn">{t.descricao}</div>
                 <div className="tt">
                   {recurLabel(t)}
-                  {(t.pop_id || resolveTaskPopId(t.id)) && (
-                    <span
+                  {(t.pop_id || resolveTaskPopId(t)) && (
+                    <button
+                      type="button"
                       onClick={e => { e.stopPropagation(); setActivePopTask(t) }}
                       title="POP — Como executar esta tarefa passo a passo"
                       style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        color: 'var(--accent, #2563eb)',
-                        background: 'rgba(37, 99, 235, 0.08)',
-                        border: '1px solid rgba(37, 99, 235, 0.25)',
-                        padding: '1px 6px',
-                        borderRadius: 4,
+                        height: 22,
+                        padding: '0 8px',
+                        borderRadius: 5,
+                        border: '1px solid #3b52d6',
+                        background: '#1b2550',
+                        color: '#a9b8ff',
+                        font: "600 11px 'IBM Plex Sans', sans-serif",
                         cursor: 'pointer',
                         display: 'inline-flex',
                         alignItems: 'center',
-                        gap: 3,
+                        gap: 3
                       }}
                     >
-                      📘 POP
-                    </span>
+                      POP
+                    </button>
                   )}
                   {sub.length > 0 && (
                     <span style={{ fontSize: 10, color: 'var(--text3)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }} onClick={() => setExpandedTasks(prev => ({ ...prev, [t.id]: !prev[t.id] }))}>
@@ -195,15 +196,25 @@ export function TasksPage(props: Props) {
               <div>{statusBadge(t)}</div>
               <div className="ra">
                 <button
+                  type="button"
                   className="act"
-                  title="POP — Como executar"
+                  title="Ver POP — Como executar"
                   onClick={() => setActivePopTask(t)}
                   style={{
-                    color: (t.pop_id || resolveTaskPopId(t.id)) ? 'var(--accent, #2563eb)' : 'var(--text3)',
-                    fontWeight: (t.pop_id || resolveTaskPopId(t.id)) ? 700 : 400
+                    height: 26,
+                    padding: '0 9px',
+                    borderRadius: 6,
+                    border: '1px solid #3b52d6',
+                    background: '#1b2550',
+                    color: '#a9b8ff',
+                    font: "600 11px 'IBM Plex Sans', sans-serif",
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
                   }}
                 >
-                  📘
+                  POP
                 </button>
                 {t.notes && <button className="act" onClick={() => setExpandedNotes(prev => ({ ...prev, [t.id]: !prev[t.id] }))}>📝</button>}
                 <button className="act edt" onClick={() => props.openEditTask(t.id)}>✎</button>
@@ -283,20 +294,49 @@ export function TasksPage(props: Props) {
                       </div>
                       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <span className={`pb ${priorityClass(t.prio)}`}>{t.prio}</span>
-                        {(t.pop_id || resolveTaskPopId(t.id)) && (
+                        {(t.pop_id || resolveTaskPopId(t)) && (
                           <span
                             onClick={e => { e.stopPropagation(); setActivePopTask(t) }}
-                            style={{ fontSize: 10, background: 'rgba(37, 99, 235, 0.08)', color: 'var(--accent, #2563eb)', border: '1px solid rgba(37, 99, 235, 0.25)', padding: '1px 5px', borderRadius: 4, cursor: 'pointer', fontWeight: 600 }}
+                            style={{
+                              height: 20,
+                              fontSize: 10,
+                              background: '#1b2550',
+                              color: '#a9b8ff',
+                              border: '1px solid #3b52d6',
+                              padding: '0 6px',
+                              borderRadius: 4,
+                              cursor: 'pointer',
+                              fontWeight: 600,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              fontFamily: "'IBM Plex Sans', sans-serif"
+                            }}
                             title="POP associado — Ver procedimento"
                           >
-                            📘 POP
+                            POP
                           </span>
                         )}
                       </div>
                       <div className="kcard-actions">
                         <div className="kcard-done" onClick={() => props.onComplete(t.id)}>✓ Concluir</div>
-                        <div className="kcard-edit" title="POP — Como executar" onClick={() => setActivePopTask(t)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          📘
+                        <div
+                          className="kcard-edit"
+                          title="POP — Como executar"
+                          onClick={() => setActivePopTask(t)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            color: '#a9b8ff',
+                            background: '#1b2550',
+                            border: '1px solid #3b52d6',
+                            borderRadius: 4,
+                            padding: '2px 6px'
+                          }}
+                        >
+                          POP
                         </div>
                         <div className="kcard-edit" onClick={() => props.openEditTask(t.id)}>✎</div>
                       </div>

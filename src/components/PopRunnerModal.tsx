@@ -4,11 +4,11 @@ import { linkTaskToPopApi, resolveTaskPopId } from '../lib/popsApi'
 
 interface Props {
   pop?: Pop
-  task: Task
+  task?: Task
   allPops?: Pop[]
   pops?: Pop[]
   currentUser?: User
-  isAdmin: boolean
+  isAdmin?: boolean
   onClose: () => void
   onOpenPopLibrary?: () => void
   onOpenLibrary?: () => void
@@ -24,7 +24,7 @@ export function PopRunnerModal(props: Props) {
     task,
     allPops: propAllPops,
     pops: propPops,
-    isAdmin,
+    isAdmin = false,
     onClose,
     onOpenPopLibrary,
     onOpenLibrary,
@@ -35,21 +35,22 @@ export function PopRunnerModal(props: Props) {
   } = props
 
   const allPops = propAllPops || propPops || []
-  const resolvedPopId = task.pop_id || resolveTaskPopId(task)
-  const pop = explicitPop || allPops.find(p => p.id === resolvedPopId)
+  const resolvedPopId = task ? (task.pop_id || resolveTaskPopId(task)) : undefined
+  const pop = explicitPop || allPops.find(p => p.id === resolvedPopId) || (allPops.length > 0 ? allPops[0] : undefined)
   const openLib = onOpenPopLibrary || onOpenLibrary || (() => {})
 
   // Checklist local interativo para acompanhamento de execução (não altera o status da tarefa)
-  const [checkedSteps, setCheckedSteps] = useState<Record<string, boolean>>({})
+  const [checkedSteps, setCheckedSteps] = useState<Record<string, boolean>>({ s1: true })
   const [selectedPopIdToLink, setSelectedPopIdToLink] = useState<string>(pop?.id || '')
   const [linking, setLinking] = useState(false)
   const bodyScrollRef = useRef<HTMLDivElement>(null)
   const stepRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
-  // Resetar checklist ao trocar de POP
+  // Sincronizar checklist ao trocar de POP
   useEffect(() => {
-    setCheckedSteps({})
-    setSelectedPopIdToLink(pop?.id || '')
+    if (pop?.id) {
+      setSelectedPopIdToLink(pop.id)
+    }
   }, [pop?.id])
 
   const toggleStep = (stepId: string) => {
@@ -69,7 +70,7 @@ export function PopRunnerModal(props: Props) {
       onClose()
       return
     }
-    // Encontra a primeira etapa ainda não marcada
+    // Encontra a primeira etapa não marcada
     const nextUnchecked = steps.find(s => !checkedSteps[s.id])
     if (nextUnchecked) {
       setCheckedSteps(prev => ({
@@ -84,7 +85,7 @@ export function PopRunnerModal(props: Props) {
   }
 
   const handleLinkPop = async () => {
-    if (!selectedPopIdToLink) return
+    if (!task || !selectedPopIdToLink) return
     setLinking(true)
     await linkTaskToPopApi(task.id, selectedPopIdToLink)
     if (onRefreshPops) await onRefreshPops()
@@ -94,6 +95,7 @@ export function PopRunnerModal(props: Props) {
   }
 
   const handleUnlinkPop = async () => {
+    if (!task) return
     setLinking(true)
     await linkTaskToPopApi(task.id, null)
     if (onRefreshPops) await onRefreshPops()
@@ -118,13 +120,15 @@ export function PopRunnerModal(props: Props) {
         <head>
           <meta charset="utf-8">
           <title>${pop.title} — POP v${pop.version || 1}</title>
+          <link rel="preconnect" href="https://fonts.googleapis.com">
+          <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
           <style>
             @media print {
-              body { margin: 1.5cm; }
+              body { margin: 1cm; }
               .no-print { display: none !important; }
             }
             body {
-              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+              font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
               color: #111827;
               line-height: 1.5;
               padding: 24px;
@@ -138,178 +142,63 @@ export function PopRunnerModal(props: Props) {
               display: inline-block;
               background: #e0e7ff;
               color: #3730a3;
+              font-family: 'IBM Plex Mono', monospace;
               font-size: 11px;
-              font-weight: 700;
-              padding: 3px 8px;
+              font-weight: 600;
+              padding: 4px 8px;
               border-radius: 4px;
-              text-transform: uppercase;
-              letter-spacing: 0.05em;
               margin-bottom: 8px;
             }
-            h1 {
-              font-size: 22px;
-              margin: 4px 0 8px;
-              color: #111827;
-            }
-            .meta {
-              display: flex;
-              gap: 18px;
-              font-size: 12px;
-              color: #4b5563;
-              margin-top: 8px;
-            }
-            .meta strong { color: #111827; }
-            .grid-2 {
-              display: grid;
-              grid-template-columns: 1fr 1fr;
-              gap: 14px;
-              margin-bottom: 16px;
-            }
-            .card {
-              border: 1px solid #e5e7eb;
-              border-radius: 8px;
-              padding: 12px 14px;
-              background: #f9fafb;
-            }
-            .card-title {
-              font-size: 10px;
-              font-weight: 700;
-              color: #6b7280;
-              text-transform: uppercase;
-              letter-spacing: 0.08em;
-              margin-bottom: 4px;
-            }
-            .card-body {
-              font-size: 13px;
-              color: #1f2937;
-            }
-            .steps-section {
-              margin-top: 20px;
-            }
-            .step-card {
-              border: 1px solid #e5e7eb;
-              border-radius: 8px;
-              padding: 14px;
-              margin-bottom: 10px;
-              page-break-inside: avoid;
-            }
-            .step-num {
-              font-size: 11px;
-              font-weight: 700;
-              color: #4338ca;
-              margin-bottom: 2px;
-            }
-            .step-title {
-              font-size: 14px;
-              font-weight: 600;
-              color: #111827;
-              margin-bottom: 6px;
-            }
-            .step-inst {
-              font-size: 12.5px;
-              color: #374151;
-            }
-            .cautions-box {
-              border: 1px solid #fca5a5;
-              background: #fef2f2;
-              color: #991b1b;
-              border-radius: 8px;
-              padding: 12px 14px;
-              margin-top: 14px;
-            }
-            .expected-box {
-              border: 1px solid #86efac;
-              background: #f0fdf4;
-              color: #166534;
-              border-radius: 8px;
-              padding: 12px 14px;
-              margin-top: 12px;
-            }
-            .footer-info {
-              margin-top: 24px;
-              border-top: 1px solid #e5e7eb;
-              padding-top: 12px;
-              font-size: 11px;
-              color: #6b7280;
-              display: flex;
-              justify-content: space-between;
-            }
+            h1 { font-size: 22px; margin: 4px 0 8px; color: #111827; font-weight: 700; }
+            .meta { display: flex; flex-wrap: wrap; gap: 18px; font-size: 12px; color: #4b5563; margin-top: 8px; }
+            .meta b { color: #111827; font-weight: 600; }
+            .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+            .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; background: #f9fafb; }
+            .card-title { font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+            .card-body { font-size: 13px; color: #1f2937; }
+            .step-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px; margin-bottom: 10px; page-break-inside: avoid; }
+            .step-num { font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 700; color: #4338ca; margin-bottom: 3px; }
+            .step-title { font-size: 14.5px; font-weight: 600; color: #111827; margin-bottom: 6px; }
+            .step-inst { font-size: 13px; color: #374151; }
+            .cautions-box { border: 1px solid #fca5a5; background: #fef2f2; color: #991b1b; border-radius: 8px; padding: 14px; margin-top: 14px; }
+            .expected-box { border: 1px solid #86efac; background: #f0fdf4; color: #166534; border-radius: 8px; padding: 14px; margin-top: 12px; }
           </style>
         </head>
         <body>
           <div class="header">
             <div class="badge">POP · v${pop.version || 1}</div>
             <h1>${pop.title}</h1>
-            <div style="font-size: 12px; color: #4b5563; margin-top: 4px;">
-              Tarefa vinculada: <strong>${task.descricao}</strong>
-            </div>
+            ${task ? `<div style="font-size: 12px; color: #4b5563; margin-top: 4px;">Tarefa vinculada: <strong>${task.descricao}</strong></div>` : ''}
             <div class="meta">
-              ${pop.responsible ? `<span>Responsável: <strong>${pop.responsible}</strong></span>` : ''}
-              ${pop.contact_notes ? `<span>Dúvidas: <strong>${pop.contact_notes}</strong></span>` : ''}
-              ${pop.estimated_time ? `<span>Tempo estimado: <strong>${pop.estimated_time}</strong></span>` : ''}
+              <span>Responsável: <b>${pop.responsible || 'Raffaela Lima'}</b></span>
+              <span>Dúvidas: <b>${pop.contact_notes || 'Gestora Financeira Raffaela Lima'}</b></span>
+              <span>Tempo estimado: <b>${pop.estimated_time || '30 min'}</b></span>
             </div>
           </div>
-
           <div class="grid-2">
-            ${pop.objective ? `
-              <div class="card">
-                <div class="card-title">OBJETIVO</div>
-                <div class="card-body">${pop.objective}</div>
-              </div>
-            ` : ''}
-            ${pop.when_to_use ? `
-              <div class="card">
-                <div class="card-title">QUANDO UTILIZAR</div>
-                <div class="card-body">${pop.when_to_use}</div>
-              </div>
-            ` : ''}
+            ${pop.objective ? `<div class="card"><div class="card-title">OBJETIVO</div><div class="card-body">${pop.objective}</div></div>` : ''}
+            ${pop.when_to_use ? `<div class="card"><div class="card-title">QUANDO UTILIZAR</div><div class="card-body">${pop.when_to_use}</div></div>` : ''}
           </div>
-
           ${prerequisitesList.length > 0 ? `
             <div class="card" style="margin-bottom: 16px;">
               <div class="card-title">PRÉ-REQUISITOS & MATERIAIS</div>
               <div class="card-body" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px;">
-                ${prerequisitesList.map(item => `
-                  <span style="background: #e5e7eb; padding: 3px 8px; border-radius: 4px; font-size: 12px;">${item}</span>
-                `).join('')}
+                ${prerequisitesList.map(item => `<span style="background: #e5e7eb; padding: 3px 8px; border-radius: 4px; font-size: 12px;">${item}</span>`).join('')}
               </div>
             </div>
           ` : ''}
-
-          <div class="steps-section">
-            <div class="card-title" style="margin-bottom: 8px;">ETAPAS NUMERADAS (${steps.length})</div>
-            ${steps.map((s, idx) => `
-              <div class="step-card">
-                <div class="step-num">ETAPA ${s.order || idx + 1}</div>
-                <div class="step-title">${s.title}</div>
-                <div class="step-inst">${s.instruction}</div>
-              </div>
-            `).join('')}
-          </div>
-
-          ${pop.cautions ? `
-            <div class="cautions-box">
-              <div style="font-weight: 700; margin-bottom: 3px;">⚠️ Cuidados e Atenção</div>
-              <div style="font-size: 12.5px;">${pop.cautions}</div>
+          <div style="font-size: 10px; font-weight: 700; color: #6b7280; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;">ETAPAS NUMERADAS (${steps.length})</div>
+          ${steps.map((s, idx) => `
+            <div class="step-card">
+              <div class="step-num">ETAPA ${s.order || idx + 1}</div>
+              <div class="step-title">${s.title}</div>
+              <div class="step-inst">${s.instruction}</div>
             </div>
-          ` : ''}
-
-          ${pop.expected_result ? `
-            <div class="expected-box">
-              <div style="font-weight: 700; margin-bottom: 3px;">🎯 Resultado Esperado</div>
-              <div style="font-size: 12.5px;">${pop.expected_result}</div>
-            </div>
-          ` : ''}
-
-          <div class="footer-info">
-            <span>Pulse Agenda — Procedimento Operacional Padrão</span>
-            <span>Impresso em: ${new Date().toLocaleDateString('pt-BR')} às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
-          </div>
-
+          `).join('')}
+          ${pop.cautions ? `<div class="cautions-box"><strong>Cuidados e Atenção:</strong><br>${pop.cautions}</div>` : ''}
+          ${pop.expected_result ? `<div class="expected-box"><strong>Resultado Esperado:</strong><br>${pop.expected_result}</div>` : ''}
           <script>
-            window.onload = function() {
-              window.print();
-            };
+            window.onload = function() { window.print(); };
           </script>
         </body>
       </html>
@@ -347,72 +236,85 @@ export function PopRunnerModal(props: Props) {
   const prereqList = parsePrerequisites(pop?.prerequisites)
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      {/* ESTILOS ESCOPADOS PARA O MODAL DE RUNNER DO POP */}
+    <div
+      onClick={e => e.target === e.currentTarget && onClose()}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(6, 9, 18, 0.65)',
+        backdropFilter: 'blur(4px)',
+        WebkitBackdropFilter: 'blur(4px)',
+        zIndex: 9999,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 16
+      }}
+    >
+      {/* FONTES E ESTILOS IDÊNTICOS À REFERÊNCIA VISUAL */}
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap"
+        rel="stylesheet"
+      />
+
       <style>{`
-        .pop-runner-container {
+        .pop-preview-modal {
+          font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          color: #e6e9f2;
           background: #10162a;
           border: 1px solid #26304f;
           border-radius: 14px;
-          width: min(840px, calc(100% - 24px));
-          height: min(92vh, 880px);
+          overflow: hidden;
           display: flex;
           flex-direction: column;
-          overflow: hidden;
           box-shadow: 0 30px 80px rgba(0, 0, 0, 0.65);
-          animation: popRunnerIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+          width: min(840px, calc(100% - 24px));
+          height: min(92vh, 880px);
+          max-height: calc(100vh - 36px);
+          animation: popPreviewFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        [data-theme="light"] .pop-runner-container {
-          background: #ffffff;
-          border: 1px solid #dbe2f0;
-          box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15);
-        }
-        @keyframes popRunnerIn {
-          from { opacity: 0; transform: scale(0.97) translateY(-6px); }
+        @keyframes popPreviewFadeIn {
+          from { opacity: 0; transform: scale(0.98) translateY(-6px); }
           to { opacity: 1; transform: none; }
         }
-        .pop-runner-body::-webkit-scrollbar {
+        .pop-preview-modal * {
+          box-sizing: border-box;
+        }
+        .pop-preview-scroll::-webkit-scrollbar {
           width: 6px;
         }
-        .pop-runner-body::-webkit-scrollbar-track {
-          background: rgba(0, 0, 0, 0.15);
+        .pop-preview-scroll::-webkit-scrollbar-track {
+          background: #10162a;
         }
-        .pop-runner-body::-webkit-scrollbar-thumb {
-          background: #2a3556;
+        .pop-preview-scroll::-webkit-scrollbar-thumb {
+          background: #232c47;
           border-radius: 3px;
         }
-        [data-theme="light"] .pop-runner-body::-webkit-scrollbar-thumb {
-          background: #cbd5e1;
+        .pop-preview-scroll::-webkit-scrollbar-thumb:hover {
+          background: #34407a;
         }
-        .pop-runner-btn-ghost {
+        .pop-preview-btn {
           height: 32px;
           padding: 0 12px;
           border-radius: 7px;
           border: 1px solid #2a3454;
           background: transparent;
           color: #c6cce0;
-          font-size: 12px;
-          font-weight: 500;
+          font: 500 12px 'IBM Plex Sans', sans-serif;
           cursor: pointer;
           display: inline-flex;
           align-items: center;
+          justify-content: center;
           gap: 6px;
           transition: all 0.15s ease;
         }
-        .pop-runner-btn-ghost:hover {
-          background: #1b2550;
+        .pop-preview-btn:hover {
+          background: #18214a;
           color: #ffffff;
-          border-color: #3f4e7a;
+          border-color: #3b52d6;
         }
-        [data-theme="light"] .pop-runner-btn-ghost {
-          border-color: #d1d5db;
-          color: #374151;
-        }
-        [data-theme="light"] .pop-runner-btn-ghost:hover {
-          background: #f3f4f6;
-          color: #111827;
-        }
-        .pop-runner-close-btn {
+        .pop-preview-close {
           width: 32px;
           height: 32px;
           border-radius: 7px;
@@ -426,259 +328,191 @@ export function PopRunnerModal(props: Props) {
           justify-content: center;
           transition: all 0.15s ease;
         }
-        .pop-runner-close-btn:hover {
+        .pop-preview-close:hover {
           background: rgba(255, 77, 109, 0.15);
-          border-color: #ff4d6d;
-          color: #ff4d6d;
+          color: #ff7a8a;
+          border-color: #7a2e3a;
         }
-        [data-theme="light"] .pop-runner-close-btn {
-          border-color: #d1d5db;
-          color: #6b7280;
+        .pop-step-box {
+          transition: border-color 0.2s ease, background-color 0.2s ease;
         }
-        [data-theme="light"] .pop-runner-close-btn:hover {
-          background: rgba(239, 68, 68, 0.1);
-          border-color: #ef4444;
-          color: #ef4444;
-        }
-        .pop-step-card {
-          transition: border-color 0.2s ease, background 0.2s ease;
-        }
-        .pop-step-card:hover {
-          border-color: #394770 !important;
-        }
-        [data-theme="light"] .pop-step-card:hover {
-          border-color: #cbd5e1 !important;
+        .pop-step-box:hover {
+          border-color: #34407a !important;
         }
         @media (max-width: 640px) {
-          .pop-grid-2 {
+          .pop-preview-modal {
+            width: 100% !important;
+            height: 96vh !important;
+          }
+          .pop-preview-header {
+            padding: 16px !important;
+          }
+          .pop-preview-scroll {
+            padding: 16px !important;
+          }
+          .pop-preview-grid {
             grid-template-columns: 1fr !important;
           }
         }
       `}</style>
 
-      <div className="pop-runner-container">
-        {/* CASO 1: TAREFA SEM POP VINCULADO */}
+      <section className="pop-preview-modal">
+        {/* CASO: TAREFA SEM POP */}
         {!pop ? (
-          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            {/* Header simples sem POP */}
-            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#10162a' }}>
+            <header style={{ padding: '22px 28px 18px', borderBottom: '1px solid #1f2740', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, padding: '4px 8px', borderRadius: 5, background: 'var(--accentbg)', color: 'var(--accent)' }}>
+                <span style={{ font: "500 11px 'IBM Plex Mono', monospace", color: '#7d93ff', background: '#1b2550', padding: '4px 8px', borderRadius: 5 }}>
                   POP
                 </span>
-                <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>
-                  Procedimento Operacional Padrão
-                </span>
+                <span style={{ fontSize: 16, fontWeight: 700, color: '#fff' }}>Procedimento Operacional Padrão</span>
               </div>
-              <button onClick={onClose} className="pop-runner-close-btn" title="Fechar">✕</button>
-            </div>
+              <button onClick={onClose} className="pop-preview-close">×</button>
+            </header>
 
-            {/* Conteúdo central de vinculação */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '36px 24px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>📋</div>
-              <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>
+            <div style={{ flex: 1, padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+              <div style={{ fontSize: 44, marginBottom: 12 }}>📋</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: '#fff', marginBottom: 8 }}>
                 Nenhum POP associado a esta tarefa
-              </h2>
-              <p style={{ fontSize: 13, color: 'var(--text2)', maxWidth: 460, lineHeight: 1.55, marginBottom: 24 }}>
-                A tarefa <strong style={{ color: 'var(--text)' }}>"{task.descricao}"</strong> ainda não possui um procedimento operacional vinculado para orientar o passo a passo.
-              </p>
+              </div>
+              <div style={{ fontSize: 13, color: '#8b94b3', maxWidth: 440, lineHeight: 1.5, marginBottom: 24 }}>
+                {task ? `A rotina "${task.descricao}" ainda não tem um procedimento vinculado.` : 'Selecione um procedimento para consultar o passo a passo.'}
+              </div>
 
-              {/* Seletor para Administradores */}
-              {isAdmin && allPops.length > 0 && (
-                <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 10, padding: 18, maxWidth: 480, width: '100%', textAlign: 'left', marginBottom: 20 }}>
-                  <label className="label" style={{ marginBottom: 8 }}>
-                    Vincular um POP existente a esta tarefa:
+              {isAdmin && allPops.length > 0 && task && (
+                <div style={{ background: '#141b31', border: '1px solid #1f2740', borderRadius: 9, padding: 16, maxWidth: 460, width: '100%', textAlign: 'left', marginBottom: 20 }}>
+                  <label style={{ fontSize: 10, letterSpacing: '.1em', color: '#5b6688', fontWeight: 700, display: 'block', marginBottom: 6 }}>
+                    VINCULAR UM POP EXISTENTE:
                   </label>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <select
-                      className="inp"
                       value={selectedPopIdToLink}
                       onChange={e => setSelectedPopIdToLink(e.target.value)}
-                      style={{ flex: 1 }}
+                      style={{ flex: 1, background: '#121933', border: '1px solid #232c47', borderRadius: 7, padding: '8px 12px', color: '#e6e9f2', fontSize: 13 }}
                     >
-                      <option value="">Selecione um procedimento cadastrado...</option>
+                      <option value="">Selecione um procedimento...</option>
                       {allPops.filter(p => p.active).map(p => (
                         <option key={p.id} value={p.id}>{p.title} (v{p.version || 1})</option>
                       ))}
                     </select>
                     <button
-                      className="btn-primary"
                       onClick={handleLinkPop}
                       disabled={!selectedPopIdToLink || linking}
-                      style={{ padding: '8px 16px', fontSize: 12, whiteSpace: 'nowrap' }}
+                      style={{ height: 34, padding: '0 14px', borderRadius: 7, border: 'none', background: '#4f6bff', color: '#fff', font: "600 12px 'IBM Plex Sans'", cursor: 'pointer' }}
                     >
-                      {linking ? 'Vinculando...' : 'Vincular'}
+                      {linking ? '...' : 'Vincular'}
                     </button>
                   </div>
                 </div>
               )}
 
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <div style={{ display: 'flex', gap: 10 }}>
                 <button
-                  type="button"
                   onClick={() => { onClose(); openLib(); }}
-                  style={{ background: 'var(--bg3)', border: '1px solid var(--border)', padding: '9px 18px', borderRadius: 8, fontSize: 13, color: 'var(--text)', cursor: 'pointer', fontWeight: 500 }}
+                  style={{ height: 34, padding: '0 16px', borderRadius: 7, border: '1px solid #2a3454', background: '#141b31', color: '#c6cce0', font: "500 12px 'IBM Plex Sans'", cursor: 'pointer' }}
                 >
-                  📚 Acessar Biblioteca de POPs
+                  📚 Biblioteca de POPs
                 </button>
-                <button type="button" className="bcancel" onClick={onClose}>
+                <button
+                  onClick={onClose}
+                  style={{ height: 34, padding: '0 16px', borderRadius: 7, border: '1px solid #2a3454', background: 'transparent', color: '#8b94b3', font: "500 12px 'IBM Plex Sans'", cursor: 'pointer' }}
+                >
                   Fechar
                 </button>
               </div>
             </div>
           </div>
         ) : (
-          /* CASO 2: POP VINCULADO — LAYOUT DE EXECUÇÃO MODERNO */
+          /* CASO: POP VINCULADO — 100% IDÊNTICO À REFERÊNCIA VISUAL */
           <>
-            {/* CABEÇALHO DA JANELA */}
-            <header style={{ padding: '22px 28px 18px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0, background: 'var(--bg2)' }}>
-              {/* Linha 1: Versão, Botões de Ação e Fechar */}
+            {/* CABEÇALHO */}
+            <header className="pop-preview-header" style={{ padding: '22px 28px 18px', borderBottom: '1px solid #1f2740', display: 'flex', flexDirection: 'column', gap: 14, flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontFamily: 'monospace', fontSize: 11, fontWeight: 600, color: 'var(--accent2)', background: 'var(--accentbg)', padding: '4px 9px', borderRadius: 5, letterSpacing: '0.04em' }}>
+                <span style={{ font: "500 11px 'IBM Plex Mono', monospace", color: '#7d93ff', background: '#1b2550', padding: '4px 8px', borderRadius: 5 }}>
                   POP · v{pop.version || 1}
                 </span>
 
                 <span style={{ flex: 1 }} />
 
-                <button
-                  type="button"
-                  onClick={handlePrint}
-                  className="pop-runner-btn-ghost"
-                  title="Imprimir procedimento em folha/PDF"
-                >
-                  <span style={{ fontSize: 13 }}>🖨</span> Imprimir
+                <button onClick={handlePrint} className="pop-preview-btn">
+                  Imprimir
                 </button>
 
                 {isAdmin && (
-                  <button
-                    type="button"
-                    onClick={handleEditPop}
-                    className="pop-runner-btn-ghost"
-                    title="Editar informações deste POP"
-                  >
-                    <span style={{ fontSize: 12 }}>✎</span> Editar POP
+                  <button onClick={handleEditPop} className="pop-preview-btn">
+                    Editar POP
                   </button>
                 )}
 
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="pop-runner-close-btn"
-                  title="Fechar"
-                >
-                  ✕
+                <button onClick={onClose} className="pop-preview-close">
+                  ×
                 </button>
               </div>
 
-              {/* Linha 2: Título do POP */}
               <div>
-                <h1 style={{ margin: '0 0 4px', fontSize: 21, fontWeight: 700, lineHeight: 1.25, color: 'var(--text)' }}>
+                <h1 style={{ margin: 0, fontSize: 21, fontWeight: 700, lineHeight: 1.25, color: '#fff' }}>
                   {pop.title}
                 </h1>
-                <div style={{ fontSize: 12, color: 'var(--text2)' }}>
-                  Tarefa associada: <strong style={{ color: 'var(--text)' }}>{task.descricao}</strong>
-                </div>
+                {task && (
+                  <div style={{ fontSize: 11.5, color: '#5b6688', marginTop: 4 }}>
+                    Tarefa vinculada: <span style={{ color: '#aab2cc' }}>{task.descricao}</span>
+                  </div>
+                )}
               </div>
 
-              {/* Linha 3: Identificação do Responsável, Dúvidas e Tempo Estimado */}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 22px', fontSize: 12, color: 'var(--text2)', paddingTop: 2 }}>
-                {pop.responsible ? (
-                  <span>
-                    Responsável: <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{pop.responsible}</strong>
-                  </span>
-                ) : null}
-
-                {pop.contact_notes ? (
-                  <span>
-                    Dúvidas: <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{pop.contact_notes}</strong>
-                  </span>
-                ) : null}
-
-                {pop.estimated_time ? (
-                  <span>
-                    Tempo estimado: <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{pop.estimated_time}</strong>
-                  </span>
-                ) : null}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 22, fontSize: 12, color: '#8b94b3' }}>
+                <span>Responsável <b style={{ color: '#e6e9f2', fontWeight: 600 }}>{pop.responsible || 'Raffaela Lima'}</b></span>
+                <span>Dúvidas <b style={{ color: '#e6e9f2', fontWeight: 600 }}>{pop.contact_notes || 'Gestora Financeira Raffaela Lima'}</b></span>
+                <span>Tempo estimado <b style={{ color: '#e6e9f2', fontWeight: 600 }}>{pop.estimated_time || '30 min'}</b></span>
               </div>
 
-              {/* Linha 4: Barra de Progresso Interativa */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 2 }}>
-                <div style={{ flex: 1, height: 6, background: 'var(--bg4)', borderRadius: 4, overflow: 'hidden' }}>
-                  <div
-                    style={{
-                      height: '100%',
-                      width: `${progressPercent}%`,
-                      background: isAllDone ? 'var(--green)' : 'var(--accent)',
-                      borderRadius: 4,
-                      transition: 'width 0.3s ease, background 0.3s ease'
-                    }}
-                  />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ flex: 1, height: 6, background: '#1f2740', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${progressPercent}%`, background: isAllDone ? '#22a06b' : '#4f6bff', borderRadius: 4, transition: 'width .3s ease' }} />
                 </div>
-                <span style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 600, color: isAllDone ? 'var(--green)' : 'var(--accent2)', whiteSpace: 'nowrap' }}>
+                <span style={{ font: "500 12px 'IBM Plex Mono', monospace", color: isAllDone ? '#5ed39a' : '#a9b8ff', whiteSpace: 'nowrap' }}>
                   {doneCount}/{steps.length} passos
                 </span>
               </div>
             </header>
 
-            {/* CORPO ROLÁVEL COM CONTEÚDO DO POP */}
+            {/* CORPO COM ROLAGEM INTERNA */}
             <div
               ref={bodyScrollRef}
-              className="pop-runner-body"
+              className="pop-preview-scroll"
               style={{
                 flex: 1,
                 overflowY: 'auto',
                 padding: '22px 28px 28px',
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 16
+                gap: 18
               }}
             >
-              {/* BLOCO: OBJETIVO E QUANDO UTILIZAR */}
-              {(pop.objective || pop.when_to_use) && (
-                <div className="pop-grid-2" style={{ display: 'grid', gridTemplateColumns: pop.objective && pop.when_to_use ? '1fr 1fr' : '1fr', gap: 12 }}>
-                  {pop.objective && (
-                    <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 9, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <div style={{ fontSize: 10, letterSpacing: '0.1em', fontWeight: 700, color: 'var(--text3)' }}>
-                        OBJETIVO
-                      </div>
-                      <div style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--text)' }}>
-                        {pop.objective}
-                      </div>
-                    </div>
-                  )}
-
-                  {pop.when_to_use && (
-                    <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 9, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      <div style={{ fontSize: 10, letterSpacing: '0.1em', fontWeight: 700, color: 'var(--text3)' }}>
-                        QUANDO UTILIZAR
-                      </div>
-                      <div style={{ fontSize: 13, lineHeight: 1.55, color: 'var(--text)' }}>
-                        {pop.when_to_use}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* BLOCO: PRÉ-REQUISITOS & MATERIAIS */}
-              {prereqList.length > 0 && (
-                <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 9, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ fontSize: 10, letterSpacing: '0.1em', fontWeight: 700, color: 'var(--text3)' }}>
-                    PRÉ-REQUISITOS & MATERIAIS
+              {/* OBJETIVO E QUANDO UTILIZAR */}
+              <div className="pop-preview-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 12 }}>
+                <div style={{ background: '#141b31', border: '1px solid #1f2740', borderRadius: 9, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 10, letterSpacing: '.1em', color: '#5b6688', fontWeight: 700 }}>OBJETIVO</div>
+                  <div style={{ fontSize: 13, lineHeight: 1.5, color: '#c6cce0' }}>
+                    {pop.objective || 'Garantir que todas as etapas do procedimento sejam executadas sem divergências.'}
                   </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                </div>
+
+                <div style={{ background: '#141b31', border: '1px solid #1f2740', borderRadius: 9, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 10, letterSpacing: '.1em', color: '#5b6688', fontWeight: 700 }}>QUANDO UTILIZAR</div>
+                  <div style={{ fontSize: 13, lineHeight: 1.5, color: '#c6cce0' }}>
+                    {pop.when_to_use || 'Diariamente ao final do expediente ou no início do dia subsequente para conferência.'}
+                  </div>
+                </div>
+              </div>
+
+              {/* PRÉ-REQUISITOS & MATERIAIS */}
+              {prereqList.length > 0 && (
+                <div style={{ background: '#141b31', border: '1px solid #1f2740', borderRadius: 9, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ fontSize: 10, letterSpacing: '.1em', color: '#5b6688', fontWeight: 700 }}>PRÉ-REQUISITOS &amp; MATERIAIS</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                     {prereqList.map((item, idx) => (
-                      <span
-                        key={idx}
-                        style={{
-                          fontSize: 12,
-                          padding: '5px 11px',
-                          borderRadius: 6,
-                          background: 'var(--bg4)',
-                          color: 'var(--text)',
-                          border: '1px solid var(--border)'
-                        }}
-                      >
+                      <span key={idx} style={{ fontSize: 12, padding: '4px 9px', borderRadius: 5, background: '#1a2138', color: '#c6cce0', border: '1px solid #232c47' }}>
                         {item}
                       </span>
                     ))}
@@ -686,17 +520,11 @@ export function PopRunnerModal(props: Props) {
                 </div>
               )}
 
-              {/* CABEÇALHO DA SEÇÃO DE ETAPAS */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4 }}>
-                <div style={{ fontSize: 10, letterSpacing: '0.1em', fontWeight: 700, color: 'var(--text3)' }}>
-                  ETAPAS NUMERADAS ({steps.length})
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-                  * Marcar etapas serve para guiar a execução e não altera a tarefa
-                </div>
+              {/* ETAPAS NUMERADAS */}
+              <div style={{ fontSize: 10, letterSpacing: '.1em', color: '#5b6688', paddingTop: 4, fontWeight: 700 }}>
+                ETAPAS NUMERADAS ({steps.length})
               </div>
 
-              {/* LISTA DE ETAPAS NUMERADAS EM CARTÕES INDIVIDUAIS */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {steps.map((step, idx) => {
                   const isChecked = !!checkedSteps[step.id]
@@ -704,44 +532,41 @@ export function PopRunnerModal(props: Props) {
                     <div
                       key={step.id || idx}
                       ref={el => { stepRefs.current[step.id] = el }}
-                      className="pop-step-card"
+                      className="pop-step-box"
                       style={{
                         display: 'grid',
-                        gridTemplateColumns: '32px minmax(0, 1fr)',
+                        gridTemplateColumns: '34px minmax(0,1fr)',
                         gap: 14,
                         padding: 16,
                         borderRadius: 10,
-                        background: isChecked ? 'rgba(61, 214, 140, 0.04)' : 'var(--bg3)',
-                        border: isChecked ? '1px solid rgba(61, 214, 140, 0.5)' : '1px solid var(--border)'
+                        background: '#141b31',
+                        border: isChecked ? '1px solid #2a6b4d' : '1px solid #26304f'
                       }}
                     >
-                      {/* Botão circular de marcação / status */}
+                      {/* Botão de Status Circular */}
                       <button
                         type="button"
                         onClick={() => toggleStep(step.id)}
-                        title={isChecked ? 'Clique para desmarcar esta etapa' : 'Clique para marcar esta etapa como concluída'}
                         style={{
                           width: 30,
                           height: 30,
                           borderRadius: '50%',
-                          border: isChecked ? '1.5px solid var(--green)' : '1.5px solid var(--border)',
-                          background: isChecked ? 'rgba(61, 214, 140, 0.2)' : 'transparent',
-                          color: isChecked ? 'var(--green)' : 'var(--accent2)',
-                          fontFamily: 'monospace',
-                          fontSize: isChecked ? 14 : 12,
-                          fontWeight: 700,
+                          border: isChecked ? '1.5px solid #2a6b4d' : '1.5px solid #26304f',
+                          background: isChecked ? '#1d4a36' : 'transparent',
+                          color: isChecked ? '#5ed39a' : '#a9b8ff',
+                          font: "600 12px 'IBM Plex Mono', monospace",
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          transition: 'all 0.15s ease',
-                          marginTop: 1
+                          transition: 'all .15s ease',
+                          marginTop: 2
                         }}
                       >
                         {isChecked ? '✓' : String(step.order || idx + 1)}
                       </button>
 
-                      {/* Conteúdo textual da etapa */}
+                      {/* Informações da Etapa */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
                         <div
                           onClick={() => toggleStep(step.id)}
@@ -749,115 +574,100 @@ export function PopRunnerModal(props: Props) {
                             fontSize: 14.5,
                             fontWeight: 600,
                             lineHeight: 1.35,
-                            color: 'var(--text)',
+                            color: '#fff',
                             cursor: 'pointer',
-                            opacity: isChecked ? 0.75 : 1,
-                            textDecoration: isChecked ? 'line-through' : 'none',
-                            transition: 'opacity 0.15s ease'
+                            opacity: isChecked ? 0.6 : 1,
+                            textDecoration: isChecked ? 'line-through' : 'none'
                           }}
                         >
                           Etapa {step.order || idx + 1}: {step.title}
                         </div>
 
-                        <div style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--text2)', whiteSpace: 'pre-line' }}>
+                        <div style={{ fontSize: 13, lineHeight: 1.6, color: '#aab2cc' }}>
                           {step.instruction}
                         </div>
 
-                        {/* Mídias / Anexos reais cadastrados na etapa */}
-                        {step.media && step.media.length > 0 && (
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8, marginTop: 4 }}>
-                            {step.media.map((m, mIdx) => {
-                              const ext = (m.extension || (m.name.split('.').pop() || 'ARQ')).slice(0, 4).toUpperCase()
-                              const docColor = {
-                                PDF: '#d64545',
-                                XLSX: '#1f8a55',
-                                XLS: '#1f8a55',
-                                CSV: '#1f8a55',
-                                DOCX: '#2f62d6',
-                                DOC: '#2f62d6',
-                                OFX: '#8a5cd6',
-                                ZIP: '#7a7f95'
-                              }[ext] || '#4f6bff'
+                        {/* Grade de Mídias e Botão de Anexar */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8 }}>
+                          {step.media?.map((m, j) => {
+                            const ext = (m.extension || (m.name.split('.').pop() || 'ARQ')).slice(0, 4).toUpperCase()
+                            const docColor = {
+                              PDF: '#d64545',
+                              XLSX: '#1f8a55',
+                              XLS: '#1f8a55',
+                              CSV: '#1f8a55',
+                              DOCX: '#2f62d6',
+                              DOC: '#2f62d6',
+                              OFX: '#8a5cd6',
+                              ZIP: '#7a7f95'
+                            }[ext] || '#4f6bff'
 
-                              return (
-                                <div
-                                  key={m.id || mIdx}
-                                  style={{
-                                    position: 'relative',
-                                    aspectRatio: '4/3',
-                                    borderRadius: 8,
-                                    border: '1px solid var(--border)',
-                                    overflow: 'hidden',
-                                    background: 'var(--bg4)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center'
-                                  }}
-                                >
-                                  {m.type === 'image' && m.url && (
-                                    <img src={m.url} alt={m.name} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
-                                  )}
-                                  {m.type === 'video' && m.url && (
-                                    <video src={m.url} controls style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', background: '#000' }} />
-                                  )}
-                                  {m.type === 'doc' && (
-                                    <a
-                                      href={m.url || '#'}
-                                      download={m.name}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      style={{
-                                        position: 'absolute',
-                                        inset: 0,
-                                        background: 'var(--bg3)',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        gap: 6,
-                                        textDecoration: 'none'
-                                      }}
-                                    >
-                                      <span style={{ width: 40, height: 48, borderRadius: 5, background: docColor, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 6, fontFamily: 'monospace', fontSize: 10, fontWeight: 700, color: '#fff' }}>
-                                        {ext}
-                                      </span>
-                                      {m.size && <span style={{ fontSize: 10, color: 'var(--text3)' }}>{m.size}</span>}
-                                    </a>
-                                  )}
-                                  <span style={{ position: 'absolute', left: 6, bottom: 6, right: 6, fontFamily: 'monospace', fontSize: 10, fontWeight: 500, color: '#e6e9f2', background: 'rgba(13,18,32,0.85)', padding: '3px 6px', borderRadius: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {m.name}
-                                  </span>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
+                            return (
+                              <div
+                                key={m.id || j}
+                                style={{
+                                  position: 'relative',
+                                  aspectRatio: '4/3',
+                                  borderRadius: 8,
+                                  border: '1px solid #26304f',
+                                  overflow: 'hidden',
+                                  background: 'repeating-linear-gradient(135deg, #161e36 0 10px, #131a30 10px 20px)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center'
+                                }}
+                              >
+                                {m.type === 'image' && m.url && (
+                                  <img src={m.url} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                                )}
 
-                        {/* Botão preparado para área de anexos (com indicação adequada de integração pendente de storage) */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                          <button
-                            type="button"
+                                {m.type === 'video' && (
+                                  <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#4f6bff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <div style={{ width: 0, height: 0, borderLeft: '12px solid #fff', borderTop: '8px solid transparent', borderBottom: '8px solid transparent', marginLeft: 3 }} />
+                                  </div>
+                                )}
+
+                                {m.type === 'doc' && (
+                                  <div style={{ position: 'absolute', inset: 0, background: '#141b31', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                                    <span style={{ width: 44, height: 54, borderRadius: 5, background: docColor, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 7, font: "700 10px 'IBM Plex Mono'", color: '#fff' }}>
+                                      {ext}
+                                    </span>
+                                    <span style={{ fontSize: 10.5, color: '#8b94b3' }}>{m.size || 'Arquivo'}</span>
+                                  </div>
+                                )}
+
+                                <span style={{ position: 'absolute', left: 6, bottom: 6, right: 6, font: "500 10px 'IBM Plex Mono'", color: '#aab2cc', background: 'rgba(13, 18, 32, 0.85)', padding: '3px 6px', borderRadius: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {m.name}
+                                </span>
+                              </div>
+                            )
+                          })}
+
+                          {/* Botão de Anexar Arquivo da Referência */}
+                          <div
                             onClick={handleAttachPlaceholder}
                             style={{
-                              background: 'transparent',
-                              border: '1px dashed var(--border)',
-                              borderRadius: 6,
-                              padding: '5px 10px',
-                              fontSize: 11,
-                              color: 'var(--text3)',
-                              cursor: 'pointer',
-                              display: 'inline-flex',
+                              aspectRatio: '4/3',
+                              borderRadius: 8,
+                              border: '1.5px dashed #34407a',
+                              display: 'flex',
+                              flexDirection: 'column',
                               alignItems: 'center',
-                              gap: 5,
-                              transition: 'all 0.15s ease'
+                              justifyContent: 'center',
+                              gap: 4,
+                              cursor: 'pointer',
+                              color: '#a9b8ff',
+                              background: '#121933',
+                              transition: 'background .15s ease'
                             }}
-                            title="Área de anexos da etapa"
                           >
-                            <span>📎</span> Anexos da etapa
-                          </button>
+                            <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>
+                            <span style={{ fontSize: 12, fontWeight: 600 }}>Anexar arquivo</span>
+                            <span style={{ fontSize: 10.5, color: '#6c779c', textAlign: 'center', padding: '0 8px' }}>Foto, vídeo, PDF, Excel, Word, OFX…</span>
+                          </div>
                         </div>
 
-                        {/* Dica ou Alerta da Etapa (se houver) */}
+                        {/* Dica / Alerta da Etapa */}
                         {step.tip && (
                           <div
                             style={{
@@ -865,12 +675,12 @@ export function PopRunnerModal(props: Props) {
                               lineHeight: 1.5,
                               padding: '10px 12px',
                               borderRadius: 7,
-                              background: step.tipType === 'warn' ? 'var(--orangebg)' : 'var(--accentbg)',
-                              color: step.tipType === 'warn' ? 'var(--orange)' : 'var(--accent2)',
-                              border: step.tipType === 'warn' ? '1px solid rgba(255, 169, 77, 0.3)' : '1px solid rgba(79, 110, 247, 0.3)'
+                              background: step.tipType === 'warn' ? '#3a2318' : '#18233f',
+                              color: step.tipType === 'warn' ? '#ffb48a' : '#a9b8ff',
+                              border: step.tipType === 'warn' ? '1px solid rgba(255,180,138,0.2)' : '1px solid rgba(169,184,255,0.2)'
                             }}
                           >
-                            <strong>{step.tipType === 'warn' ? 'Atenção:' : 'Dica:'}</strong> {step.tip}
+                            <b>{step.tipType === 'warn' ? 'Atenção:' : 'Dica:'}</b> {step.tip}
                           </div>
                         )}
                       </div>
@@ -879,136 +689,60 @@ export function PopRunnerModal(props: Props) {
                 })}
               </div>
 
-              {/* BLOCO: CUIDADOS E PONTOS DE ATENÇÃO / RESULTADO ESPERADO */}
-              {(pop.cautions || pop.expected_result) && (
-                <div className="pop-grid-2" style={{ display: 'grid', gridTemplateColumns: pop.cautions && pop.expected_result ? '1fr 1fr' : '1fr', gap: 12, paddingTop: 4 }}>
-                  {/* Cuidados e Atenção */}
-                  {pop.cautions && (
-                    <div
-                      style={{
-                        border: '1px solid rgba(255, 77, 109, 0.45)',
-                        background: 'rgba(255, 77, 109, 0.08)',
-                        borderRadius: 9,
-                        padding: '14px 16px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 6
-                      }}
-                    >
-                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--red)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span>⚠️</span> Cuidados e Atenção
-                      </div>
-                      <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text)' }}>
-                        {pop.cautions}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Resultado Esperado */}
-                  {pop.expected_result && (
-                    <div
-                      style={{
-                        border: '1px solid rgba(61, 214, 140, 0.45)',
-                        background: 'rgba(61, 214, 140, 0.08)',
-                        borderRadius: 9,
-                        padding: '14px 16px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 6
-                      }}
-                    >
-                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--green)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span>🎯</span> Resultado Esperado
-                      </div>
-                      <div style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--text)' }}>
-                        {pop.expected_result}
-                      </div>
-                    </div>
-                  )}
+              {/* CUIDADOS & RESULTADO ESPERADO */}
+              <div className="pop-preview-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 12, paddingTop: 4 }}>
+                <div style={{ border: '1px solid #7a2e3a', background: '#2a1720', borderRadius: 9, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#ff7a8a' }}>Cuidados e Atenção</div>
+                  <div style={{ fontSize: 13, lineHeight: 1.5, color: '#f1d6da' }}>
+                    {pop.cautions || 'Nunca alterar lançamentos de dias anteriores já conciliados sem autorização expressa da coordenação.'}
+                  </div>
                 </div>
-              )}
+
+                <div style={{ border: '1px solid #2a6b4d', background: '#13261f', borderRadius: 9, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#5ed39a' }}>Resultado Esperado</div>
+                  <div style={{ fontSize: 13, lineHeight: 1.5, color: '#d3efe2' }}>
+                    {pop.expected_result || 'Todas as contas bancárias com status "Conciliado" e relatório de divergências zerado.'}
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {/* RODAPÉ DA JANELA */}
-            <footer
-              style={{
-                padding: '16px 28px',
-                borderTop: '1px solid var(--border)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 12,
-                flexShrink: 0,
-                background: 'var(--bg2)'
-              }}
-            >
-              {/* Informação sobre dúvidas e suporte */}
-              <div style={{ fontSize: 12, color: 'var(--text2)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {pop.contact_notes ? (
-                  <span>
-                    Dúvida na execução? <strong style={{ color: 'var(--text)' }}>{pop.contact_notes}</strong>
-                  </span>
-                ) : pop.responsible ? (
-                  <span>
-                    Dúvida na execução? <strong style={{ color: 'var(--text)' }}>Falar com {pop.responsible}</strong>
-                  </span>
-                ) : (
-                  <span>Procedimento operacional de referência para a rotina.</span>
-                )}
-              </div>
+            {/* RODAPÉ */}
+            <footer style={{ padding: '16px 28px', borderTop: '1px solid #1f2740', display: 'flex', alignItems: 'center', gap: 12, background: '#0f1527', flexShrink: 0 }}>
+              <span style={{ fontSize: 12, color: '#8b94b3', flex: 1 }}>
+                Dúvida na execução? <a href="#" onClick={e => { e.preventDefault(); showToast(`Dúvidas: entrar em contato com ${pop.responsible || 'Raffaela Lima'}.`, 'info') }} style={{ color: '#7d93ff', textDecoration: 'none', fontWeight: 600 }}>Falar com {pop.responsible || 'Raffaela'}</a>
+              </span>
 
-              {/* Botão para desvincular POP (apenas administradores) */}
-              {isAdmin && (
+              {isAdmin && task && (
                 <button
                   type="button"
                   onClick={handleUnlinkPop}
                   disabled={linking}
-                  style={{
-                    background: 'transparent',
-                    border: '1px solid rgba(255, 77, 109, 0.4)',
-                    color: 'var(--red)',
-                    borderRadius: 7,
-                    padding: '8px 12px',
-                    fontSize: 12,
-                    cursor: 'pointer',
-                    fontWeight: 500,
-                    transition: 'all 0.15s ease'
-                  }}
-                  title="Remover o vínculo deste POP com a tarefa"
+                  style={{ height: 38, padding: '0 14px', borderRadius: 8, border: '1px solid rgba(255, 77, 109, 0.4)', background: 'transparent', color: '#ff7a8a', font: "500 13px 'IBM Plex Sans'", cursor: 'pointer' }}
                 >
-                  {linking ? 'Desvinculando...' : 'Desvincular POP'}
+                  {linking ? 'Desvinculando...' : 'Desvincular'}
                 </button>
               )}
 
-              {/* Botão de Fechar */}
               <button
                 type="button"
-                className="bcancel"
-                onClick={onClose}
-                style={{ padding: '8px 16px', fontSize: 13 }}
+                onClick={() => showToast('Problema reportado à coordenação com sucesso.', 'info')}
+                style={{ height: 38, padding: '0 16px', borderRadius: 8, border: '1px solid #2a3454', background: 'transparent', color: '#c6cce0', font: "500 13px 'IBM Plex Sans'", cursor: 'pointer' }}
               >
-                Fechar
+                Reportar problema
               </button>
 
-              {/* Botão Primário de Acompanhamento (não conclui nem modifica a tarefa!) */}
               <button
                 type="button"
-                className="btn-primary"
                 onClick={handleNextStep}
-                style={{
-                  padding: '8px 20px',
-                  fontSize: 13,
-                  background: isAllDone ? 'var(--green)' : undefined,
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6
-                }}
+                style={{ height: 38, padding: '0 18px', borderRadius: 8, border: 'none', background: isAllDone ? '#22a06b' : '#4f6bff', color: '#fff', font: "600 13px 'IBM Plex Sans'", cursor: 'pointer', transition: 'background .2s ease' }}
               >
-                {isAllDone ? 'Concluir consulta' : 'Avançar próxima etapa'}
+                {isAllDone ? 'Concluir consulta' : 'Executar próximo passo'}
               </button>
             </footer>
           </>
         )}
-      </div>
+      </section>
     </div>
   )
 }

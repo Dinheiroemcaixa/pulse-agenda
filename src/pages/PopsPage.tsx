@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Pop, PopStep, User } from '../types'
 import { savePopApi, togglePopActiveApi, deletePopApi } from '../lib/popsApi'
 import { genId } from '../lib/utils'
+import { PopRunnerModal } from '../components/PopRunnerModal'
 
 interface Props {
   pops: Pop[]
@@ -481,91 +482,16 @@ export function PopsPage({
         </div>
       )}
 
-      {/* MODAL DE VISUALIZAÇÃO DE DETALHES DO POP */}
+      {/* MODAL DE VISUALIZAÇÃO DE DETALHES DO POP — UNIFICADO COM PopRunnerModal */}
       {viewingPop && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setViewingPop(null)}>
-          <div className="modal" style={{ width: 680, maxWidth: '96%', maxHeight: '92vh' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: 14, marginBottom: 16 }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <span style={{ fontSize: 18 }}>📘</span>
-                  <span style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{viewingPop.title}</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: 'var(--accentbg)', color: 'var(--accent)' }}>
-                    v{viewingPop.version || 1}
-                  </span>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text2)' }}>
-                  Responsável: <strong style={{ color: 'var(--text)' }}>{viewingPop.responsible || 'Equipe'}</strong>
-                  {viewingPop.contact_notes && <span> • Dúvidas: {viewingPop.contact_notes}</span>}
-                </div>
-              </div>
-              <button onClick={() => setViewingPop(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text3)', fontSize: 18, cursor: 'pointer' }}>✕</button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, background: 'var(--bg3)', padding: 12, borderRadius: 8 }}>
-                <div>
-                  <span className="label" style={{ marginBottom: 2 }}>🎯 Objetivo</span>
-                  <div style={{ fontSize: 12.5, color: 'var(--text)' }}>{viewingPop.objective}</div>
-                </div>
-                <div>
-                  <span className="label" style={{ marginBottom: 2 }}>⏱ Quando Utilizar</span>
-                  <div style={{ fontSize: 12.5, color: 'var(--text)' }}>{viewingPop.when_to_use}</div>
-                </div>
-              </div>
-
-              {viewingPop.prerequisites && (
-                <div style={{ background: 'var(--bg3)', padding: 12, borderRadius: 8 }}>
-                  <span className="label" style={{ marginBottom: 2 }}>📦 Pré-requisitos & Materiais</span>
-                  <div style={{ fontSize: 12.5, color: 'var(--text2)' }}>{viewingPop.prerequisites}</div>
-                </div>
-              )}
-
-              <div>
-                <span className="label" style={{ marginBottom: 6 }}>📋 Etapas Numeradas ({viewingPop.steps?.length || 0})</span>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {viewingPop.steps?.map((step, idx) => (
-                    <div key={step.id || idx} style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
-                      <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--accent)', marginBottom: 2 }}>
-                        ETAPA {step.order || idx + 1}: {step.title}
-                      </div>
-                      <div style={{ fontSize: 12.5, color: 'var(--text2)', lineHeight: 1.45 }}>
-                        {step.instruction}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {viewingPop.cautions && (
-                <div style={{ background: 'var(--redbg)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--red)', color: 'var(--red)' }}>
-                  <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 2 }}>⚠ Cuidados e Atenção</div>
-                  <div style={{ fontSize: 12, color: 'var(--text)' }}>{viewingPop.cautions}</div>
-                </div>
-              )}
-
-              {viewingPop.expected_result && (
-                <div style={{ background: 'var(--greenbg)', padding: '10px 14px', borderRadius: 8, border: '1px solid var(--green)', color: 'var(--green)' }}>
-                  <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 2 }}>🎯 Resultado Esperado</div>
-                  <div style={{ fontSize: 12, color: 'var(--text)' }}>{viewingPop.expected_result}</div>
-                </div>
-              )}
-            </div>
-
-            <div className="modal-footer" style={{ marginTop: 14 }}>
-              {isAdmin && (
-                <button
-                  className="fb"
-                  onClick={() => { const p = viewingPop; setViewingPop(null); openEditPop(p); }}
-                  style={{ marginRight: 'auto', background: 'var(--bg3)', padding: '7px 14px', fontSize: 12 }}
-                >
-                  ✎ Editar este POP
-                </button>
-              )}
-              <button className="btn-primary" onClick={() => setViewingPop(null)}>Fechar</button>
-            </div>
-          </div>
-        </div>
+        <PopRunnerModal
+          pop={viewingPop}
+          allPops={pops}
+          isAdmin={isAdmin}
+          onClose={() => setViewingPop(null)}
+          onOpenPopEdit={openEditPop}
+          showToast={showToast}
+        />
       )}
 
       {/* CONFIRMAÇÃO DE EXCLUSÃO */}

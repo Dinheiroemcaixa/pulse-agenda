@@ -14,15 +14,56 @@ const DEFAULT_POPS: Pop[] = [
     when_to_use: 'Diariamente ao final do expediente ou no início do dia subsequente para conferência do saldo.',
     prerequisites: 'Acesso ao internet banking dos clientes, sistema ERP e extrato consolidado OFX/PDF.',
     steps: [
-      { id: 's1', order: 1, title: 'Baixar Extratos Bancários', instruction: 'Acessar a conta bancária de cada cliente e exportar o extrato diário em formato PDF ou OFX.' },
-      { id: 's2', order: 2, title: 'Conferir Lançamentos no ERP', instruction: 'Verificar se todas as despesas e receitas lançadas no sistema correspondem exatamente aos débitos e créditos do extrato.' },
-      { id: 's3', order: 3, title: 'Identificar Pendências e DDA', instruction: 'Separar quaisquer lançamentos não identificados e consultar o responsável ou cliente pelo canal interno.' },
-      { id: 's4', order: 4, title: 'Validar Saldo Final', instruction: 'Garantir que o saldo final do sistema coincida até os centavos com o saldo real da conta.' }
+      {
+        id: 's1',
+        order: 1,
+        title: 'Baixar Extratos Bancários',
+        instruction: 'Acessar a conta bancária de cada cliente e exportar o extrato diário em formato PDF ou OFX.',
+        media: [
+          { name: 'Exportar extrato OFX · 1:42', type: 'video' },
+          { name: 'Menu Extrato', type: 'image' },
+          { name: 'Lista de contas por cliente.xlsx', type: 'doc', size: '48 KB', extension: 'XLSX' }
+        ],
+        tip: 'Segunda-feira: exporte o período de sexta a domingo.',
+        tipType: 'info'
+      },
+      {
+        id: 's2',
+        order: 2,
+        title: 'Conferir Lançamentos no ERP',
+        instruction: 'Verificar se todas as despesas e receitas lançadas no sistema correspondem exatamente aos débitos e créditos do extrato.',
+        media: [
+          { name: 'Tela de conciliação ERP', type: 'image' },
+          { name: 'Sugestões de match', type: 'image' }
+        ]
+      },
+      {
+        id: 's3',
+        order: 3,
+        title: 'Identificar Pendências e DDA',
+        instruction: 'Separar quaisquer lançamentos não identificados e consultar o responsável ou cliente pelo canal interno.',
+        media: [
+          { name: 'Consultar o DDA · 2:10', type: 'video' }
+        ]
+      },
+      {
+        id: 's4',
+        order: 4,
+        title: 'Validar Saldo Final',
+        instruction: 'Garantir que o saldo final do sistema coincida até os centavos com o saldo real da conta.',
+        media: [
+          { name: 'Saldo ERP x extrato', type: 'image' },
+          { name: 'Modelo relatório divergências.pdf', type: 'doc', size: '212 KB', extension: 'PDF' }
+        ],
+        tip: 'Se houver diferença, não feche a tarefa — registre a divergência.',
+        tipType: 'warn'
+      }
     ],
     cautions: 'Nunca alterar lançamentos de dias anteriores já conciliados sem autorização expressa da coordenação.',
     expected_result: 'Todas as contas bancárias com status "Conciliado" e relatório de divergências zerado.',
-    contact_notes: 'Dúvidas falar com a Gestora Financeira Raffaela Lima.',
+    contact_notes: 'Gestora Financeira Raffaela Lima',
     responsible: 'Raffaela Lima',
+    estimated_time: '30 min',
     active: true,
     version: 1,
     created_at: new Date().toISOString(),
@@ -41,8 +82,9 @@ const DEFAULT_POPS: Pop[] = [
     ],
     cautions: 'Conferir atentamente os dígitos da chave PIX e data de débito para não antecipar saídas indevidamente.',
     expected_result: 'Pagamentos programados com comprovante arquivado e sem encargos por atraso.',
-    contact_notes: 'Área de Tesouraria / BPO Financeiro.',
+    contact_notes: 'Área de Tesouraria / BPO Financeiro',
     responsible: 'Raffaela Lima',
+    estimated_time: '15 min',
     active: true,
     version: 1,
     created_at: new Date().toISOString(),
@@ -229,7 +271,18 @@ export function resolveTaskPopId(taskOrId: Task | string | undefined | null, loc
   const links = localLinks || getLocalTaskPopLinks()
   if (typeof taskOrId === 'object') {
     if (taskOrId.pop_id) return taskOrId.pop_id
-    return links[taskOrId.id] || (taskOrId.descricao ? links[taskOrId.descricao.trim()] : undefined)
+    if (links[taskOrId.id]) return links[taskOrId.id]
+    if (taskOrId.descricao && links[taskOrId.descricao.trim()]) return links[taskOrId.descricao.trim()]
+
+    const desc = (taskOrId.descricao || '').toLowerCase()
+    if (desc.includes('fechamento') || desc.includes('caixa') || desc.includes('concili') || desc.includes('extrato') || desc.includes('banco') || desc.includes('dda') || desc.includes('saldo')) {
+      return 'pop_fechamento_caixa'
+    }
+    if (desc.includes('pagamento') || desc.includes('pix') || desc.includes('ted') || desc.includes('boleto') || desc.includes('agendamento')) {
+      return 'pop_agendamento_pix_ted'
+    }
+    return undefined
   }
-  return links[taskOrId] || undefined
+  if (links[taskOrId]) return links[taskOrId]
+  return undefined
 }
