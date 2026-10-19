@@ -87,3 +87,20 @@ O arquivo [20261016160000_access_control_and_settings.sql](file:///c:/Users/BPO0
 - Restaurada exatamente a estrutura de **3 filhos diretos** dentro de `.hist-card` (`.hist-card-check`, `.hist-card-body`, `.hist-card-right`), mantendo o alinhamento vertical em `0px` de diferença entre as 3 colunas (`gridTemplateColumns: 32px 1fr auto`).
 - O próprio círculo `.hist-card-check` (coluna 1 de `32px`) atua como seletor clicável da tarefa: exibe `!` idêntico ao original quando desmarcado e um ícone SVG branco nítido sobre fundo `var(--red)` quando selecionado.
 - Removido o banner extra de dentro de `.content`; os botões compactos **Selecionar todos** e **Excluir selecionadas (N)** foram integrados diretamente à `.topbar` utilizando as classes nativas `.fg` e `.fb` do [`src/index.css`](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/index.css#L84-L87), e o modal de confirmação utiliza `.modal.confirm-modal`, `.confirm-title`, `.confirm-body`, `.modal-footer` e `.bcancel`.
+
+---
+
+## 8. Recuperação Integral das Ações em Massa na Página Atrasadas (`modernizacao-v3`)
+
+### Causa da Perda Funcional em `5babc5b` e Solução Aplicada
+1. **Diagnóstico (`2bf1121` vs `5babc5b`)**:
+   - No commit `5babc5b`, a restauração das 3 colunas de `.hist-card` removeu o `<input type="checkbox">` explícito de cada tarefa e manteve apenas **Selecionar todos** e **Excluir selecionadas**, sem disponibilizar as ações **Concluir selecionadas** e **Concluir todas** e ocultando os botões de ação quando nenhuma tarefa estava marcada.
+2. **Solução em [`src/pages/AtrasadasPage.tsx`](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/pages/AtrasadasPage.tsx) e [`src/hooks/useAppData.ts`](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/hooks/useAppData.ts)**:
+   - **Estrutura de 3 Filhos Diretos Preservada**: `.hist-card` permanece estritamente com 3 filhos diretos (`.hist-card-check`, `.hist-card-body`, `.hist-card-right`, `0px` de diferença vertical entre colunas). O `<input type="checkbox">` individual foi posicionado dentro de `.hist-card-title` (filho de `.hist-card-body`), mantendo o badge `!` original intacto na 1ª coluna.
+   - **Quatro Controles em Massa na `.topbar`**:
+     1. **Selecionar todas (`☐ Selecionar todas (N)`) / Desmarcar todas (`☑ Desmarcar todas (N)`)**: seleciona ou desmarca todas as tarefas atrasadas exibidas pelos filtros ativos (`scope` e `search`).
+     2. **Concluir selecionadas (`✓ Concluir selecionadas (N)`)**: conclui exclusivamente as tarefas marcadas via `executeBulkCompleteAtrasadas`, atualizando a lista, limpando a seleção das tarefas concluídas e exibindo feedback claro de sucesso ou falha parcial/total.
+     3. **Concluir todas (`✓✓ Concluir todas (N)`)**: seleciona todas as tarefas atrasadas exibidas e abre modal de confirmação explícita (`formatBulkCompleteConfirmationMessage`) informando a quantidade e os filtros ativos antes de executar.
+     4. **Excluir selecionadas (`🗑 Excluir selecionadas (N)`)**: abre modal de confirmação (`formatBulkDeleteConfirmationMessage`) antes de excluir exclusivamente as tarefas marcadas via `executeBulkDeleteAtrasadas`.
+   - **Consistência em Lote no Hook (`completeTask`)**: [`completeTask`](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/hooks/useAppData.ts#L371-L492) em `useAppData.ts` passou a ler e atualizar `tasksRef.current` e `expandedTasksRef.current` de forma síncrona a cada iteração e verificar `{ error }` nas chamadas ao Supabase, sem alterar nenhuma regra de recorrência.
+

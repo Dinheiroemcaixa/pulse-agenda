@@ -365,19 +365,27 @@ export function useAppData(currentUser?: User | null) {
     return true
   }, [currentUser, tasks])
 
+  const tasksRef = useRef<Task[]>(tasks)
+  tasksRef.current = tasks
+  const expandedTasksRef = useRef<Task[]>(expandedTasks)
+  expandedTasksRef.current = expandedTasks
+
   // ── COMPLETE TASK ─────────────────────────────────────────
   const completeTask = useCallback(async (id: string, fromAtrasadas = false): Promise<boolean> => {
     if (!currentUser || !isUserActive(currentUser)) return false
     const isVirtual = id.startsWith('virtual_')
 
+    const liveTasks = tasksRef.current
+    const liveExpanded = expandedTasksRef.current
+
     // Busca a tarefa de acordo com a origem
     let t: Task | undefined
     if (isVirtual) {
-      t = expandedTasks.find(x => x.id === id)
+      t = liveExpanded.find(x => x.id === id)
     } else if (fromAtrasadas) {
-      t = expandedTasks.find(x => x.id === id) || tasks.find(x => x.id === id)
+      t = liveExpanded.find(x => x.id === id) || liveTasks.find(x => x.id === id)
     } else {
-      t = tasks.find(x => x.id === id) || expandedTasks.find(x => x.id === id)
+      t = liveTasks.find(x => x.id === id) || liveExpanded.find(x => x.id === id)
     }
 
     if (!t || !canAccessTaskRecord(currentUser, t)) return false
@@ -419,12 +427,14 @@ export function useAppData(currentUser?: User | null) {
         completed_at: completedAt,
       }
       const { error } = await sb.from('tasks').insert(completedPayload)
-      if (!error) {
-        // Atualiza estado local para remover virtual imediatamente das pendências
-        setTasks(prev => [...prev, completedPayload])
-      } else {
+      if (error) {
         console.warn('Aviso: não materializou virtual como concluída:', error)
+        return false
       }
+      // Atualiza estado local para remover virtual imediatamente das pendências
+      const nextTasks = [...tasksRef.current, completedPayload]
+      tasksRef.current = nextTasks
+      setTasks(nextTasks)
 
     } else if ((t as any).recur_group_id && t.recur && t.recur !== 'none') {
       // ── TAREFA MESTRE RECORRENTE ────────────────────────────
@@ -439,8 +449,11 @@ export function useAppData(currentUser?: User | null) {
         completed_at: completedAt,
         isVirtual: undefined,
       }
-      await sb.from('tasks').insert(completedRecord)
-      setTasks(prev => [...prev, completedRecord])
+      const { error: insErr } = await sb.from('tasks').insert(completedRecord)
+      if (insErr) {
+        console.error('Erro ao inserir registro concluído recorrente:', insErr)
+        return false
+      }
 
       // Avança o mestre para a próxima ocorrência
       const baseDate = originalDate < getTodayStr() ? getTodayStr() : originalDate
@@ -451,18 +464,36 @@ export function useAppData(currentUser?: User | null) {
         baseDate
       )
       if (nextDate) {
-        await sb.from('tasks').update({ date: nextDate }).eq('id', id)
-        setTasks(prev => prev.map(x => x.id === id ? { ...x, date: nextDate } : x))
+        const { error: updErr } = await sb.from('tasks').update({ date: nextDate }).eq('id', id)
+        if (updErr) {
+          console.error('Erro ao avançar tarefa mestre recorrente:', updErr)
+          return false
+        }
+        const nextTasks = [...tasksRef.current, completedRecord].map(x => x.id === id ? { ...x, date: nextDate } : x)
+        tasksRef.current = nextTasks
+        setTasks(nextTasks)
       } else {
         // Série esgotada — sem mais ocorrências futuras
-        await sb.from('tasks').delete().eq('id', id)
-        setTasks(prev => prev.filter(x => x.id !== id))
+        const { error: delErr } = await sb.from('tasks').delete().eq('id', id)
+        if (delErr) {
+          console.error('Erro ao remover mestre de série esgotada:', delErr)
+          return false
+        }
+        const nextTasks = [...tasksRef.current, completedRecord].filter(x => x.id !== id)
+        tasksRef.current = nextTasks
+        setTasks(nextTasks)
       }
 
     } else {
       // Tarefa não-recorrente comum
-      await sb.from('tasks').delete().eq('id', id)
-      setTasks(prev => prev.filter(x => x.id !== id))
+      const { error: delErr } = await sb.from('tasks').delete().eq('id', id)
+      if (delErr) {
+        console.error('Erro ao remover tarefa concluída:', delErr)
+        return false
+      }
+      const nextTasks = tasksRef.current.filter(x => x.id !== id)
+      tasksRef.current = nextTasks
+      setTasks(nextTasks)
     }
 
     setHist(prev => [histItem as unknown as Task, ...prev])
@@ -569,11 +600,6 @@ export function useAppData(currentUser?: User | null) {
     setHist(prev => prev.filter(x => x.id !== histId))
     return true
   }, [currentUser, hist])
-
-  const tasksRef = useRef<Task[]>(tasks)
-  tasksRef.current = tasks
-  const expandedTasksRef = useRef<Task[]>(expandedTasks)
-  expandedTasksRef.current = expandedTasks
 
   const deleteAtrasada = useCallback(async (id: string): Promise<boolean> => {
     if (!currentUser || !isUserActive(currentUser) || !canAccessModule(currentUser, 'atrasadas')) return false
