@@ -73,3 +73,17 @@ O arquivo [20261016160000_access_control_and_settings.sql](file:///c:/Users/BPO0
   - Tratamento de erros por item e falhas parciais (`executeBulkDeleteAtrasadas`), diferenciando sucesso total, exclusão parcial e falha total, e limpando da seleção apenas os itens efetivamente excluídos.
 - [`src/hooks/useAppData.ts`](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/hooks/useAppData.ts):
   - Atualizada [`deleteAtrasada`](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/hooks/useAppData.ts#L578-L664) para retornar `Promise<boolean>` após validar `{ error }` nas operações do Supabase e sincronizar referências em lote (`tasksRef` / `expandedTasksRef`), preservando exatamente o ciclo de vida atual de tarefas comuns, recorrentes mestres e virtuais recorrentes sem alterar o histórico (`hist`).
+
+
+---
+
+## 7. Restauração do Layout Original da Página Atrasados (`modernizacao-v3`)
+
+### Diagnóstico da Causa Raiz (`git diff 4cd7ff5..2bf1121`)
+1. **Quebra do CSS Grid de 3 colunas (`.hist-card`)**: Em [`src/index.css`](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/index.css#L238), `.hist-card` é definido como `display: grid; grid-template-columns: 32px 1fr auto` para acomodar exatamente **3 elementos filhos diretos** (`.hist-card-check`, `.hist-card-body` e `.hist-card-right`). A inserção de um `<input type="checkbox">` como 4º filho direto empurrou `.hist-card-check` para a coluna `1fr`, `.hist-card-body` para a coluna `auto` e jogou `.hist-card-right` (data e botões de ação) para uma segunda linha espremida na primeira coluna de `32px`.
+2. **Variáveis e classes CSS inexistentes**: O banner extra adicionado dentro de `.content` utilizava `var(--surface)` (inexistente no tema, que usa `var(--bg2)` e `var(--bg3)`) e `btn-ghost` no modal (o tema utiliza `.bcancel` e `.modal-footer`).
+
+### Correção Aplicada em [`src/pages/AtrasadasPage.tsx`](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/pages/AtrasadasPage.tsx)
+- Restaurada exatamente a estrutura de **3 filhos diretos** dentro de `.hist-card` (`.hist-card-check`, `.hist-card-body`, `.hist-card-right`), mantendo o alinhamento vertical em `0px` de diferença entre as 3 colunas (`gridTemplateColumns: 32px 1fr auto`).
+- O próprio círculo `.hist-card-check` (coluna 1 de `32px`) atua como seletor clicável da tarefa: exibe `!` idêntico ao original quando desmarcado e um ícone SVG branco nítido sobre fundo `var(--red)` quando selecionado.
+- Removido o banner extra de dentro de `.content`; os botões compactos **Selecionar todos** e **Excluir selecionadas (N)** foram integrados diretamente à `.topbar` utilizando as classes nativas `.fg` e `.fb` do [`src/index.css`](file:///c:/Users/BPO04.LMCONTABILIDADE/Documents/Projetos/pulse-agenda/src/index.css#L84-L87), e o modal de confirmação utiliza `.modal.confirm-modal`, `.confirm-title`, `.confirm-body`, `.modal-footer` e `.bcancel`.

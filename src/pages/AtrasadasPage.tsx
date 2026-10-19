@@ -271,114 +271,39 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
             <option value="all">Toda a equipe</option>
           </select>
         )}
-      </div>
-      <div className="content">
         {list.length > 0 && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              flexWrap: 'wrap',
-              gap: 10,
-              padding: '10px 14px',
-              marginBottom: 14,
-              borderRadius: 10,
-              background: 'var(--surface)',
-              border: '1px solid var(--border)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <label
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  cursor: isBusy ? 'not-allowed' : 'pointer',
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: 'var(--text)',
-                  userSelect: 'none',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  ref={el => {
-                    if (el) el.indeterminate = someSelected
-                  }}
-                  onChange={toggleSelectAll}
-                  disabled={isBusy}
-                  style={{ width: 15, height: 15, accentColor: 'var(--red)', cursor: isBusy ? 'not-allowed' : 'pointer' }}
-                />
-                <span>
-                  Selecionar todos ({list.length} exibida{list.length !== 1 ? 's' : ''})
-                </span>
-              </label>
-
-              {activeSelectedIds.length > 0 && (
-                <>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      padding: '2px 8px',
-                      borderRadius: 999,
-                      background: 'var(--redbg)',
-                      color: 'var(--red)',
-                      border: '1px solid rgba(255, 77, 109, 0.35)',
-                    }}
-                  >
-                    {activeSelectedIds.length} selecionada{activeSelectedIds.length !== 1 ? 's' : ''}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => !isBusy && setSelectedIds([])}
-                    disabled={isBusy}
-                    style={{
-                      background: 'transparent',
-                      border: 'none',
-                      color: 'var(--text2)',
-                      fontSize: 11,
-                      textDecoration: 'underline',
-                      cursor: isBusy ? 'not-allowed' : 'pointer',
-                      padding: '2px 4px',
-                    }}
-                  >
-                    Desmarcar todas
-                  </button>
-                </>
-              )}
-            </div>
-
+          <div className="fg" style={{ marginLeft: 'auto', alignItems: 'center' }}>
             <button
               type="button"
-              disabled={activeSelectedIds.length === 0 || isBusy}
-              onClick={() => {
-                if (activeSelectedIds.length > 0 && !isBusy) {
-                  setConfirmBulkOpen(true)
-                }
-              }}
-              style={{
-                background: activeSelectedIds.length > 0 ? 'var(--redbg)' : 'var(--surface2, rgba(255,255,255,0.04))',
-                border: `1px solid ${activeSelectedIds.length > 0 ? 'var(--red)' : 'var(--border)'}`,
-                borderRadius: 7,
-                padding: '6px 12px',
-                color: activeSelectedIds.length > 0 ? 'var(--red)' : 'var(--text3)',
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: activeSelectedIds.length > 0 && !isBusy ? 'pointer' : 'not-allowed',
-                opacity: activeSelectedIds.length > 0 && !isBusy ? 1 : 0.6,
-                transition: 'all 0.15s ease',
-              }}
+              className={`fb ${allSelected ? 'active' : ''}`}
+              onClick={toggleSelectAll}
+              disabled={isBusy}
+              title="Selecionar ou desmarcar todas as tarefas exibidas"
             >
-              {isBulkDeleting && bulkProgress
-                ? `⏳ Excluindo (${bulkProgress.done}/${bulkProgress.total})...`
-                : `🗑 Excluir selecionadas (${activeSelectedIds.length})`}
+              {allSelected ? `☑ Desmarcar todos (${list.length})` : someSelected ? `⊟ Selecionar todos (${activeSelectedIds.length}/${list.length})` : `☐ Selecionar todos (${list.length})`}
             </button>
+            {activeSelectedIds.length > 0 && (
+              <button
+                type="button"
+                className="fb"
+                disabled={isBusy}
+                onClick={() => !isBusy && setConfirmBulkOpen(true)}
+                style={{
+                  background: 'var(--redbg)',
+                  borderColor: 'var(--red)',
+                  color: 'var(--red)',
+                  fontWeight: 700,
+                }}
+              >
+                {isBulkDeleting && bulkProgress
+                  ? `⏳ Excluindo (${bulkProgress.done}/${bulkProgress.total})...`
+                  : `🗑 Excluir selecionadas (${activeSelectedIds.length})`}
+              </button>
+            )}
           </div>
         )}
-
+      </div>
+      <div className="content">
         {list.length === 0 ? (
           <div className="es"><div className="ei">🎉</div><div className="et">Nenhuma tarefa atrasada!</div><div style={{ color: 'var(--text3)', fontSize: 13 }}>Tudo em dia por aqui.</div></div>
         ) : sortedDates.map(dateKey => {
@@ -399,25 +324,30 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
                     className="hist-card"
                     style={{
                       borderLeft: `3px solid ${a.recur && a.recur !== 'none' ? 'var(--orange)' : 'var(--red)'}`,
-                      background: isChecked ? 'rgba(255, 77, 109, 0.06)' : undefined,
+                      boxShadow: isChecked ? '0 0 0 1px var(--red)' : undefined,
                     }}
                   >
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={() => toggleSelectOne(a.id)}
-                      disabled={isBusy}
+                    <div
+                      className="hist-card-check"
+                      role="checkbox"
+                      aria-checked={isChecked}
                       aria-label={`Selecionar tarefa ${a.descricao}`}
+                      title={isChecked ? 'Clique para desmarcar' : 'Clique para selecionar'}
+                      onClick={() => toggleSelectOne(a.id)}
                       style={{
-                        width: 15,
-                        height: 15,
-                        marginRight: 6,
-                        accentColor: 'var(--red)',
+                        background: isChecked ? 'var(--red)' : 'var(--redbg)',
+                        color: isChecked ? '#fff' : 'var(--red)',
+                        border: '1.5px solid var(--red)',
                         cursor: isBusy ? 'not-allowed' : 'pointer',
-                        flexShrink: 0,
+                        userSelect: 'none',
                       }}
-                    />
-                    <div className="hist-card-check" style={{ background: 'var(--redbg)', color: 'var(--red)', border: '1.5px solid var(--red)', cursor: 'default' }}>!</div>
+                    >
+                      {isChecked ? (
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ffffff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      ) : '!'}
+                    </div>
                     <div className="hist-card-body">
                       <div className="hist-card-title">
                         {a.recur && a.recur !== 'none' && <span style={{ marginRight: 5, opacity: 0.7 }}>🔁</span>}
@@ -487,17 +417,17 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
             }
           }}
         >
-          <div className="modal" style={{ width: 440, maxWidth: '94vw' }}>
-            <div className="modal-title" style={{ color: 'var(--red)' }}>
+          <div className="modal confirm-modal">
+            <div className="confirm-title" style={{ color: 'var(--red)' }}>
               🗑 Excluir tarefas selecionadas
             </div>
-            <div style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.5, marginBottom: 18 }}>
+            <div className="confirm-body">
               {formatBulkDeleteConfirmationMessage(activeSelectedIds.length)}
             </div>
-            <div className="modal-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <div className="modal-footer">
               <button
                 type="button"
-                className="btn-ghost"
+                className="bcancel"
                 disabled={isBulkDeleting}
                 onClick={() => setConfirmBulkOpen(false)}
               >
@@ -510,10 +440,10 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
                 style={{
                   background: 'var(--red)',
                   border: '1px solid var(--red)',
-                  borderRadius: 7,
-                  padding: '8px 16px',
+                  borderRadius: 8,
+                  padding: '9px 16px',
                   color: '#fff',
-                  fontSize: 12,
+                  fontSize: 14,
                   fontWeight: 700,
                   cursor: isBulkDeleting ? 'not-allowed' : 'pointer',
                   opacity: isBulkDeleting ? 0.7 : 1,
