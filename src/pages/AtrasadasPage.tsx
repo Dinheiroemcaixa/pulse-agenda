@@ -8,6 +8,7 @@ import {
   canViewAllTasks,
   isUserActive,
 } from '../lib/accessControlApi'
+import type { BulkProgressDetail } from '../hooks/useAppData'
 
 interface Props {
   atrasadas: Task[]
@@ -18,7 +19,15 @@ interface Props {
   onRefreshPops?: () => Promise<void>
   setPage?: (p: Page) => void
   onComplete: (id: string, fromAtrasadas: boolean) => Promise<boolean>
+  onBulkCompleteAtrasadas?: (
+    targets: Task[],
+    onProgress?: (done: number, total: number, detail: BulkProgressDetail) => void
+  ) => Promise<{ completedIds: string[]; failedIds: string[] }>
   onDeleteAtrasada: (id: string) => Promise<boolean | void>
+  onBulkDeleteAtrasadas?: (
+    targets: Task[],
+    onProgress?: (done: number, total: number, detail: BulkProgressDetail) => void
+  ) => Promise<{ deletedIds: string[]; failedIds: string[] }>
   openEditTask: (id: string) => void
   showToast: (msg: string, type?: string) => void
 }
@@ -38,6 +47,8 @@ export interface BulkCompleteResult {
   toastMessage: string
   toastType: 'success' | 'error'
 }
+
+const CALLBACK_BATCH_CONCURRENCY = 25
 
 export function getFilteredAtrasadas(
   atrasadas: Task[],
@@ -63,18 +74,9 @@ export function getFilteredAtrasadas(
   return [...list].sort((a, b) => (a.date || '—').localeCompare(b.date || '—'))
 }
 
-export function formatBulkDeleteConfirmationMessage(count: number, allDisplayedSelected = false): string {
-  if (count === 1) {
-    return 'Deseja excluir 1 tarefa atrasada selecionada? Essa ação não poderá ser desfeita.'
-  }
-  if (allDisplayedSelected) {
-    return `Deseja excluir todas as ${count} tarefas atrasadas selecionadas na visualização atual? Essa ação não poderá ser desfeita.`
-  }
-  return `Deseja excluir ${count} tarefas atrasadas selecionadas? Essa ação não poderá ser desfeita.`
-}
-
-export function formatBulkCompleteConfirmationMessage(
+export function formatBulkDeleteConfirmationMessage(
   count: number,
+  allDisplayedSelected = false,
   scopeLabel?: string,
   searchQuery?: string
 ): string {
@@ -84,9 +86,32 @@ export function formatBulkCompleteConfirmationMessage(
   const contextSuffix = details.length > 0 ? ` (${details.join(' • ')})` : ''
 
   if (count === 1) {
-    return `Deseja concluir a única tarefa atrasada abrangida pela seleção geral${contextSuffix}?`
+    return `Deseja excluir 1 tarefa atrasada selecionada${contextSuffix}? Essa ação não poderá ser desfeita.`
   }
-  return `Deseja concluir todas as ${count} tarefas atrasadas abrangidas pela seleção geral${contextSuffix}?`
+  if (allDisplayedSelected) {
+    return `Deseja excluir todas as ${count} tarefas atrasadas selecionadas na visualização atual${contextSuffix}? Essa ação não poderá ser desfeita.`
+  }
+  return `Deseja excluir ${count} tarefas atrasadas selecionadas${contextSuffix}? Essa ação não poderá ser desfeita.`
+}
+
+export function formatBulkCompleteConfirmationMessage(
+  count: number,
+  scopeLabel?: string,
+  searchQuery?: string,
+  allDisplayedSelected = false
+): string {
+  const details: string[] = []
+  if (scopeLabel) details.push(scopeLabel)
+  if (searchQuery && searchQuery.trim()) details.push(`busca "${searchQuery.trim()}"`)
+  const contextSuffix = details.length > 0 ? ` (${details.join(' • ')})` : ''
+
+  if (count === 1) {
+    return `Deseja concluir 1 tarefa atrasada selecionada${contextSuffix}?`
+  }
+  if (allDisplayedSelected) {
+    return `Deseja concluir todas as ${count} tarefas atrasadas selecionadas na visualização atual${contextSuffix}?`
+  }
+  return `Deseja concluir as ${count} tarefas atrasadas selecionadas${contextSuffix}?`
 }
 
 export async function executeBulkCompleteAtrasadas(params: {
@@ -94,13 +119,26 @@ export async function executeBulkCompleteAtrasadas(params: {
   displayedTasks: Task[]
   currentUser: User
   onComplete: (id: string, fromAtrasadas: boolean) => Promise<boolean>
-  onProgress?: (done: number, total: number) => void
+  onBulkComplete?: (
+    targets: Task[],
+    onProgress?: (done: number, total: number, detail: BulkProgressDetail) => void
+  ) => Promise<{ completedIds: string[]; failedIds: string[] }>
+  onProgress?: (done: number, total: number, detail?: BulkProgressDetail) => void
+  concurrency?: number
 }): Promise<BulkCompleteResult> {
   const selectedSet = new Set(params.selectedIds)
   const targets = params.displayedTasks.filter(t => selectedSet.has(t.id))
+  const total = targets.length
 
   if (!params.currentUser || !isUserActive(params.currentUser) || !canAccessModule(params.currentUser, 'atrasadas')) {
     const allIds = targets.map(t => t.id)
+    params.onProgress?.(total, total, {
+      done: total,
+      succeeded: 0,
+      failed: total,
+      pending: 0,
+      total,
+    })
     return {
       completedIds: [],
       failedIds: allIds,
@@ -110,32 +148,52 @@ export async function executeBulkCompleteAtrasadas(params: {
     }
   }
 
-  const completedIds: string[] = []
-  const failedIds: string[] = []
-  let done = 0
+  let completedIds: string[] = []
+  let failedIds: string[] = []
 
-  for (const task of targets) {
-    if (!canAccessTaskRecord(params.currentUser, task)) {
-      failedIds.push(task.id)
-      done++
-      params.onProgress?.(done, targets.length)
-      continue
-    }
+  if (params.onBulkComplete) {
+    const batchRes = await params.onBulkComplete(targets, (done, tot, detail) => {
+      params.onProgress?.(done, tot, detail)
+    })
+    completedIds = batchRes.completedIds
+    failedIds = batchRes.failedIds
+  } else {
+    const concurrency = Math.max(1, params.concurrency ?? CALLBACK_BATCH_CONCURRENCY)
+    let done = 0
 
-    try {
-      const ok = await params.onComplete(task.id, true)
-      if (!ok) {
-        failedIds.push(task.id)
-      } else {
-        completedIds.push(task.id)
+    for (let i = 0; i < targets.length; i += concurrency) {
+      const slice = targets.slice(i, i + concurrency)
+      const sliceResults = await Promise.all(
+        slice.map(async task => {
+          if (!canAccessTaskRecord(params.currentUser, task)) {
+            return { id: task.id, ok: false }
+          }
+          try {
+            const ok = await params.onComplete(task.id, true)
+            return { id: task.id, ok: Boolean(ok) }
+          } catch (err) {
+            console.error('❌ Erro ao concluir tarefa atrasada em massa:', task.id, err)
+            return { id: task.id, ok: false }
+          }
+        })
+      )
+
+      for (const r of sliceResults) {
+        if (r.ok) {
+          completedIds.push(r.id)
+        } else {
+          failedIds.push(r.id)
+        }
+        done++
+        params.onProgress?.(done, total, {
+          done,
+          succeeded: completedIds.length,
+          failed: failedIds.length,
+          pending: Math.max(0, total - done),
+          total,
+        })
       }
-    } catch (err) {
-      console.error('❌ Erro ao concluir tarefa atrasada em massa:', task.id, err)
-      failedIds.push(task.id)
     }
-
-    done++
-    params.onProgress?.(done, targets.length)
   }
 
   const completedSet = new Set(completedIds)
@@ -151,7 +209,7 @@ export async function executeBulkCompleteAtrasadas(params: {
         : `✅ ${completedIds.length} tarefas atrasadas concluídas!`
     toastType = 'success'
   } else if (completedIds.length > 0 && failedIds.length > 0) {
-    toastMessage = `⚠️ Conclusão parcial: ${completedIds.length} concluída(s) e ${failedIds.length} falhou/falharam.`
+    toastMessage = `⚠️ Conclusão parcial: ${completedIds.length} concluída(s) e ${failedIds.length} falhou/falharam. As tarefas com falha permaneceram selecionadas.`
     toastType = 'error'
   } else {
     toastMessage =
@@ -175,13 +233,26 @@ export async function executeBulkDeleteAtrasadas(params: {
   displayedTasks: Task[]
   currentUser: User
   onDeleteAtrasada: (id: string) => Promise<boolean | void>
-  onProgress?: (done: number, total: number) => void
+  onBulkDelete?: (
+    targets: Task[],
+    onProgress?: (done: number, total: number, detail: BulkProgressDetail) => void
+  ) => Promise<{ deletedIds: string[]; failedIds: string[] }>
+  onProgress?: (done: number, total: number, detail?: BulkProgressDetail) => void
+  concurrency?: number
 }): Promise<BulkDeleteResult> {
   const selectedSet = new Set(params.selectedIds)
   const targets = params.displayedTasks.filter(t => selectedSet.has(t.id))
+  const total = targets.length
 
   if (!params.currentUser || !isUserActive(params.currentUser) || !canAccessModule(params.currentUser, 'atrasadas')) {
     const allIds = targets.map(t => t.id)
+    params.onProgress?.(total, total, {
+      done: total,
+      succeeded: 0,
+      failed: total,
+      pending: 0,
+      total,
+    })
     return {
       deletedIds: [],
       failedIds: allIds,
@@ -191,32 +262,52 @@ export async function executeBulkDeleteAtrasadas(params: {
     }
   }
 
-  const deletedIds: string[] = []
-  const failedIds: string[] = []
-  let done = 0
+  let deletedIds: string[] = []
+  let failedIds: string[] = []
 
-  for (const task of targets) {
-    if (!canAccessTaskRecord(params.currentUser, task)) {
-      failedIds.push(task.id)
-      done++
-      params.onProgress?.(done, targets.length)
-      continue
-    }
+  if (params.onBulkDelete) {
+    const batchRes = await params.onBulkDelete(targets, (done, tot, detail) => {
+      params.onProgress?.(done, tot, detail)
+    })
+    deletedIds = batchRes.deletedIds
+    failedIds = batchRes.failedIds
+  } else {
+    const concurrency = Math.max(1, params.concurrency ?? CALLBACK_BATCH_CONCURRENCY)
+    let done = 0
 
-    try {
-      const res = await params.onDeleteAtrasada(task.id)
-      if (res === false) {
-        failedIds.push(task.id)
-      } else {
-        deletedIds.push(task.id)
+    for (let i = 0; i < targets.length; i += concurrency) {
+      const slice = targets.slice(i, i + concurrency)
+      const sliceResults = await Promise.all(
+        slice.map(async task => {
+          if (!canAccessTaskRecord(params.currentUser, task)) {
+            return { id: task.id, ok: false }
+          }
+          try {
+            const res = await params.onDeleteAtrasada(task.id)
+            return { id: task.id, ok: res !== false }
+          } catch (err) {
+            console.error('❌ Erro ao excluir tarefa atrasada em massa:', task.id, err)
+            return { id: task.id, ok: false }
+          }
+        })
+      )
+
+      for (const r of sliceResults) {
+        if (r.ok) {
+          deletedIds.push(r.id)
+        } else {
+          failedIds.push(r.id)
+        }
+        done++
+        params.onProgress?.(done, total, {
+          done,
+          succeeded: deletedIds.length,
+          failed: failedIds.length,
+          pending: Math.max(0, total - done),
+          total,
+        })
       }
-    } catch (err) {
-      console.error('❌ Erro ao excluir tarefa atrasada em massa:', task.id, err)
-      failedIds.push(task.id)
     }
-
-    done++
-    params.onProgress?.(done, targets.length)
   }
 
   const deletedSet = new Set(deletedIds)
@@ -232,7 +323,7 @@ export async function executeBulkDeleteAtrasadas(params: {
         : `🗑 ${deletedIds.length} tarefas atrasadas excluídas!`
     toastType = 'warn'
   } else if (deletedIds.length > 0 && failedIds.length > 0) {
-    toastMessage = `⚠️ Exclusão parcial: ${deletedIds.length} excluída(s) e ${failedIds.length} falhou/falharam.`
+    toastMessage = `⚠️ Exclusão parcial: ${deletedIds.length} excluída(s) e ${failedIds.length} falhou/falharam. As tarefas com falha permaneceram selecionadas.`
     toastType = 'error'
   } else {
     toastMessage =
@@ -251,15 +342,30 @@ export async function executeBulkDeleteAtrasadas(params: {
   }
 }
 
-export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onRefreshPops, setPage, onComplete, onDeleteAtrasada, openEditTask, showToast }: Props) {
+export function AtrasadasPage({
+  atrasadas,
+  team,
+  currentUser,
+  isAdmin,
+  pops,
+  onRefreshPops,
+  setPage,
+  onComplete,
+  onBulkCompleteAtrasadas,
+  onDeleteAtrasada,
+  onBulkDeleteAtrasadas,
+  openEditTask,
+  showToast,
+}: Props) {
   const [search, setSearch] = useState('')
   const [scope, setScope] = useState<'mine' | 'all'>('mine')
   const [activePopTask, setActivePopTask] = useState<Task | null>(null)
 
   const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [confirmModalMode, setConfirmModalMode] = useState<'delete-selected' | 'complete-all' | null>(null)
-  const [activeBulkOp, setActiveBulkOp] = useState<'delete' | 'complete-selected' | 'complete-all' | null>(null)
-  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null)
+  const [lastFailedIds, setLastFailedIds] = useState<string[]>([])
+  const [confirmModalMode, setConfirmModalMode] = useState<'complete-selected' | 'delete-selected' | null>(null)
+  const [activeBulkOp, setActiveBulkOp] = useState<'complete-selected' | 'delete' | null>(null)
+  const [bulkProgress, setBulkProgress] = useState<BulkProgressDetail | null>(null)
   const [busySingleId, setBusySingleId] = useState<string | null>(null)
 
   const bulkOpLockRef = useRef(false)
@@ -274,9 +380,13 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
 
   const visibleIdSet = useMemo(() => new Set(list.map(a => a.id)), [list])
 
-  // Mantém a seleção sincronizada apenas com as tarefas atualmente exibidas pelos filtros ativos
+  // Mantém a seleção e o indicador de falhas sincronizados apenas com as tarefas exibidas pelos filtros ativos
   useEffect(() => {
     setSelectedIds(prev => {
+      const next = prev.filter(id => visibleIdSet.has(id))
+      return next.length === prev.length ? prev : next
+    })
+    setLastFailedIds(prev => {
       const next = prev.filter(id => visibleIdSet.has(id))
       return next.length === prev.length ? prev : next
     })
@@ -287,6 +397,7 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
     [selectedIds, visibleIdSet]
   )
   const selectedSet = useMemo(() => new Set(activeSelectedIds), [activeSelectedIds])
+  const failedSet = useMemo(() => new Set(lastFailedIds), [lastFailedIds])
 
   const allSelected = list.length > 0 && activeSelectedIds.length === list.length
   const someSelected = activeSelectedIds.length > 0 && activeSelectedIds.length < list.length
@@ -317,12 +428,13 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
       const ok = await onComplete(id, true)
       if (ok) {
         setSelectedIds(prev => prev.filter(item => item !== id))
-        showToast('✅ Concluída!', 'success')
+        setLastFailedIds(prev => prev.filter(item => item !== id))
       } else {
-        showToast('❌ Não foi possível concluir a tarefa.', 'error')
+        setLastFailedIds(prev => (prev.includes(id) ? prev : [...prev, id]))
       }
     } catch (err) {
       console.error('❌ Erro ao concluir tarefa atrasada:', id, err)
+      setLastFailedIds(prev => (prev.includes(id) ? prev : [...prev, id]))
       showToast('❌ Não foi possível concluir a tarefa.', 'error')
     } finally {
       singleOpLockRef.current = null
@@ -337,13 +449,16 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
     try {
       const ok = await onDeleteAtrasada(id)
       if (ok === false) {
+        setLastFailedIds(prev => (prev.includes(id) ? prev : [...prev, id]))
         showToast('❌ Não foi possível remover a tarefa.', 'error')
       } else {
         setSelectedIds(prev => prev.filter(item => item !== id))
+        setLastFailedIds(prev => prev.filter(item => item !== id))
         showToast('🗑 Removida', 'warn')
       }
     } catch (err) {
       console.error('❌ Erro ao excluir tarefa atrasada:', id, err)
+      setLastFailedIds(prev => (prev.includes(id) ? prev : [...prev, id]))
       showToast('❌ Não foi possível remover a tarefa.', 'error')
     } finally {
       singleOpLockRef.current = null
@@ -351,13 +466,20 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
     }
   }
 
-  const handleBulkCompleteSelected = async () => {
+  const handleConfirmBulkCompleteSelected = async () => {
     if (bulkOpLockRef.current || singleOpLockRef.current || activeSelectedIds.length === 0) {
       return
     }
+    const totalToComplete = activeSelectedIds.length
     bulkOpLockRef.current = true
     setActiveBulkOp('complete-selected')
-    setBulkProgress({ done: 0, total: activeSelectedIds.length })
+    setBulkProgress({
+      done: 0,
+      succeeded: 0,
+      failed: 0,
+      pending: totalToComplete,
+      total: totalToComplete,
+    })
 
     try {
       const result = await executeBulkCompleteAtrasadas({
@@ -365,43 +487,21 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
         displayedTasks: list,
         currentUser,
         onComplete,
-        onProgress: (done, total) => setBulkProgress({ done, total }),
+        onBulkComplete: onBulkCompleteAtrasadas,
+        onProgress: (done, total, detail) =>
+          setBulkProgress(
+            detail || {
+              done,
+              succeeded: done,
+              failed: 0,
+              pending: Math.max(0, total - done),
+              total,
+            }
+          ),
       })
 
       setSelectedIds(result.remainingSelectedIds)
-      showToast(result.toastMessage, result.toastType)
-    } finally {
-      bulkOpLockRef.current = false
-      setActiveBulkOp(null)
-      setBulkProgress(null)
-    }
-  }
-
-  const handleOpenCompleteAllConfirm = () => {
-    if (isBusy || list.length === 0) return
-    setSelectedIds(list.map(a => a.id))
-    setConfirmModalMode('complete-all')
-  }
-
-  const handleConfirmCompleteAll = async () => {
-    const allIds = list.map(a => a.id)
-    if (bulkOpLockRef.current || singleOpLockRef.current || allIds.length === 0) {
-      return
-    }
-    bulkOpLockRef.current = true
-    setActiveBulkOp('complete-all')
-    setBulkProgress({ done: 0, total: allIds.length })
-
-    try {
-      const result = await executeBulkCompleteAtrasadas({
-        selectedIds: allIds,
-        displayedTasks: list,
-        currentUser,
-        onComplete,
-        onProgress: (done, total) => setBulkProgress({ done, total }),
-      })
-
-      setSelectedIds(result.remainingSelectedIds)
+      setLastFailedIds(result.failedIds)
       setConfirmModalMode(null)
       showToast(result.toastMessage, result.toastType)
     } finally {
@@ -415,9 +515,16 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
     if (bulkOpLockRef.current || singleOpLockRef.current || activeSelectedIds.length === 0) {
       return
     }
+    const totalToDelete = activeSelectedIds.length
     bulkOpLockRef.current = true
     setActiveBulkOp('delete')
-    setBulkProgress({ done: 0, total: activeSelectedIds.length })
+    setBulkProgress({
+      done: 0,
+      succeeded: 0,
+      failed: 0,
+      pending: totalToDelete,
+      total: totalToDelete,
+    })
 
     try {
       const result = await executeBulkDeleteAtrasadas({
@@ -425,10 +532,21 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
         displayedTasks: list,
         currentUser,
         onDeleteAtrasada,
-        onProgress: (done, total) => setBulkProgress({ done, total }),
+        onBulkDelete: onBulkDeleteAtrasadas,
+        onProgress: (done, total, detail) =>
+          setBulkProgress(
+            detail || {
+              done,
+              succeeded: done,
+              failed: 0,
+              pending: Math.max(0, total - done),
+              total,
+            }
+          ),
       })
 
       setSelectedIds(result.remainingSelectedIds)
+      setLastFailedIds(result.failedIds)
       setConfirmModalMode(null)
       showToast(result.toastMessage, result.toastType)
     } finally {
@@ -484,8 +602,8 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
               type="button"
               className="fb"
               disabled={isBusy || activeSelectedIds.length === 0}
-              onClick={handleBulkCompleteSelected}
-              title="Concluir apenas as tarefas atrasadas marcadas"
+              onClick={() => !isBusy && activeSelectedIds.length > 0 && setConfirmModalMode('complete-selected')}
+              title="Concluir as tarefas atrasadas marcadas (com confirmação)"
               style={{
                 padding: '6px 10px',
                 fontSize: 12,
@@ -498,29 +616,8 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
               }}
             >
               {activeBulkOp === 'complete-selected' && bulkProgress
-                ? `⏳ Concluindo (${bulkProgress.done}/${bulkProgress.total})...`
+                ? `⏳ Concluindo (${bulkProgress.succeeded}/${bulkProgress.total} • pend: ${bulkProgress.pending}${bulkProgress.failed > 0 ? ` • falhas: ${bulkProgress.failed}` : ''})...`
                 : `✓ Concluir selecionadas (${activeSelectedIds.length})`}
-            </button>
-            <button
-              type="button"
-              className="fb"
-              disabled={isBusy || list.length === 0}
-              onClick={handleOpenCompleteAllConfirm}
-              title="Selecionar e concluir todas as tarefas atrasadas exibidas (com confirmação)"
-              style={{
-                padding: '6px 10px',
-                fontSize: 12,
-                background: 'var(--greenbg)',
-                borderColor: 'var(--green)',
-                color: 'var(--green)',
-                fontWeight: 700,
-                opacity: isBusy ? 0.6 : 1,
-                cursor: isBusy ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {activeBulkOp === 'complete-all' && bulkProgress
-                ? `⏳ Concluindo todas (${bulkProgress.done}/${bulkProgress.total})...`
-                : `✓✓ Concluir todas (${list.length})`}
             </button>
             <button
               type="button"
@@ -540,7 +637,7 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
               }}
             >
               {activeBulkOp === 'delete' && bulkProgress
-                ? `⏳ Excluindo (${bulkProgress.done}/${bulkProgress.total})...`
+                ? `⏳ Excluindo (${bulkProgress.succeeded}/${bulkProgress.total} • pend: ${bulkProgress.pending}${bulkProgress.failed > 0 ? ` • falhas: ${bulkProgress.failed}` : ''})...`
                 : `🗑 Excluir selecionadas (${activeSelectedIds.length})`}
             </button>
           </div>
@@ -561,6 +658,7 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
                 const mc = m?.color || '#ff4d6d'
                 const diasAtraso = a.date ? Math.floor((Date.now() - new Date(a.date + 'T00:00:00').getTime()) / 86400000) : 0
                 const isChecked = selectedSet.has(a.id)
+                const hasFailed = failedSet.has(a.id)
                 return (
                   <div
                     key={a.id}
@@ -613,6 +711,21 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
                         <span style={{ fontSize: 10, background: 'var(--redbg)', color: 'var(--red)', borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>
                           ⏰ {diasAtraso} dia{diasAtraso !== 1 ? 's' : ''} atrasada
                         </span>
+                        {hasFailed && (
+                          <span
+                            style={{
+                              fontSize: 10,
+                              background: 'var(--redbg)',
+                              color: 'var(--red)',
+                              border: '1px solid var(--red)',
+                              borderRadius: 3,
+                              padding: '1px 6px',
+                              fontWeight: 700,
+                            }}
+                          >
+                            ⚠ Falha ao processar
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="hist-card-right">
@@ -660,6 +773,78 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
         })}
       </div>
 
+      {confirmModalMode === 'complete-selected' && (
+        <div
+          className="modal-overlay"
+          onClick={e => {
+            if (e.target === e.currentTarget && !isBulkBusy) {
+              setConfirmModalMode(null)
+            }
+          }}
+        >
+          <div className="modal confirm-modal">
+            <div className="confirm-title" style={{ color: 'var(--green)' }}>
+              ✓ Concluir tarefas selecionadas
+            </div>
+            <div className="confirm-body">
+              {formatBulkCompleteConfirmationMessage(activeSelectedIds.length, effectiveScopeLabel, search, allSelected)}
+              {activeBulkOp === 'complete-selected' && bulkProgress && (
+                <div style={{ marginTop: 12, padding: '8px 10px', background: 'var(--surface2)', borderRadius: 6, fontSize: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontWeight: 600 }}>
+                    <span style={{ color: 'var(--green)' }}>✓ Concluídas: {bulkProgress.succeeded}</span>
+                    <span style={{ color: 'var(--text2)' }}>⏳ Pendentes: {bulkProgress.pending}</span>
+                    <span style={{ color: bulkProgress.failed > 0 ? 'var(--red)' : 'var(--text3)' }}>
+                      ⚠ Falhas: {bulkProgress.failed}
+                    </span>
+                    <span>Total: {bulkProgress.total}</span>
+                  </div>
+                  <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+                    <div
+                      style={{
+                        height: '100%',
+                        width: `${bulkProgress.total > 0 ? Math.round((bulkProgress.done / bulkProgress.total) * 100) : 0}%`,
+                        background: 'var(--green)',
+                        transition: 'width 0.15s ease',
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="bcancel"
+                disabled={isBulkBusy}
+                onClick={() => setConfirmModalMode(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isBulkBusy || activeSelectedIds.length === 0}
+                onClick={handleConfirmBulkCompleteSelected}
+                style={{
+                  background: 'var(--green)',
+                  border: '1px solid var(--green)',
+                  borderRadius: 8,
+                  padding: '9px 16px',
+                  color: '#0b101b',
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: isBulkBusy ? 'not-allowed' : 'pointer',
+                  opacity: isBulkBusy ? 0.7 : 1,
+                }}
+              >
+                {activeBulkOp === 'complete-selected' && bulkProgress
+                  ? `Concluindo (${bulkProgress.done}/${bulkProgress.total})...`
+                  : `Concluir (${activeSelectedIds.length})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {confirmModalMode === 'delete-selected' && (
         <div
           className="modal-overlay"
@@ -674,7 +859,29 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
               🗑 Excluir tarefas selecionadas
             </div>
             <div className="confirm-body">
-              {formatBulkDeleteConfirmationMessage(activeSelectedIds.length, allSelected)}
+              {formatBulkDeleteConfirmationMessage(activeSelectedIds.length, allSelected, effectiveScopeLabel, search)}
+              {activeBulkOp === 'delete' && bulkProgress && (
+                <div style={{ marginTop: 12, padding: '8px 10px', background: 'var(--surface2)', borderRadius: 6, fontSize: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontWeight: 600 }}>
+                    <span style={{ color: 'var(--orange)' }}>🗑 Excluídas: {bulkProgress.succeeded}</span>
+                    <span style={{ color: 'var(--text2)' }}>⏳ Pendentes: {bulkProgress.pending}</span>
+                    <span style={{ color: bulkProgress.failed > 0 ? 'var(--red)' : 'var(--text3)' }}>
+                      ⚠ Falhas: {bulkProgress.failed}
+                    </span>
+                    <span>Total: {bulkProgress.total}</span>
+                  </div>
+                  <div style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+                    <div
+                      style={{
+                        height: '100%',
+                        width: `${bulkProgress.total > 0 ? Math.round((bulkProgress.done / bulkProgress.total) * 100) : 0}%`,
+                        background: 'var(--red)',
+                        transition: 'width 0.15s ease',
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
             <div className="modal-footer">
               <button
@@ -704,56 +911,6 @@ export function AtrasadasPage({ atrasadas, team, currentUser, isAdmin, pops, onR
                 {activeBulkOp === 'delete' && bulkProgress
                   ? `Excluindo (${bulkProgress.done}/${bulkProgress.total})...`
                   : `Excluir (${activeSelectedIds.length})`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {confirmModalMode === 'complete-all' && (
-        <div
-          className="modal-overlay"
-          onClick={e => {
-            if (e.target === e.currentTarget && !isBulkBusy) {
-              setConfirmModalMode(null)
-            }
-          }}
-        >
-          <div className="modal confirm-modal">
-            <div className="confirm-title" style={{ color: 'var(--green)' }}>
-              ✓✓ Concluir todas as tarefas atrasadas exibidas
-            </div>
-            <div className="confirm-body">
-              {formatBulkCompleteConfirmationMessage(list.length, effectiveScopeLabel, search)}
-            </div>
-            <div className="modal-footer">
-              <button
-                type="button"
-                className="bcancel"
-                disabled={isBulkBusy}
-                onClick={() => setConfirmModalMode(null)}
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                disabled={isBulkBusy || list.length === 0}
-                onClick={handleConfirmCompleteAll}
-                style={{
-                  background: 'var(--green)',
-                  border: '1px solid var(--green)',
-                  borderRadius: 8,
-                  padding: '9px 16px',
-                  color: '#0b101b',
-                  fontSize: 14,
-                  fontWeight: 700,
-                  cursor: isBulkBusy ? 'not-allowed' : 'pointer',
-                  opacity: isBulkBusy ? 0.7 : 1,
-                }}
-              >
-                {activeBulkOp === 'complete-all' && bulkProgress
-                  ? `Concluindo (${bulkProgress.done}/${bulkProgress.total})...`
-                  : `Concluir todas (${list.length})`}
               </button>
             </div>
           </div>

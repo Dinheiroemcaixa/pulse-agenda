@@ -17,8 +17,10 @@ export const COLORS = [
   '#2f9e44','#f06595','#74c0fc','#ff6b35','#a9e34b',
 ]
 
+let _idSeq = 0
 export function genId(): string {
-  return 'id_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
+  _idSeq = (_idSeq + 1) % 1679616
+  return 'id_' + Date.now() + '_' + _idSeq.toString(36) + Math.random().toString(36).slice(2, 6)
 }
 
 export function hashPass(p: string): string {

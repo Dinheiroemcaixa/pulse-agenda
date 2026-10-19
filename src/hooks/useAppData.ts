@@ -33,6 +33,788 @@ import {
 //  - Mestre do grupo = ocorrência mais RECENTE (não mais antiga)
 // ============================================================
 
+export interface BulkProgressDetail {
+  done: number
+  succeeded: number
+  failed: number
+  pending: number
+  total: number
+}
+
+export const DEFAULT_BULK_CHUNK_SIZE = 250
+
+export function buildHistItemPayload(t: Task, histId: string, completedAt: string) {
+  return {
+    id: histId,
+    descricao: t.descricao,
+    resp: t.resp,
+    date: t.date || null,
+    prio: t.prio || 'Média',
+    status: 'Concluída' as const,
+    all_day: t.all_day !== undefined ? t.all_day : true,
+    time_start: t.time_start || null,
+    time_end: t.time_end || null,
+    tags: t.tags || [],
+    recur: t.recur || 'none',
+    recur_days: t.recur_days || [],
+    recur_start: t.recur_start || null,
+    recur_group_id: (t as any).recur_group_id || null,
+    subtasks: t.subtasks || [],
+    notes: t.notes || null,
+    is_meeting: t.is_meeting || false,
+    completed_at: completedAt,
+  }
+}
+
+export function buildCompletedTaskPayload(t: Task, instanceId: string, completedAt: string): Task {
+  return {
+    id: instanceId,
+    descricao: t.descricao,
+    resp: t.resp,
+    date: t.date || '',
+    prio: t.prio || 'Média',
+    status: 'Concluída' as const,
+    all_day: t.all_day !== undefined ? t.all_day : true,
+    time_start: t.time_start || null,
+    time_end: t.time_end || null,
+    tags: t.tags || [],
+    recur: t.recur || 'none',
+    recur_days: t.recur_days || [],
+    recur_start: t.recur_start || null,
+    recur_group_id: (t as any).recur_group_id || null,
+    subtasks: t.subtasks || [],
+    notes: t.notes || null,
+    is_meeting: t.is_meeting || false,
+    sort_order: typeof t.sort_order === 'number' ? t.sort_order : 0,
+    completed_at: completedAt,
+  } as unknown as Task
+}
+
+export async function runBulkCompleteEngine(params: {
+  targets: Task[]
+  currentUser?: User | null
+  initialTasks: Task[]
+  initialHist: Task[]
+  sbClient?: any
+  chunkSize?: number
+  onProgress?: (done: number, total: number, detail: BulkProgressDetail) => void
+}): Promise<{
+  completedIds: string[]
+  failedIds: string[]
+  nextTasks: Task[]
+  nextHist: Task[]
+}> {
+  const {
+    targets,
+    currentUser,
+    initialTasks,
+    initialHist,
+    sbClient = sb,
+    chunkSize = DEFAULT_BULK_CHUNK_SIZE,
+    onProgress,
+  } = params
+
+  const total = targets.length
+  if (!currentUser || !isUserActive(currentUser) || !canAccessModule(currentUser, 'atrasadas')) {
+    const allIds = targets.map(t => t.id)
+    onProgress?.(total, total, { done: total, succeeded: 0, failed: total, pending: 0, total })
+    return {
+      completedIds: [],
+      failedIds: allIds,
+      nextTasks: initialTasks,
+      nextHist: initialHist,
+    }
+  }
+
+  const completedIds: string[] = []
+  const failedIds: string[] = []
+  const authorizedTargets: Task[] = []
+  const seenTargetIds = new Set<string>()
+  let done = 0
+
+  for (const task of targets) {
+    if (seenTargetIds.has(task.id)) continue
+    seenTargetIds.add(task.id)
+
+    if (!canAccessTaskRecord(currentUser, task)) {
+      failedIds.push(task.id)
+      done++
+      onProgress?.(done, total, {
+        done,
+        succeeded: completedIds.length,
+        failed: failedIds.length,
+        pending: Math.max(0, total - done),
+        total,
+      })
+    } else {
+      authorizedTargets.push(task)
+    }
+  }
+
+  if (authorizedTargets.length === 0) {
+    return {
+      completedIds,
+      failedIds,
+      nextTasks: initialTasks,
+      nextHist: initialHist,
+    }
+  }
+
+  const completedAt = new Date().toLocaleDateString('pt-BR')
+  const todayStr = getTodayStr()
+
+  const liveTasksMap = new Map<string, Task>()
+  const openMasterByGroupDate = new Map<string, Task>()
+  const completedGroupDates = new Set<string>()
+
+  for (const t of initialTasks) {
+    liveTasksMap.set(t.id, t)
+    if (t.recur_group_id && t.date) {
+      const key = `${t.recur_group_id}_${t.date}`
+      if (t.status === 'Concluída') {
+        completedGroupDates.add(key)
+      } else {
+        openMasterByGroupDate.set(key, t)
+      }
+    }
+  }
+  for (const h of initialHist) {
+    if (h.recur_group_id && h.date) {
+      completedGroupDates.add(`${h.recur_group_id}_${h.date}`)
+    }
+  }
+
+  // Datas de séries recorrentes incluídas neste lote (para avanço seguro do mestre)
+  const batchTargetGroupDates = new Set<string>()
+  for (const t of authorizedTargets) {
+    if (t.recur_group_id && t.date) {
+      batchTargetGroupDates.add(`${t.recur_group_id}_${t.date}`)
+    }
+  }
+
+  const addedCompletedTasks: Task[] = []
+  const deletedRealTaskIds = new Set<string>()
+  const updatedMasters = new Map<string, { date: string; recur_start?: string }>()
+  const addedHistItems: Task[] = []
+
+  const processSingleItemFallback = async (t: Task): Promise<boolean> => {
+    try {
+      const isVirtual = t.id.startsWith('virtual_')
+      const groupDateKey = t.recur_group_id && t.date ? `${t.recur_group_id}_${t.date}` : ''
+      const promotedMaster = isVirtual && groupDateKey ? openMasterByGroupDate.get(groupDateKey) : undefined
+      const effectiveTask = promotedMaster || liveTasksMap.get(t.id) || t
+      const isRecurringMaster = Boolean(
+        !effectiveTask.id.startsWith('virtual_') &&
+          (effectiveTask as any).recur_group_id &&
+          effectiveTask.recur &&
+          effectiveTask.recur !== 'none'
+      )
+      const isVirtualOnly = effectiveTask.id.startsWith('virtual_') && !promotedMaster
+
+      const instanceId = isVirtualOnly || isRecurringMaster ? genId() : effectiveTask.id
+      const histItem = buildHistItemPayload(effectiveTask, instanceId, completedAt)
+
+      const { error: histErr } = await sbClient.from('hist').upsert(histItem, { onConflict: 'id' })
+      if (histErr) return false
+
+      if (isVirtualOnly) {
+        const completedPayload = buildCompletedTaskPayload(effectiveTask, instanceId, completedAt)
+        const { error: insErr } = await sbClient.from('tasks').insert(completedPayload)
+        if (insErr) {
+          await sbClient.from('hist').delete().eq('id', instanceId)
+          return false
+        }
+        addedCompletedTasks.push(completedPayload)
+        if (groupDateKey) completedGroupDates.add(groupDateKey)
+      } else if (isRecurringMaster) {
+        const originalDate = effectiveTask.date
+        const completedRecord = buildCompletedTaskPayload(effectiveTask, instanceId, completedAt)
+        const { error: insErr } = await sbClient.from('tasks').insert(completedRecord)
+        if (insErr) {
+          await sbClient.from('hist').delete().eq('id', instanceId)
+          return false
+        }
+        if (effectiveTask.recur_group_id && originalDate) {
+          completedGroupDates.add(`${effectiveTask.recur_group_id}_${originalDate}`)
+        }
+
+        const baseDate = originalDate < todayStr ? todayStr : originalDate
+        const anchorStart = effectiveTask.recur_start || originalDate
+        let nextDate = getNextOccurrenceAfter(
+          effectiveTask.recur!,
+          effectiveTask.recur_days || [],
+          anchorStart,
+          baseDate
+        )
+        while (
+          nextDate &&
+          (completedGroupDates.has(`${effectiveTask.recur_group_id}_${nextDate}`) ||
+            batchTargetGroupDates.has(`${effectiveTask.recur_group_id}_${nextDate}`))
+        ) {
+          nextDate = getNextOccurrenceAfter(
+            effectiveTask.recur!,
+            effectiveTask.recur_days || [],
+            anchorStart,
+            nextDate
+          )
+        }
+
+        if (nextDate) {
+          const { error: updErr } = await sbClient
+            .from('tasks')
+            .update({ date: nextDate, recur_start: anchorStart })
+            .eq('id', effectiveTask.id)
+          if (updErr) return false
+          updatedMasters.set(effectiveTask.id, { date: nextDate, recur_start: anchorStart })
+        } else {
+          const { error: delErr } = await sbClient.from('tasks').delete().eq('id', effectiveTask.id)
+          if (delErr) return false
+          deletedRealTaskIds.add(effectiveTask.id)
+        }
+        addedCompletedTasks.push(completedRecord)
+      } else {
+        const { error: delErr } = await sbClient.from('tasks').delete().eq('id', effectiveTask.id)
+        if (delErr) {
+          await sbClient.from('hist').delete().eq('id', instanceId)
+          return false
+        }
+        deletedRealTaskIds.add(effectiveTask.id)
+      }
+
+      addedHistItems.push(histItem as unknown as Task)
+      return true
+    } catch (err) {
+      console.error('❌ Erro no fallback individual de conclusão:', t.id, err)
+      return false
+    }
+  }
+
+  for (let i = 0; i < authorizedTargets.length; i += chunkSize) {
+    const chunk = authorizedTargets.slice(i, i + chunkSize)
+
+    const chunkHistRows: ReturnType<typeof buildHistItemPayload>[] = []
+    const chunkCompletedTaskRows: Task[] = []
+    const chunkNonRecurDeleteIds: string[] = []
+    const chunkMasters: { selectedId: string; master: Task; instanceId: string }[] = []
+
+    for (const t of chunk) {
+      const isVirtual = t.id.startsWith('virtual_')
+      const groupDateKey = t.recur_group_id && t.date ? `${t.recur_group_id}_${t.date}` : ''
+      const promotedMaster = isVirtual && groupDateKey ? openMasterByGroupDate.get(groupDateKey) : undefined
+      const effectiveTask = promotedMaster || liveTasksMap.get(t.id) || t
+      const isRecurringMaster = Boolean(
+        !effectiveTask.id.startsWith('virtual_') &&
+          (effectiveTask as any).recur_group_id &&
+          effectiveTask.recur &&
+          effectiveTask.recur !== 'none'
+      )
+      const isVirtualOnly = effectiveTask.id.startsWith('virtual_') && !promotedMaster
+
+      const instanceId = isVirtualOnly || isRecurringMaster ? genId() : effectiveTask.id
+      const histRow = buildHistItemPayload(effectiveTask, instanceId, completedAt)
+      chunkHistRows.push(histRow)
+
+      if (isVirtualOnly) {
+        chunkCompletedTaskRows.push(buildCompletedTaskPayload(effectiveTask, instanceId, completedAt))
+      } else if (isRecurringMaster) {
+        chunkCompletedTaskRows.push(buildCompletedTaskPayload(effectiveTask, instanceId, completedAt))
+        chunkMasters.push({ selectedId: t.id, master: effectiveTask, instanceId })
+      } else {
+        chunkNonRecurDeleteIds.push(effectiveTask.id)
+      }
+    }
+
+    let chunkBatchSucceeded = false
+    try {
+      const { error: histErr } = await sbClient.from('hist').upsert(chunkHistRows, { onConflict: 'id' })
+      if (histErr) throw histErr
+
+      if (chunkCompletedTaskRows.length > 0) {
+        const { error: insErr } = await sbClient.from('tasks').insert(chunkCompletedTaskRows)
+        if (insErr) {
+          await sbClient.from('hist').delete().in('id', chunkHistRows.map(r => r.id))
+          throw insErr
+        }
+      }
+
+      if (chunkNonRecurDeleteIds.length > 0) {
+        const { error: delErr } = await sbClient.from('tasks').delete().in('id', chunkNonRecurDeleteIds)
+        if (delErr) {
+          await sbClient.from('hist').delete().in('id', chunkHistRows.map(r => r.id))
+          if (chunkCompletedTaskRows.length > 0) {
+            await sbClient.from('tasks').delete().in('id', chunkCompletedTaskRows.map(r => r.id))
+          }
+          throw delErr
+        }
+      }
+
+      if (chunkMasters.length > 0) {
+        for (const row of chunkCompletedTaskRows) {
+          if (row.recur_group_id && row.date) {
+            completedGroupDates.add(`${row.recur_group_id}_${row.date}`)
+          }
+        }
+
+        const masterResults = await Promise.all(
+          chunkMasters.map(async ({ master }) => {
+            const originalDate = master.date
+            const baseDate = originalDate < todayStr ? todayStr : originalDate
+            const anchorStart = master.recur_start || originalDate
+            let nextDate = getNextOccurrenceAfter(
+              master.recur!,
+              master.recur_days || [],
+              anchorStart,
+              baseDate
+            )
+            while (
+              nextDate &&
+              (completedGroupDates.has(`${master.recur_group_id}_${nextDate}`) ||
+                batchTargetGroupDates.has(`${master.recur_group_id}_${nextDate}`))
+            ) {
+              nextDate = getNextOccurrenceAfter(
+                master.recur!,
+                master.recur_days || [],
+                anchorStart,
+                nextDate
+              )
+            }
+
+            if (nextDate) {
+              const { error: updErr } = await sbClient
+                .from('tasks')
+                .update({ date: nextDate, recur_start: anchorStart })
+                .eq('id', master.id)
+              return { masterId: master.id, nextDate, anchorStart, error: updErr }
+            } else {
+              const { error: delErr } = await sbClient.from('tasks').delete().eq('id', master.id)
+              return { masterId: master.id, nextDate: null, anchorStart, error: delErr }
+            }
+          })
+        )
+
+        const failedMaster = masterResults.find(r => r.error)
+        if (failedMaster) {
+          throw failedMaster.error
+        }
+
+        for (const r of masterResults) {
+          if (r.nextDate) {
+            updatedMasters.set(r.masterId, { date: r.nextDate, recur_start: r.anchorStart })
+          } else {
+            deletedRealTaskIds.add(r.masterId)
+          }
+        }
+      }
+
+      // Lote concluído com sucesso
+      chunkBatchSucceeded = true
+      for (const t of chunk) {
+        completedIds.push(t.id)
+      }
+      for (const row of chunkCompletedTaskRows) {
+        addedCompletedTasks.push(row)
+        if (row.recur_group_id && row.date) {
+          completedGroupDates.add(`${row.recur_group_id}_${row.date}`)
+        }
+      }
+      for (const delId of chunkNonRecurDeleteIds) {
+        deletedRealTaskIds.add(delId)
+      }
+      for (const hRow of chunkHistRows) {
+        addedHistItems.push(hRow as unknown as Task)
+      }
+
+      done += chunk.length
+      onProgress?.(done, total, {
+        done,
+        succeeded: completedIds.length,
+        failed: failedIds.length,
+        pending: Math.max(0, total - done),
+        total,
+      })
+    } catch (chunkErr) {
+      console.warn('⚠️ Falha no lote de conclusão; executando fallback item a item para o lote:', chunkErr)
+      chunkBatchSucceeded = false
+    }
+
+    if (!chunkBatchSucceeded) {
+      for (const t of chunk) {
+        const ok = await processSingleItemFallback(t)
+        if (ok) {
+          completedIds.push(t.id)
+        } else {
+          failedIds.push(t.id)
+        }
+        done++
+        onProgress?.(done, total, {
+          done,
+          succeeded: completedIds.length,
+          failed: failedIds.length,
+          pending: Math.max(0, total - done),
+          total,
+        })
+      }
+    }
+  }
+
+  const nextTasks = [
+    ...initialTasks
+      .filter(t => !deletedRealTaskIds.has(t.id))
+      .map(t => {
+        const upd = updatedMasters.get(t.id)
+        return upd ? { ...t, date: upd.date, recur_start: upd.recur_start || t.recur_start } : t
+      }),
+    ...addedCompletedTasks,
+  ]
+
+  const addedHistIds = new Set(addedHistItems.map(h => h.id))
+  const nextHist = [
+    ...addedHistItems,
+    ...initialHist.filter(h => !addedHistIds.has(h.id)),
+  ]
+
+  return {
+    completedIds,
+    failedIds,
+    nextTasks,
+    nextHist,
+  }
+}
+
+export async function runBulkDeleteEngine(params: {
+  targets: Task[]
+  currentUser?: User | null
+  initialTasks: Task[]
+  sbClient?: any
+  chunkSize?: number
+  onProgress?: (done: number, total: number, detail: BulkProgressDetail) => void
+}): Promise<{
+  deletedIds: string[]
+  failedIds: string[]
+  nextTasks: Task[]
+}> {
+  const {
+    targets,
+    currentUser,
+    initialTasks,
+    sbClient = sb,
+    chunkSize = DEFAULT_BULK_CHUNK_SIZE,
+    onProgress,
+  } = params
+
+  const total = targets.length
+  if (!currentUser || !isUserActive(currentUser) || !canAccessModule(currentUser, 'atrasadas')) {
+    const allIds = targets.map(t => t.id)
+    onProgress?.(total, total, { done: total, succeeded: 0, failed: total, pending: 0, total })
+    return {
+      deletedIds: [],
+      failedIds: allIds,
+      nextTasks: initialTasks,
+    }
+  }
+
+  const deletedIds: string[] = []
+  const failedIds: string[] = []
+  const authorizedTargets: Task[] = []
+  const seenTargetIds = new Set<string>()
+  let done = 0
+
+  for (const task of targets) {
+    if (seenTargetIds.has(task.id)) continue
+    seenTargetIds.add(task.id)
+
+    if (!canAccessTaskRecord(currentUser, task)) {
+      failedIds.push(task.id)
+      done++
+      onProgress?.(done, total, {
+        done,
+        succeeded: deletedIds.length,
+        failed: failedIds.length,
+        pending: Math.max(0, total - done),
+        total,
+      })
+    } else {
+      authorizedTargets.push(task)
+    }
+  }
+
+  if (authorizedTargets.length === 0) {
+    return {
+      deletedIds,
+      failedIds,
+      nextTasks: initialTasks,
+    }
+  }
+
+  const completedAt = new Date().toLocaleDateString('pt-BR')
+  const liveTasksMap = new Map<string, Task>()
+  const openMasterByGroupDate = new Map<string, Task>()
+  const completedGroupDates = new Set<string>()
+
+  for (const t of initialTasks) {
+    liveTasksMap.set(t.id, t)
+    if (t.recur_group_id && t.date) {
+      const key = `${t.recur_group_id}_${t.date}`
+      if (t.status === 'Concluída') {
+        completedGroupDates.add(key)
+      } else {
+        openMasterByGroupDate.set(key, t)
+      }
+    }
+  }
+
+  const batchTargetGroupDates = new Set<string>()
+  for (const t of authorizedTargets) {
+    if (t.recur_group_id && t.date) {
+      batchTargetGroupDates.add(`${t.recur_group_id}_${t.date}`)
+    }
+  }
+
+  const addedSkippedTasks: Task[] = []
+  const deletedRealTaskIds = new Set<string>()
+  const updatedMasters = new Map<string, { date: string; recur_start?: string }>()
+
+  const processSingleDeleteFallback = async (t: Task): Promise<boolean> => {
+    try {
+      const isVirtual = t.id.startsWith('virtual_')
+      const groupDateKey = t.recur_group_id && t.date ? `${t.recur_group_id}_${t.date}` : ''
+      const promotedMaster = isVirtual && groupDateKey ? openMasterByGroupDate.get(groupDateKey) : undefined
+      const effectiveTask = promotedMaster || liveTasksMap.get(t.id) || t
+      const isRecurringMaster = Boolean(
+        !effectiveTask.id.startsWith('virtual_') &&
+          (effectiveTask as any).recur_group_id &&
+          effectiveTask.recur &&
+          effectiveTask.recur !== 'none'
+      )
+      const isVirtualOnly = effectiveTask.id.startsWith('virtual_') && !promotedMaster
+
+      if (isVirtualOnly) {
+        const skipped = buildCompletedTaskPayload(effectiveTask, genId(), completedAt)
+        const { error } = await sbClient.from('tasks').insert(skipped)
+        if (error) return false
+        addedSkippedTasks.push(skipped)
+        if (groupDateKey) completedGroupDates.add(groupDateKey)
+        return true
+      }
+
+      if (isRecurringMaster) {
+        const skipped = buildCompletedTaskPayload(effectiveTask, genId(), completedAt)
+        const { error: insErr } = await sbClient.from('tasks').insert(skipped)
+        if (insErr) return false
+        if (effectiveTask.recur_group_id && effectiveTask.date) {
+          completedGroupDates.add(`${effectiveTask.recur_group_id}_${effectiveTask.date}`)
+        }
+
+        const anchorStart = effectiveTask.recur_start || effectiveTask.date
+        let nextDate = getNextOccurrenceAfter(
+          effectiveTask.recur!,
+          effectiveTask.recur_days || [],
+          anchorStart,
+          effectiveTask.date
+        )
+        while (
+          nextDate &&
+          (completedGroupDates.has(`${effectiveTask.recur_group_id}_${nextDate}`) ||
+            batchTargetGroupDates.has(`${effectiveTask.recur_group_id}_${nextDate}`))
+        ) {
+          nextDate = getNextOccurrenceAfter(
+            effectiveTask.recur!,
+            effectiveTask.recur_days || [],
+            anchorStart,
+            nextDate
+          )
+        }
+
+        if (nextDate) {
+          const { error: updErr } = await sbClient
+            .from('tasks')
+            .update({ date: nextDate, recur_start: anchorStart })
+            .eq('id', effectiveTask.id)
+          if (updErr) return false
+          updatedMasters.set(effectiveTask.id, { date: nextDate, recur_start: anchorStart })
+        } else {
+          const { error: delErr } = await sbClient.from('tasks').delete().eq('id', effectiveTask.id)
+          if (delErr) return false
+          deletedRealTaskIds.add(effectiveTask.id)
+        }
+        addedSkippedTasks.push(skipped)
+        return true
+      }
+
+      const { error } = await sbClient.from('tasks').delete().eq('id', effectiveTask.id)
+      if (error) return false
+      deletedRealTaskIds.add(effectiveTask.id)
+      return true
+    } catch (err) {
+      console.error('❌ Erro no fallback individual de exclusão:', t.id, err)
+      return false
+    }
+  }
+
+  for (let i = 0; i < authorizedTargets.length; i += chunkSize) {
+    const chunk = authorizedTargets.slice(i, i + chunkSize)
+    const chunkSkippedRows: Task[] = []
+    const chunkNonRecurDeleteIds: string[] = []
+    const chunkMasters: Task[] = []
+
+    for (const t of chunk) {
+      const isVirtual = t.id.startsWith('virtual_')
+      const groupDateKey = t.recur_group_id && t.date ? `${t.recur_group_id}_${t.date}` : ''
+      const promotedMaster = isVirtual && groupDateKey ? openMasterByGroupDate.get(groupDateKey) : undefined
+      const effectiveTask = promotedMaster || liveTasksMap.get(t.id) || t
+      const isRecurringMaster = Boolean(
+        !effectiveTask.id.startsWith('virtual_') &&
+          (effectiveTask as any).recur_group_id &&
+          effectiveTask.recur &&
+          effectiveTask.recur !== 'none'
+      )
+      const isVirtualOnly = effectiveTask.id.startsWith('virtual_') && !promotedMaster
+
+      if (isVirtualOnly) {
+        chunkSkippedRows.push(buildCompletedTaskPayload(effectiveTask, genId(), completedAt))
+      } else if (isRecurringMaster) {
+        chunkSkippedRows.push(buildCompletedTaskPayload(effectiveTask, genId(), completedAt))
+        chunkMasters.push(effectiveTask)
+      } else {
+        chunkNonRecurDeleteIds.push(effectiveTask.id)
+      }
+    }
+
+    let chunkBatchSucceeded = false
+    try {
+      if (chunkSkippedRows.length > 0) {
+        const { error: insErr } = await sbClient.from('tasks').insert(chunkSkippedRows)
+        if (insErr) throw insErr
+      }
+
+      if (chunkNonRecurDeleteIds.length > 0) {
+        const { error: delErr } = await sbClient.from('tasks').delete().in('id', chunkNonRecurDeleteIds)
+        if (delErr) {
+          if (chunkSkippedRows.length > 0) {
+            await sbClient.from('tasks').delete().in('id', chunkSkippedRows.map(r => r.id))
+          }
+          throw delErr
+        }
+      }
+
+      if (chunkMasters.length > 0) {
+        for (const row of chunkSkippedRows) {
+          if (row.recur_group_id && row.date) {
+            completedGroupDates.add(`${row.recur_group_id}_${row.date}`)
+          }
+        }
+
+        const masterResults = await Promise.all(
+          chunkMasters.map(async master => {
+            const anchorStart = master.recur_start || master.date
+            let nextDate = getNextOccurrenceAfter(
+              master.recur!,
+              master.recur_days || [],
+              anchorStart,
+              master.date
+            )
+            while (
+              nextDate &&
+              (completedGroupDates.has(`${master.recur_group_id}_${nextDate}`) ||
+                batchTargetGroupDates.has(`${master.recur_group_id}_${nextDate}`))
+            ) {
+              nextDate = getNextOccurrenceAfter(
+                master.recur!,
+                master.recur_days || [],
+                anchorStart,
+                nextDate
+              )
+            }
+
+            if (nextDate) {
+              const { error: updErr } = await sbClient
+                .from('tasks')
+                .update({ date: nextDate, recur_start: anchorStart })
+                .eq('id', master.id)
+              return { masterId: master.id, nextDate, anchorStart, error: updErr }
+            } else {
+              const { error: delErr } = await sbClient.from('tasks').delete().eq('id', master.id)
+              return { masterId: master.id, nextDate: null, anchorStart, error: delErr }
+            }
+          })
+        )
+
+        const failedMaster = masterResults.find(r => r.error)
+        if (failedMaster) throw failedMaster.error
+
+        for (const r of masterResults) {
+          if (r.nextDate) {
+            updatedMasters.set(r.masterId, { date: r.nextDate, recur_start: r.anchorStart })
+          } else {
+            deletedRealTaskIds.add(r.masterId)
+          }
+        }
+      }
+
+      chunkBatchSucceeded = true
+      for (const t of chunk) {
+        deletedIds.push(t.id)
+      }
+      for (const row of chunkSkippedRows) {
+        addedSkippedTasks.push(row)
+        if (row.recur_group_id && row.date) {
+          completedGroupDates.add(`${row.recur_group_id}_${row.date}`)
+        }
+      }
+      for (const delId of chunkNonRecurDeleteIds) {
+        deletedRealTaskIds.add(delId)
+      }
+
+      done += chunk.length
+      onProgress?.(done, total, {
+        done,
+        succeeded: deletedIds.length,
+        failed: failedIds.length,
+        pending: Math.max(0, total - done),
+        total,
+      })
+    } catch (chunkErr) {
+      console.warn('⚠️ Falha no lote de exclusão; executando fallback item a item para o lote:', chunkErr)
+      chunkBatchSucceeded = false
+    }
+
+    if (!chunkBatchSucceeded) {
+      for (const t of chunk) {
+        const ok = await processSingleDeleteFallback(t)
+        if (ok) {
+          deletedIds.push(t.id)
+        } else {
+          failedIds.push(t.id)
+        }
+        done++
+        onProgress?.(done, total, {
+          done,
+          succeeded: deletedIds.length,
+          failed: failedIds.length,
+          pending: Math.max(0, total - done),
+          total,
+        })
+      }
+    }
+  }
+
+  const nextTasks = [
+    ...initialTasks
+      .filter(t => !deletedRealTaskIds.has(t.id))
+      .map(t => {
+        const upd = updatedMasters.get(t.id)
+        return upd ? { ...t, date: upd.date, recur_start: upd.recur_start || t.recur_start } : t
+      }),
+    ...addedSkippedTasks,
+  ]
+
+  return {
+    deletedIds,
+    failedIds,
+    nextTasks,
+  }
+}
+
 export function useAppData(currentUser?: User | null) {
   const [tasks, setTasks] = useState<Task[]>([])
   const [hist, setHist] = useState<Task[]>([])
@@ -367,6 +1149,8 @@ export function useAppData(currentUser?: User | null) {
 
   const tasksRef = useRef<Task[]>(tasks)
   tasksRef.current = tasks
+  const histRef = useRef<Task[]>(hist)
+  histRef.current = hist
   const expandedTasksRef = useRef<Task[]>(expandedTasks)
   expandedTasksRef.current = expandedTasks
 
@@ -390,45 +1174,21 @@ export function useAppData(currentUser?: User | null) {
 
     if (!t || !canAccessTaskRecord(currentUser, t)) return false
 
-
+    const isRecurringMaster = Boolean(!isVirtual && (t as any).recur_group_id && t.recur && t.recur !== 'none')
     const completedAt = new Date().toLocaleDateString('pt-BR')
-    const histId = isVirtual ? genId() : t.id
-    const histItem = {
-      id: histId,
-      descricao: t.descricao,
-      resp: t.resp,
-      date: t.date || null,
-      prio: t.prio || 'Média',
-      status: 'Concluída' as const,
-      all_day: t.all_day !== undefined ? t.all_day : true,
-      time_start: t.time_start || null,
-      time_end: t.time_end || null,
-      tags: t.tags || [],
-      recur: t.recur || 'none',
-      recur_days: t.recur_days || [],
-      recur_start: t.recur_start || null,
-      recur_group_id: (t as any).recur_group_id || null,
-      subtasks: t.subtasks || [],
-      notes: t.notes || null,
-      is_meeting: t.is_meeting || false,
-      completed_at: completedAt,
-    }
+    const histId = isVirtual || isRecurringMaster ? genId() : t.id
+    const histItem = buildHistItemPayload(t, histId, completedAt)
 
-    const { error: histErr } = await sb.from('hist').insert(histItem)
+    const { error: histErr } = await sb.from('hist').upsert(histItem, { onConflict: 'id' })
     if (histErr) { console.error('Erro hist:', histErr); return false }
 
     if (isVirtual) {
       // Tarefa virtual: materializa como concluída no banco
-      const { isVirtual: _iv, ...payload } = t as any
-      const completedPayload = {
-        ...payload,
-        id: histItem.id,
-        status: 'Concluída' as const,
-        completed_at: completedAt,
-      }
+      const completedPayload = buildCompletedTaskPayload(t, histItem.id, completedAt)
       const { error } = await sb.from('tasks').insert(completedPayload)
       if (error) {
         console.warn('Aviso: não materializou virtual como concluída:', error)
+        await sb.from('hist').delete().eq('id', histItem.id)
         return false
       }
       // Atualiza estado local para remover virtual imediatamente das pendências
@@ -436,40 +1196,41 @@ export function useAppData(currentUser?: User | null) {
       tasksRef.current = nextTasks
       setTasks(nextTasks)
 
-    } else if ((t as any).recur_group_id && t.recur && t.recur !== 'none') {
+    } else if (isRecurringMaster) {
       // ── TAREFA MESTRE RECORRENTE ────────────────────────────
       // 1. Materializa a data original como concluída (bloqueia re-geração virtual)
       // 2. Avança o mestre para a próxima ocorrência
       const originalDate = t.date
-      const completedRecord = {
-        ...(t as any),
-        id: genId(),
-        date: originalDate,
-        status: 'Concluída' as const,
-        completed_at: completedAt,
-        isVirtual: undefined,
-      }
+      const completedRecord = buildCompletedTaskPayload(t, histItem.id, completedAt)
       const { error: insErr } = await sb.from('tasks').insert(completedRecord)
       if (insErr) {
         console.error('Erro ao inserir registro concluído recorrente:', insErr)
+        await sb.from('hist').delete().eq('id', histItem.id)
         return false
       }
 
       // Avança o mestre para a próxima ocorrência
       const baseDate = originalDate < getTodayStr() ? getTodayStr() : originalDate
-      const nextDate = getNextOccurrenceAfter(
+      const anchorStart = t.recur_start || originalDate
+      let nextDate = getNextOccurrenceAfter(
         t.recur!,
         t.recur_days || [],
-        t.recur_start || originalDate,
+        anchorStart,
         baseDate
       )
+      while (
+        nextDate &&
+        tasksRef.current.some(x => x.recur_group_id === t!.recur_group_id && x.date === nextDate && x.status === 'Concluída')
+      ) {
+        nextDate = getNextOccurrenceAfter(t.recur!, t.recur_days || [], anchorStart, nextDate)
+      }
       if (nextDate) {
-        const { error: updErr } = await sb.from('tasks').update({ date: nextDate }).eq('id', id)
+        const { error: updErr } = await sb.from('tasks').update({ date: nextDate, recur_start: anchorStart }).eq('id', id)
         if (updErr) {
           console.error('Erro ao avançar tarefa mestre recorrente:', updErr)
           return false
         }
-        const nextTasks = [...tasksRef.current, completedRecord].map(x => x.id === id ? { ...x, date: nextDate } : x)
+        const nextTasks = [...tasksRef.current, completedRecord].map(x => x.id === id ? { ...x, date: nextDate, recur_start: anchorStart } : x)
         tasksRef.current = nextTasks
         setTasks(nextTasks)
       } else {
@@ -496,7 +1257,9 @@ export function useAppData(currentUser?: User | null) {
       setTasks(nextTasks)
     }
 
-    setHist(prev => [histItem as unknown as Task, ...prev])
+    const nextHist = [histItem as unknown as Task, ...histRef.current.filter(h => h.id !== histItem.id)]
+    histRef.current = nextHist
+    setHist(nextHist)
     return true
   }, [currentUser, tasks, expandedTasks])
 
@@ -690,6 +1453,58 @@ export function useAppData(currentUser?: User | null) {
       return true
     }
   }, [currentUser, tasks, expandedTasks])
+
+  // ── BULK COMPLETE & BULK DELETE (OTIMIZADO EM LOTE) ───────
+  const completeTasksBulk = useCallback(
+    async (
+      targets: Task[],
+      onProgress?: (done: number, total: number, detail: BulkProgressDetail) => void
+    ): Promise<{ completedIds: string[]; failedIds: string[] }> => {
+      const res = await runBulkCompleteEngine({
+        targets,
+        currentUser,
+        initialTasks: tasksRef.current,
+        initialHist: histRef.current,
+        sbClient: sb,
+        onProgress,
+      })
+
+      tasksRef.current = res.nextTasks
+      histRef.current = res.nextHist
+      setTasks(res.nextTasks)
+      setHist(res.nextHist)
+
+      return {
+        completedIds: res.completedIds,
+        failedIds: res.failedIds,
+      }
+    },
+    [currentUser]
+  )
+
+  const deleteAtrasadasBulk = useCallback(
+    async (
+      targets: Task[],
+      onProgress?: (done: number, total: number, detail: BulkProgressDetail) => void
+    ): Promise<{ deletedIds: string[]; failedIds: string[] }> => {
+      const res = await runBulkDeleteEngine({
+        targets,
+        currentUser,
+        initialTasks: tasksRef.current,
+        sbClient: sb,
+        onProgress,
+      })
+
+      tasksRef.current = res.nextTasks
+      setTasks(res.nextTasks)
+
+      return {
+        deletedIds: res.deletedIds,
+        failedIds: res.failedIds,
+      }
+    },
+    [currentUser]
+  )
 
   // ── MEETINGS ──────────────────────────────────────────────
   const saveMeet = useCallback(async (meetData: Partial<Meeting>, editId?: string): Promise<boolean> => {
@@ -946,7 +1761,7 @@ export function useAppData(currentUser?: User | null) {
     allAtrasadas, backups, pops,
     setTasks, setHist, setMeets, setTeam, setPops,
     loadAll, loadPops,
-    saveTask, completeTask, deleteTask, cycleStatus, reorderTasks, reopenTask, deleteAtrasada,
+    saveTask, completeTask, completeTasksBulk, deleteTask, cycleStatus, reorderTasks, reopenTask, deleteAtrasada, deleteAtrasadasBulk,
     saveMeet, deleteMeet,
     toggleSubtask, addSubtask, deleteSubtask,
     updateTeamMember,
