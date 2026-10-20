@@ -45,12 +45,13 @@ export default function App() {
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Tema claro / escuro
+  // Tema claro / escuro (Navy Executive usa 'light' como padrão)
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    return (localStorage.getItem('pulse-theme') as 'dark' | 'light') || 'dark'
+    const saved = localStorage.getItem('pulse-theme')
+    return (saved === 'dark' || saved === 'light') ? saved : 'light'
   })
   useEffect(() => {
-    document.documentElement.dataset.theme = theme === 'light' ? 'light' : ''
+    document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark'
     localStorage.setItem('pulse-theme', theme)
   }, [theme])
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
@@ -340,6 +341,10 @@ export default function App() {
         atrasadas={data.allAtrasadas}
         hist={data.hist}
         team={data.team}
+        viewingAll={isAdmin ? viewingAll : false}
+        memberFilter={isAdmin ? memberFilter : currentUser.name}
+        setViewingAll={setViewingAll}
+        setMemberFilter={setMemberFilter}
         onLogout={logout}
         onUpdateUser={updateUser}
         showToast={showToast}

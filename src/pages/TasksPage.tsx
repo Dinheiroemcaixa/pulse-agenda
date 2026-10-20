@@ -1,9 +1,7 @@
 import { useState, useRef } from 'react'
 import type { Task, TeamMember, User, ViewMode, FilterMode, Pop } from '../types'
-import { isLate, dateTimeLabel, dateStatus, getInitials, getTodayStr, priorityClass, RECUR_LABELS, MONTHS_LONG } from '../lib/utils'
+import { isLate, dateTimeLabel, dateStatus, getInitials, getTodayStr, priorityClass, RECUR_LABELS, MONTHS_SHORT, MONTHS_LONG } from '../lib/utils'
 import { PopRunnerModal } from '../components/PopRunnerModal'
-import { resolveTaskPopId } from '../lib/popsApi'
-import logoImg from '../assets/logo-dinheiro-transparent.png'
 
 interface Props {
   tasks: Task[]
@@ -39,6 +37,79 @@ interface Props {
   toggleTheme?: () => void
 }
 
+function toTitleCaseName(str: string): string {
+  if (!str) return ''
+  return str
+    .trim()
+    .split(/\s+/)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ')
+}
+
+function formatReadableTaskTitle(desc: string): string {
+  if (!desc) return ''
+  const trimmed = desc.trim()
+  const lettersOnly = trimmed.replace(/[^a-zA-ZÀ-ÿ]/g, '')
+  if (lettersOnly.length > 3 && lettersOnly === lettersOnly.toUpperCase()) {
+    const acronyms = new Set([
+      'II', 'III', 'IV', 'VI', 'POP', 'DRE', 'BPO', 'TI', 'RH', 'MEI', 'CNPJ', 'CPF',
+      'FGTS', 'INSS', 'DAS', 'DARF', 'ISS', 'ICMS', 'PIS', 'COFINS', 'IRPJ', 'CSLL',
+      'XML', 'PDF', 'NFE', 'NFSE', 'PIX', 'TED', 'DOC', 'OFX', 'TR', 'GTNET', 'LM'
+    ])
+    const lowerWords = new Set(['de', 'da', 'do', 'das', 'dos', 'a', 'o', 'as', 'os', 'e', 'em', 'para', 'por', 'com', 'no', 'na', 'nos', 'nas'])
+    const properNouns: Record<string, string> = {
+      'itau': 'Itaú',
+      'itaú': 'Itaú',
+      'sicoob': 'Sicoob',
+      'sicredi': 'Sicredi',
+      'bradesco': 'Bradesco',
+      'santander': 'Santander',
+      'brasil': 'Brasil',
+      'caixa': 'Caixa',
+      'inter': 'Inter',
+      'nubank': 'Nubank',
+      'cora': 'Cora',
+      'matriz': 'Matriz',
+      'filial': 'Filial',
+      'stuttgard': 'Stuttgard',
+      'detroit': 'Detroit',
+      'pedro': 'Pedro',
+      'pneus': 'Pneus',
+      'phenix': 'Phenix',
+      'hanover': 'Hanover',
+    }
+    return trimmed
+      .split(/\s+/)
+      .map((word, index) => {
+        const cleanUpper = word.replace(/[^a-zA-ZÀ-ÿ0-9]/g, '').toUpperCase()
+        if (acronyms.has(cleanUpper)) return word.toUpperCase()
+        const lower = word.toLowerCase()
+        if (properNouns[lower]) return properNouns[lower]
+        if (index === 0) return lower.charAt(0).toUpperCase() + lower.slice(1)
+        if (lowerWords.has(lower)) return lower
+        return lower
+      })
+      .join(' ')
+  }
+  return desc
+}
+
+function formatNavyDatePrimary(d: string): string {
+  if (!d) return '—'
+  const parts = d.split('-')
+  if (parts.length !== 3) return d
+  const [, m, day] = parts
+  const monthName = (MONTHS_SHORT[+m - 1] || '').toLowerCase()
+  return `${day} ${monthName}`
+}
+
+function formatNavyDateInputDisplay(d: string): string {
+  if (!d) return 'Todas as datas'
+  const parts = d.split('-')
+  if (parts.length !== 3) return d
+  return `${parts[2]}/${parts[1]}/${parts[0]}`
+}
+
 export function TasksPage(props: Props) {
   const { tasks, team, currentUser, isAdmin, viewMode, filterMode, searchQ, dateFilter, viewingAll: rawViewingAll, memberFilter } = props
   const viewingAll = isAdmin && rawViewingAll
@@ -50,32 +121,53 @@ export function TasksPage(props: Props) {
   const [selectedAgendaDay, setSelectedAgendaDay] = useState<string | null>(null)
   const [activePopTask, setActivePopTask] = useState<Task | null>(null)
   const dragSrc = useRef<string | null>(null)
+  const dateInputRef = useRef<HTMLInputElement | null>(null)
 
   const getMember = (name: string) => team.find(m => m.name === name)
 
-  const getFiltered = () => {
-    const todayStr = getTodayStr()
-    let list = tasks.filter(t => t.status !== 'Concluída')
-    
-    // Filtro de visibilidade inteligente (solicitação do usuário)
-    // Se não há filtro de data, oculta instâncias virtuais futuras para não poluir a lista
+  const todayStr = getTodayStr()
+
+  // Base filtrada por escopo (minhas/equipe + membro) e busca, com visibilidade inteligente de virtuais
+  const getScopedTasks = () => {
+    let base = tasks.filter(t => t.status !== 'Concluída')
+
     if (!dateFilter) {
-      list = list.filter(t => {
+      base = base.filter(t => {
         const isVirtual = (t as any).isVirtual
         const isFuture = t.date && t.date > todayStr
-        // Regra: Mostra se (Não é virtual) OU (É hoje/atrasada) OU (É reunião)
-        // Isso permite ver tarefas não-recorrentes futuras e reuniões, mas não as repetições diárias
         return !isVirtual || !isFuture || t.is_meeting
       })
     }
 
+    if (!viewingAll) {
+      base = base.filter(t => (t.resp || '').trim().toLowerCase() === (currentUser.name || '').trim().toLowerCase())
+    } else if (memberFilter && memberFilter !== 'all') {
+      base = base.filter(t => (t.resp || '').trim().toLowerCase() === memberFilter.trim().toLowerCase())
+    }
+
+    if (searchQ) {
+      const q = searchQ.toLowerCase()
+      base = base.filter(t => (t.descricao || '').toLowerCase().includes(q) || (t.resp || '').toLowerCase().includes(q))
+    }
+
+    return base
+  }
+
+  const scopedTasks = getScopedTasks()
+  const dateFilteredScopedTasks = dateFilter ? scopedTasks.filter(t => t.date === dateFilter) : scopedTasks
+
+  // Contadores reais nas abas de status respeitando escopo, busca e data (Atrasadas ignora dateFilter)
+  const countAll = dateFilteredScopedTasks.length
+  const countOpen = dateFilteredScopedTasks.filter(t => !isLate(t) && t.status === 'Em Aberto').length
+  const countLate = scopedTasks.filter(t => isLate(t)).length
+
+  const getFiltered = () => {
+    let list = [...scopedTasks]
+
     if (filterMode === 'open') list = list.filter(t => !isLate(t) && t.status === 'Em Aberto')
     else if (filterMode === 'late') list = list.filter(t => isLate(t))
     else if (filterMode === 'alta') list = list.filter(t => t.prio === 'Alta')
-    if (!viewingAll) list = list.filter(t => (t.resp || '').trim().toLowerCase() === (currentUser.name || '').trim().toLowerCase())
-    else if (memberFilter && memberFilter !== 'all') list = list.filter(t => (t.resp || '').trim().toLowerCase() === memberFilter.trim().toLowerCase())
-    if (searchQ) list = list.filter(t => (t.descricao || '').toLowerCase().includes(searchQ.toLowerCase()) || (t.resp || '').toLowerCase().includes(searchQ.toLowerCase()))
-    
+
     if (dateFilter && filterMode !== 'late') {
       list = list.filter(t => t.date === dateFilter)
     }
@@ -99,130 +191,284 @@ export function TasksPage(props: Props) {
     await props.onReorder(reordered)
   }
 
-
   const recurLabel = (t: Task) => {
     if (!t.recur || t.recur === 'none') return null
-    const label = t.recur === 'custom' && t.recur_days?.length ? t.recur_days.join(',') : RECUR_LABELS[t.recur] || ''
-    return <span className="recur-badge">🔁 {label}</span>
+    const label = t.recur === 'custom' && t.recur_days?.length ? t.recur_days.join(', ') : RECUR_LABELS[t.recur] || ''
+    return (
+      <span className="navy-meta-item">
+        <span className="material-symbols-outlined navy-meta-icon">repeat</span>
+        {label}
+      </span>
+    )
   }
 
   const statusBadge = (t: Task) => {
-    if (isLate(t)) return <span className="status-badge status-atrasada"><span className="spdot" /> Atrasada</span>
-    if (t.status === 'Em Andamento') return <span className="status-badge status-andamento" style={{ cursor: 'pointer' }} onClick={() => props.onCycleStatus(t.id)}><span className="spdot" /> Em Andamento</span>
-    return <span className="status-badge status-aberto" style={{ cursor: 'pointer' }} onClick={() => props.onCycleStatus(t.id)}><span className="spdot" /> Em Aberto</span>
+    if (isLate(t)) {
+      return (
+        <span
+          className="navy-status-pill navy-status-late"
+        >
+          <span className="navy-status-dot" />
+          Atrasada
+        </span>
+      )
+    }
+    if (t.status === 'Em Andamento') {
+      return (
+        <span
+          className="navy-status-pill navy-status-progress"
+          style={{ cursor: 'pointer' }}
+          onClick={() => props.onCycleStatus(t.id)}
+          title="Clique para alternar status"
+        >
+          <span className="navy-status-dot" />
+          Em andamento
+        </span>
+      )
+    }
+    return (
+      <span
+        className="navy-status-pill navy-status-open"
+        style={{ cursor: 'pointer' }}
+        onClick={() => props.onCycleStatus(t.id)}
+        title="Clique para alternar status"
+      >
+        <span className="navy-status-dot" />
+        Em aberto
+      </span>
+    )
   }
 
-  // ── LIST VIEW ──────────────────────────────────────────────
+  // ── LIST VIEW (NAVY EXECUTIVE) ─────────────────────────────
 
   const renderList = () => (
-    <div className="task-table">
-      <div className="th">
-        <div className="thc">#</div>
-        <div className="thc" />
-        <div className="thc">Tarefa</div>
-        <div className="thc">Responsável</div>
-        <div className="thc">Data / Hora</div>
-        <div className="thc">Prioridade</div>
-        <div className="thc">Status</div>
-        <div className="thc">Ações</div>
+    <div className="navy-table">
+      <div className="navy-thead">
+        <span className="navy-th-center">#</span>
+        <span />
+        <span>TAREFA</span>
+        <span>RESPONSÁVEL</span>
+        <span>DATA / HORA</span>
+        <span>PRIORIDADE</span>
+        <span>STATUS</span>
+        <span className="navy-th-right">AÇÕES</span>
       </div>
       {list.length === 0 && (
-        <div className="es"><div className="ei">✅</div><div className="et">Nenhuma tarefa aqui!</div><div>Crie uma nova tarefa ou mude o filtro</div></div>
+        <div className="navy-empty-state">
+          <span className="material-symbols-outlined navy-empty-icon">task_alt</span>
+          <div className="navy-empty-title">Nenhuma tarefa encontrada</div>
+          <div className="navy-empty-sub">Crie uma nova tarefa ou ajuste os filtros da barra superior.</div>
+        </div>
       )}
       {list.map((t, idx) => {
         const m = getMember(t.resp)
-        const mc = m?.color || '#4f6ef7'
+        const mc = m?.color || '#3D55D6'
         const sub = t.subtasks || []
         const doneSub = sub.filter(s => s.done).length
-        const prog = sub.length ? Math.round(doneSub / sub.length * 100) : 0
+        const allSubDone = sub.length > 0 && doneSub === sub.length
+        const prog = sub.length ? Math.round((doneSub / sub.length) * 100) : 0
         const isExp = expandedTasks[t.id]
+        const late = isLate(t)
         const ds = dateStatus(t.date)
+        const isTodayDate = t.date === todayStr
+        const timeSubLabel = !t.all_day && t.time_start
+          ? `${t.time_start}${t.time_end ? '–' + t.time_end : ''}`
+          : late
+            ? 'Atrasada'
+            : isTodayDate
+              ? 'Hoje'
+              : ds === 'soon'
+                ? 'Em breve'
+                : 'Agendada'
+
+        const prioDotClass =
+          t.prio === 'Alta'
+            ? 'navy-prio-dot-alta'
+            : t.prio === 'Média'
+              ? 'navy-prio-dot-media'
+              : 'navy-prio-dot-baixa'
 
         return (
-          <div key={t.id}>
+          <div key={t.id} className="navy-row-group">
             <div
-              className={`tr${isLate(t) ? ' late-row' : ''}`}
+              className={`navy-tr${late ? ' navy-tr-late' : ''}${isExp || expandedNotes[t.id] ? ' navy-tr-expanded' : ''}`}
               draggable
-              onDragStart={e => { dragSrc.current = t.id; e.dataTransfer.effectAllowed = 'move'; setTimeout(() => e.currentTarget.classList.add('dragging-row'), 0) }}
-              onDragEnd={e => { e.currentTarget.classList.remove('dragging-row'); dragSrc.current = null }}
-              onDragOver={e => { e.preventDefault(); const mid = e.currentTarget.getBoundingClientRect().top + e.currentTarget.getBoundingClientRect().height / 2; e.currentTarget.classList.toggle('drag-over-row', e.clientY < mid); e.currentTarget.classList.toggle('drag-over-row-bottom', e.clientY >= mid) }}
-              onDragLeave={e => { e.currentTarget.classList.remove('drag-over-row', 'drag-over-row-bottom') }}
+              onDragStart={e => {
+                dragSrc.current = t.id
+                e.dataTransfer.effectAllowed = 'move'
+                setTimeout(() => e.currentTarget.classList.add('dragging-row'), 0)
+              }}
+              onDragEnd={e => {
+                e.currentTarget.classList.remove('dragging-row')
+                dragSrc.current = null
+              }}
+              onDragOver={e => {
+                e.preventDefault()
+                const mid = e.currentTarget.getBoundingClientRect().top + e.currentTarget.getBoundingClientRect().height / 2
+                e.currentTarget.classList.toggle('drag-over-row', e.clientY < mid)
+                e.currentTarget.classList.toggle('drag-over-row-bottom', e.clientY >= mid)
+              }}
+              onDragLeave={e => {
+                e.currentTarget.classList.remove('drag-over-row', 'drag-over-row-bottom')
+              }}
               onDrop={async e => {
-                e.preventDefault(); e.currentTarget.classList.remove('drag-over-row', 'drag-over-row-bottom')
+                e.preventDefault()
+                e.currentTarget.classList.remove('drag-over-row', 'drag-over-row-bottom')
                 if (!dragSrc.current || dragSrc.current === t.id) return
                 const before = e.clientY < e.currentTarget.getBoundingClientRect().top + e.currentTarget.getBoundingClientRect().height / 2
                 await handleDrop(dragSrc.current, t.id, before)
               }}
             >
-              <div className="tr-num">{idx + 1}</div>
-              <div className="ck" onClick={() => props.onComplete(t.id)} title="Concluir" />
-              <div className="ti2">
-                <div className="tn">{t.descricao}</div>
-                <div className="tt">
-                  {recurLabel(t)}
-                  {sub.length > 0 && (
-                    <span style={{ fontSize: 10, color: 'var(--text3)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }} onClick={() => setExpandedTasks(prev => ({ ...prev, [t.id]: !prev[t.id] }))}>
-                      📌 {doneSub}/{sub.length}
-                      <div className="prog-bar"><div className="prog-fill" style={{ width: `${prog}%` }} /></div>
-                      {isExp ? '▲' : '▼'}
-                    </span>
-                  )}
-                </div>
+              <span className="navy-td-num">{idx + 1}</span>
+              <button
+                type="button"
+                className="navy-ck"
+                onClick={() => props.onComplete(t.id)}
+                title="Concluir tarefa"
+                aria-label={`Concluir ${t.descricao}`}
+              />
+              <div className="navy-task-cell">
+                <span className="navy-task-title" title={t.descricao}>
+                  {formatReadableTaskTitle(t.descricao)}
+                </span>
+                {((t.recur && t.recur !== 'none') || sub.length > 0) && (
+                  <div className="navy-task-meta">
+                    {recurLabel(t)}
+                    {sub.length > 0 && (
+                      <button
+                        type="button"
+                        className="navy-sub-trigger"
+                        onClick={() => setExpandedTasks(prev => ({ ...prev, [t.id]: !prev[t.id] }))}
+                      >
+                        <span className="material-symbols-outlined navy-meta-icon">checklist</span>
+                        <span className="navy-sub-fraction">{doneSub}/{sub.length}</span>
+                        <span className="navy-sub-bar">
+                          <span
+                            className="navy-sub-fill"
+                            style={{
+                              width: `${prog}%`,
+                              background: allSubDone ? '#1F9D6B' : '#2F46B8',
+                            }}
+                          />
+                        </span>
+                        <span className="material-symbols-outlined navy-sub-chevron">
+                          {isExp ? 'expand_less' : 'expand_more'}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="asgn">
-                <div className="avsm" style={{ background: mc }}>{getInitials(t.resp)}</div>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: 'var(--text2)' }}>{t.resp.split(' ')[0]}</span>
-              </div>
-              <div className={`dc${ds ? ' ' + ds : ''}`}>📅 {dateTimeLabel(t)}</div>
-              <div><span className={`pb ${priorityClass(t.prio)}`}>{t.prio}</span></div>
-              <div>{statusBadge(t)}</div>
-              <div className="ra">
+
+              <span className="navy-resp-cell">
+                <span className="navy-resp-av" style={{ background: mc }}>
+                  {getInitials(t.resp)}
+                </span>
+                <span className="navy-resp-name">{toTitleCaseName((t.resp || '').split(' ')[0])}</span>
+              </span>
+
+              <span className="navy-date-cell">
+                <span className={`navy-date-main${late ? ' navy-date-late' : ''}`}>
+                  {formatNavyDatePrimary(t.date)}
+                </span>
+                <span className={`navy-date-sub${late ? ' navy-date-late' : ''}`}>
+                  {timeSubLabel}
+                </span>
+              </span>
+
+              <span className={`navy-prio-cell${t.prio === 'Alta' ? ' navy-prio-alta-text' : ''}`}>
+                <span className={`navy-prio-dot ${prioDotClass}`} />
+                {t.prio}
+              </span>
+
+              <span>{statusBadge(t)}</span>
+
+              <div className="navy-actions-cell">
                 <button
                   type="button"
-                  className="act"
+                  className="navy-pop-btn"
                   title="Ver POP — Como executar"
                   onClick={() => setActivePopTask(t)}
-                  style={{
-                    height: 26,
-                    padding: '0 9px',
-                    borderRadius: 6,
-                    border: '1px solid #3b52d6',
-                    background: '#1b2550',
-                    color: '#a9b8ff',
-                    font: "600 11px 'IBM Plex Sans', sans-serif",
-                    cursor: 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}
                 >
                   POP
                 </button>
-                {t.notes && <button className="act" onClick={() => setExpandedNotes(prev => ({ ...prev, [t.id]: !prev[t.id] }))}>📝</button>}
-                <button className="act edt" onClick={() => props.openEditTask(t.id)}>✎</button>
-                <button className="act del" onClick={() => setConfirmDel({ id: t.id, isRecurring: !!(t.recur && t.recur !== 'none') })}>✕</button>
+                {t.notes && (
+                  <button
+                    type="button"
+                    className={`navy-icon-act${expandedNotes[t.id] ? ' active' : ''}`}
+                    title="Ver anotações"
+                    onClick={() => setExpandedNotes(prev => ({ ...prev, [t.id]: !prev[t.id] }))}
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: 17 }}>sticky_note_2</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="navy-icon-act"
+                  title="Editar tarefa"
+                  onClick={() => props.openEditTask(t.id)}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 17 }}>edit</span>
+                </button>
+                <button
+                  type="button"
+                  className="navy-icon-act navy-icon-del"
+                  title="Excluir tarefa"
+                  onClick={() => setConfirmDel({ id: t.id, isRecurring: !!(t.recur && t.recur !== 'none') })}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: 17 }}>delete</span>
+                </button>
               </div>
             </div>
+
             {expandedNotes[t.id] && t.notes && (
-              <div className="sub-wrap">
-                <div className="notes-display" style={{ padding: '8px 14px', whiteSpace: 'pre-wrap', color: 'var(--text2)', fontSize: 13, lineHeight: 1.5 }}>
+              <div className="navy-drawer">
+                <div className="navy-notes-box">
                   {t.notes}
                 </div>
               </div>
             )}
+
             {isExp && sub.length > 0 && (
-              <div className="sub-wrap">
+              <div className="navy-drawer">
                 {sub.map((s, si) => (
-                  <div key={si} className="sub-item">
-                    <div className={`sub-ck${s.done ? ' done' : ''}`} onClick={() => props.onToggleSub(t.id, si)} />
-                    <span className={`sub-text${s.done ? ' done' : ''}`} style={{ flex: 1 }}>{s.text}</span>
-                    <button className="sub-del" onClick={() => props.onDeleteSub(t.id, si)}>✕</button>
+                  <div key={si} className="sub-item navy-sub-item">
+                    <div
+                      className={`sub-ck${s.done ? ' done' : ''}`}
+                      onClick={() => props.onToggleSub(t.id, si)}
+                    />
+                    <span className={`sub-text${s.done ? ' done' : ''}`} style={{ flex: 1 }}>
+                      {s.text}
+                    </span>
+                    <button className="sub-del" onClick={() => props.onDeleteSub(t.id, si)}>
+                      ✕
+                    </button>
                   </div>
                 ))}
-                <div className="sub-add-row">
-                  <input className="sub-add-input" placeholder="Nova subtarefa..." value={subInputs[t.id] || ''} onChange={e => setSubInputs(prev => ({ ...prev, [t.id]: e.target.value }))}
-                    onKeyDown={async e => { if (e.key === 'Enter' && subInputs[t.id]?.trim()) { await props.onAddSub(t.id, subInputs[t.id].trim()); setSubInputs(prev => ({ ...prev, [t.id]: '' })) } }} />
-                  <button className="sub-add-btn" onClick={async () => { if (subInputs[t.id]?.trim()) { await props.onAddSub(t.id, subInputs[t.id].trim()); setSubInputs(prev => ({ ...prev, [t.id]: '' })) } }}>+ Add</button>
+                <div className="sub-add-row navy-sub-add-row">
+                  <input
+                    className="sub-add-input navy-sub-input"
+                    placeholder="Nova subtarefa..."
+                    value={subInputs[t.id] || ''}
+                    onChange={e => setSubInputs(prev => ({ ...prev, [t.id]: e.target.value }))}
+                    onKeyDown={async e => {
+                      if (e.key === 'Enter' && subInputs[t.id]?.trim()) {
+                        await props.onAddSub(t.id, subInputs[t.id].trim())
+                        setSubInputs(prev => ({ ...prev, [t.id]: '' }))
+                      }
+                    }}
+                  />
+                  <button
+                    className="sub-add-btn navy-sub-add-btn"
+                    onClick={async () => {
+                      if (subInputs[t.id]?.trim()) {
+                        await props.onAddSub(t.id, subInputs[t.id].trim())
+                        setSubInputs(prev => ({ ...prev, [t.id]: '' }))
+                      }
+                    }}
+                  >
+                    + Add
+                  </button>
                 </div>
               </div>
             )}
@@ -269,54 +515,21 @@ export function TasksPage(props: Props) {
                     <div key={t.id} className="kcard" draggable
                       onDragStart={e => { e.dataTransfer.setData('text/plain', t.id); setTimeout(() => e.currentTarget.classList.add('dragging'), 0) }}
                       onDragEnd={e => e.currentTarget.classList.remove('dragging')}>
-                      <div className="kcard-title">{t.descricao}</div>
+                      <div className="kcard-title">{formatReadableTaskTitle(t.descricao)}</div>
                       <div className="kcard-meta">
                         <span className={`kcard-date${isLate(t) ? ' late' : ''}`}>📅 {dateTimeLabel(t)}</span>
                         <div className="kcard-av" style={{ background: m?.color || '#4f6ef7' }}>{getInitials(t.resp)}</div>
                       </div>
                       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                         <span className={`pb ${priorityClass(t.prio)}`}>{t.prio}</span>
-                        {(t.pop_id || resolveTaskPopId(t)) && (
-                          <span
-                            onClick={e => { e.stopPropagation(); setActivePopTask(t) }}
-                            style={{
-                              height: 20,
-                              fontSize: 10,
-                              background: '#1b2550',
-                              color: '#a9b8ff',
-                              border: '1px solid #3b52d6',
-                              padding: '0 6px',
-                              borderRadius: 4,
-                              cursor: 'pointer',
-                              fontWeight: 600,
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              fontFamily: "'IBM Plex Sans', sans-serif"
-                            }}
-                            title="POP associado — Ver procedimento"
-                          >
-                            POP
-                          </span>
-                        )}
                       </div>
                       <div className="kcard-actions">
                         <div className="kcard-done" onClick={() => props.onComplete(t.id)}>✓ Concluir</div>
                         <div
-                          className="kcard-edit"
+                          className="kcard-edit navy-pop-btn"
                           title="POP — Como executar"
                           onClick={() => setActivePopTask(t)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: 11,
-                            fontWeight: 600,
-                            color: '#a9b8ff',
-                            background: '#1b2550',
-                            border: '1px solid #3b52d6',
-                            borderRadius: 4,
-                            padding: '2px 6px'
-                          }}
+                          style={{ height: 24, fontSize: 11, padding: '2px 7px' }}
                         >
                           POP
                         </div>
@@ -364,7 +577,7 @@ export function TasksPage(props: Props) {
             {dayTasks.length > 0 && <span style={{ float: 'right', background: 'var(--accent)', color: '#fff', borderRadius: 8, padding: '0 5px', fontSize: 9, fontWeight: 700 }}>{dayTasks.length}</span>}
           </div>
           {dayTasks.slice(0, 3).map(t => (
-            <div key={t.id} className="agenda-dot" style={{ background: 'var(--accentbg)', color: isLate(t) ? 'var(--red)' : 'var(--accent)' }}>{t.descricao}</div>
+            <div key={t.id} className="agenda-dot" style={{ background: 'var(--accentbg)', color: isLate(t) ? 'var(--red)' : 'var(--accent)' }} title={t.descricao}>{formatReadableTaskTitle(t.descricao)}</div>
           ))}
           {dayTasks.length > 3 && <div style={{ fontSize: 10, color: 'var(--text3)' }}>+{dayTasks.length - 3} mais</div>}
         </div>
@@ -399,7 +612,7 @@ export function TasksPage(props: Props) {
                   <div key={t.id} className="agenda-task-item">
                     <div className="agenda-task-done" onClick={() => props.onComplete(t.id)} />
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: isLate(t) ? 'var(--red)' : 'var(--accent)', flexShrink: 0 }} />
-                    <div className="agenda-task-name">{t.descricao}</div>
+                    <div className="agenda-task-name">{formatReadableTaskTitle(t.descricao)}</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       {!t.all_day && t.time_start && <span style={{ fontSize: 11, color: 'var(--text3)' }}>🕐 {t.time_start}{t.time_end ? '–' + t.time_end : ''}</span>}
                       <div className="avsm" style={{ background: m?.color || '#4f6ef7', width: 18, height: 18, fontSize: 8 }}>{getInitials(t.resp)}</div>
@@ -407,18 +620,9 @@ export function TasksPage(props: Props) {
                     </div>
                     <button
                       type="button"
+                      className="navy-pop-btn"
                       onClick={() => setActivePopTask(t)}
-                      style={{
-                        height: 24,
-                        padding: '0 8px',
-                        borderRadius: 6,
-                        border: '1px solid #3b52d6',
-                        background: '#1b2550',
-                        color: '#a9b8ff',
-                        font: "600 11px 'IBM Plex Sans', sans-serif",
-                        cursor: 'pointer',
-                        flexShrink: 0
-                      }}
+                      style={{ height: 24, padding: '0 8px', flexShrink: 0 }}
                     >
                       POP
                     </button>
@@ -433,91 +637,215 @@ export function TasksPage(props: Props) {
     )
   }
 
-  const PAGE_TITLES: Record<string, string> = { tasks: 'Minhas Tarefas', team: 'Equipe', history: 'Histórico', atrasadas: 'Atrasadas', meetings: 'Reuniões', messages: 'Mensagens' }
-
   return (
-    <>
-      {/* TOPBAR */}
-      <div className="topbar">
-        <div className="topbar-brand">
-          <img src={logoImg} alt="Dinheiro em Caixa" className="topbar-logo-img" />
+    <div className="navy-tasks-shell">
+      {/* TOPBAR (72px Navy Executive) */}
+      <div className="navy-topbar">
+        <div className="navy-topbar-left">
+          <div className="navy-page-title">Minhas Tarefas</div>
+          <div className="navy-scope-line">
+            <span className="material-symbols-outlined navy-scope-icon">
+              {viewingAll ? 'groups' : 'person'}
+            </span>
+            <span>
+              {viewingAll ? 'Mostrando tarefas de toda a equipe' : 'Mostrando apenas suas tarefas'}
+            </span>
+            {isAdmin && (
+              <>
+                <span className="navy-scope-sep">·</span>
+                <button
+                  type="button"
+                  className="navy-scope-link"
+                  onClick={() => {
+                    const next = !viewingAll
+                    props.setViewingAll(next)
+                    props.setMemberFilter(next ? 'all' : currentUser.name)
+                    try { localStorage.setItem('pulse_viewingAll', String(next)) } catch {}
+                    try { localStorage.setItem('pulse_memberFilter', next ? 'all' : currentUser.name) } catch {}
+                  }}
+                >
+                  {viewingAll ? 'Ver só as minhas' : 'Ver toda a equipe'}
+                </button>
+              </>
+            )}
+          </div>
         </div>
-        <div>
-          <div className="pt">{PAGE_TITLES['tasks']}</div>
-          <div className="ps">Visualize em Lista, Kanban ou Agenda</div>
-        </div>
-        <div className="sw">
-          <span className="si">🔍</span>
-          <input className="search" placeholder="Buscar tarefa..." value={searchQ} onChange={e => props.setSearchQ(e.target.value)} />
-        </div>
-        <div className="fg">
-          {(['all', 'open', 'late', 'alta'] as FilterMode[]).map((f, i) => (
-            <button key={f} className={`fb${filterMode === f ? ' active' : ''}`} onClick={() => props.setFilterMode(f)}>
-              {['Todas', 'Em Aberto', 'Atrasadas', 'Alta'][i]}
-            </button>
-          ))}
-        </div>
-        <div className="view-toggle">
-          {(['list', 'kanban', 'agenda'] as ViewMode[]).map((v, i) => (
-            <button key={v} className={`vbtn${viewMode === v ? ' active' : ''}`} onClick={() => props.setViewMode(v)} title={['Lista', 'Kanban', 'Agenda'][i]}>
-              {['☰', '⊞', '📅'][i]}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          className="theme-toggle-btn"
-          onClick={props.toggleTheme}
-          title={props.theme === 'light' ? 'Mudar para modo escuro' : 'Mudar para modo claro'}
-          aria-label={props.theme === 'light' ? 'Mudar para modo escuro' : 'Mudar para modo claro'}
-        >
-          {props.theme === 'light' ? '🌙' : '☀️'}
-        </button>
-        <button className="add-btn" onClick={() => props.openNewTask()}>+ Nova Tarefa</button>
-      </div>
 
-      {/* SCOPE BANNER */}
-      {isAdmin && (
-        <div className={`scope-banner${viewingAll ? ' team-mode' : ''}`}>
-          <span>{viewingAll ? '👥 Mostrando tarefas de toda a equipe' : '📋 Mostrando apenas suas tarefas'}</span>
-          <button className="scope-btn" onClick={() => {
-            const next = !viewingAll
-            props.setViewingAll(next)
-            props.setMemberFilter(next ? 'all' : currentUser.name)
-            try { localStorage.setItem('pulse_viewingAll', String(next)) } catch {}
-            try { localStorage.setItem('pulse_memberFilter', next ? 'all' : currentUser.name) } catch {}
-          }}>
-            {viewingAll ? 'Ver só as minhas' : 'Ver toda a equipe'}
+        <div className="navy-topbar-right">
+          <div className="navy-search-box">
+            <span className="material-symbols-outlined navy-search-icon">search</span>
+            <input
+              type="text"
+              className="navy-search-input"
+              placeholder="Buscar tarefa…"
+              value={searchQ}
+              onChange={e => props.setSearchQ(e.target.value)}
+            />
+            {searchQ && (
+              <button
+                type="button"
+                className="navy-search-clear"
+                onClick={() => props.setSearchQ('')}
+                title="Limpar busca"
+              >
+                ×
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            className="navy-theme-btn"
+            onClick={props.toggleTheme}
+            title={props.theme === 'light' ? 'Mudar para modo escuro' : 'Mudar para modo claro'}
+            aria-label={props.theme === 'light' ? 'Mudar para modo escuro' : 'Mudar para modo claro'}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 19 }}>
+              {props.theme === 'light' ? 'dark_mode' : 'light_mode'}
+            </span>
+          </button>
+
+          <button type="button" className="navy-cta-btn" onClick={() => props.openNewTask()}>
+            <span className="material-symbols-outlined" style={{ fontSize: 19 }}>add</span>
+            Nova tarefa
           </button>
         </div>
-      )}
+      </div>
 
-      {/* MEMBER FILTER */}
+      {/* TOOLBAR ÚNICA (Segmented Status + Prioridade Alta + Data + Segmented View) */}
+      <div className="navy-toolbar">
+        <div className="navy-segmented" role="tablist" aria-label="Filtro de status">
+          <button
+            type="button"
+            className={`navy-seg-item${filterMode === 'all' ? ' active' : ''}`}
+            onClick={() => props.setFilterMode('all')}
+          >
+            Todas <span className="navy-seg-count">{countAll}</span>
+          </button>
+          <button
+            type="button"
+            className={`navy-seg-item${filterMode === 'open' ? ' active' : ''}`}
+            onClick={() => props.setFilterMode('open')}
+          >
+            Em aberto <span className="navy-seg-count">{countOpen}</span>
+          </button>
+          <button
+            type="button"
+            className={`navy-seg-item${filterMode === 'late' ? ' active' : ''}`}
+            onClick={() => props.setFilterMode('late')}
+          >
+            Atrasadas <span className="navy-seg-count">{countLate}</span>
+          </button>
+        </div>
+
+        <button
+          type="button"
+          className={`navy-prio-filter-btn${filterMode === 'alta' ? ' active' : ''}`}
+          onClick={() => props.setFilterMode(filterMode === 'alta' ? 'all' : 'alta')}
+        >
+          <span className="material-symbols-outlined navy-prio-flag">flag</span>
+          Prioridade alta
+        </button>
+
+        <div className="navy-toolbar-spacer" />
+
+        {viewMode !== 'agenda' && (
+          <>
+            <div className="navy-date-controls">
+              <span className="navy-date-label">Data</span>
+              <label
+                className="navy-date-picker-box"
+                onClick={() => {
+                  try {
+                    dateInputRef.current?.showPicker?.()
+                  } catch {}
+                }}
+              >
+                <span className="navy-date-picker-text">{formatNavyDateInputDisplay(dateFilter)}</span>
+                <span className="material-symbols-outlined navy-date-cal-icon">calendar_today</span>
+                <input
+                  ref={dateInputRef}
+                  type="date"
+                  className="navy-date-native-input"
+                  value={dateFilter}
+                  onChange={e => props.setDateFilter(e.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                className={`navy-date-today-btn${dateFilter === todayStr ? ' active' : ''}`}
+                onClick={() => props.setDateFilter(getTodayStr())}
+              >
+                Hoje
+              </button>
+              <button
+                type="button"
+                className="navy-date-clear-btn"
+                onClick={() => props.setDateFilter('')}
+              >
+                Limpar
+              </button>
+            </div>
+
+            <div className="navy-toolbar-divider" />
+          </>
+        )}
+
+        <div className="navy-view-segmented" role="group" aria-label="Modo de visualização">
+          <button
+            type="button"
+            className={`navy-view-btn${viewMode === 'list' ? ' active' : ''}`}
+            onClick={() => props.setViewMode('list')}
+            title="Lista"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>view_list</span>
+          </button>
+          <button
+            type="button"
+            className={`navy-view-btn${viewMode === 'kanban' ? ' active' : ''}`}
+            onClick={() => props.setViewMode('kanban')}
+            title="Kanban"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>view_kanban</span>
+          </button>
+          <button
+            type="button"
+            className={`navy-view-btn${viewMode === 'agenda' ? ' active' : ''}`}
+            onClick={() => props.setViewMode('agenda')}
+            title="Agenda"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: 18 }}>calendar_month</span>
+          </button>
+        </div>
+      </div>
+
+      {/* BARRA DE MEMBROS (QUANDO VIEWING ALL = TRUE) */}
       {viewingAll && (
-        <div className="mf-bar">
-          <button className={`mf${memberFilter === 'all' ? ' active' : ''}`} onClick={() => props.setMemberFilter('all')}>Todos</button>
+        <div className="navy-mf-bar">
+          <button
+            type="button"
+            className={`navy-mf-pill${memberFilter === 'all' ? ' active' : ''}`}
+            onClick={() => props.setMemberFilter('all')}
+          >
+            Todos
+          </button>
           {props.team.map(m => (
-            <button key={m.id} className={`mf${memberFilter === m.name ? ' active' : ''}`} onClick={() => props.setMemberFilter(m.name)}>
-              <div className="mf-dot" style={{ background: m.color }} />
-              {m.name.split(' ')[0]}
-              {m.name === currentUser.name && <span style={{ fontSize: 9, opacity: 0.6 }}> (eu)</span>}
+            <button
+              key={m.id}
+              type="button"
+              className={`navy-mf-pill${memberFilter === m.name ? ' active' : ''}`}
+              onClick={() => props.setMemberFilter(m.name)}
+            >
+              <span className="navy-mf-dot" style={{ background: m.color }} />
+              {toTitleCaseName(m.name.split(' ')[0])}
+              {m.name === currentUser.name && <span className="navy-mf-me"> (eu)</span>}
             </button>
           ))}
-        </div>
-      )}
-
-      {/* DATE FILTER */}
-      {viewMode !== 'agenda' && (
-        <div className="date-filter-bar">
-          <span style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 600 }}>Data:</span>
-          <input type="date" value={dateFilter} onChange={e => props.setDateFilter(e.target.value)} />
-          <button className="date-filter-today" onClick={() => props.setDateFilter(getTodayStr())}>Hoje</button>
-          {dateFilter && <button className="date-filter-clear" onClick={() => props.setDateFilter('')}>× Limpar</button>}
         </div>
       )}
 
       {/* CONTENT */}
-      <div className="content" style={{ padding: viewMode !== 'list' ? 0 : undefined }}>
+      <div className={`navy-tasks-content${viewMode !== 'list' ? ' navy-tasks-content-alt' : ''}`}>
         {viewMode === 'list' && renderList()}
         {viewMode === 'kanban' && renderKanban()}
         {viewMode === 'agenda' && renderAgenda()}
@@ -536,11 +864,17 @@ export function TasksPage(props: Props) {
             <div className="modal-footer">
               <button className="bcancel" onClick={() => setConfirmDel(null)}>Cancelar</button>
               {confirmDel.isRecurring && (
-                <button style={{ background: 'var(--orangebg)', border: '1px solid var(--orange)', borderRadius: 7, padding: '8px 14px', color: 'var(--orange)', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
-                  onClick={async () => { await props.onDelete(confirmDel.id, false); setConfirmDel(null) }}>Só esta</button>
+                <button
+                  style={{ background: 'var(--orangebg)', border: '1px solid var(--orange)', borderRadius: 7, padding: '8px 14px', color: 'var(--orange)', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
+                  onClick={async () => { await props.onDelete(confirmDel.id, false); setConfirmDel(null) }}
+                >
+                  Só esta
+                </button>
               )}
-              <button style={{ background: 'var(--redbg)', border: '1px solid var(--red)', borderRadius: 7, padding: '8px 14px', color: 'var(--red)', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
-                onClick={async () => { await props.onDelete(confirmDel.id, confirmDel.isRecurring); setConfirmDel(null) }}>
+              <button
+                style={{ background: 'var(--redbg)', border: '1px solid var(--red)', borderRadius: 7, padding: '8px 14px', color: 'var(--red)', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}
+                onClick={async () => { await props.onDelete(confirmDel.id, confirmDel.isRecurring); setConfirmDel(null) }}
+              >
                 {confirmDel.isRecurring ? 'Todas' : 'Sim, excluir'}
               </button>
             </div>
@@ -563,6 +897,6 @@ export function TasksPage(props: Props) {
           showToast={props.showToast}
         />
       )}
-    </>
+    </div>
   )
 }

@@ -1,7 +1,6 @@
-import type { User, TeamMember, Task } from '../types'
+import type { User, TeamMember, Task, Page } from '../types'
 import { getInitials, getTodayStr } from '../lib/utils'
 import { canAccessModule, canViewAllTasks, isProgrammer } from '../lib/accessControlApi'
-import type { Page } from '../types'
 
 interface Props {
   page: Page
@@ -12,12 +11,39 @@ interface Props {
   atrasadas: Task[]
   hist: Task[]
   team: TeamMember[]
+  viewingAll?: boolean
+  memberFilter?: string
+  setViewingAll?: (v: boolean) => void
+  setMemberFilter?: (m: string) => void
   onLogout: () => void
   onUpdateUser?: (id: string, data: Partial<User>) => Promise<boolean>
   showToast: (msg: string, type?: string) => void
 }
 
-export function Sidebar({ page, setPage, currentUser, tasks, atrasadas, hist, team, onLogout, showToast }: Props) {
+function toTitleCaseName(str: string): string {
+  if (!str) return ''
+  return str
+    .trim()
+    .split(/\s+/)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ')
+}
+
+export function Sidebar({
+  page,
+  setPage,
+  currentUser,
+  tasks,
+  atrasadas,
+  hist,
+  team,
+  viewingAll,
+  memberFilter,
+  setViewingAll,
+  setMemberFilter,
+  onLogout,
+  showToast,
+}: Props) {
   const today = getTodayStr()
   const me = currentUser.name
   const todayOpen = tasks.filter(t => t.status !== 'Concluída' && t.resp === me && t.date === today).length
@@ -46,129 +72,214 @@ export function Sidebar({ page, setPage, currentUser, tasks, atrasadas, hist, te
     ? team
     : team.filter(m => m.name.trim().toLowerCase() === currentUser.name.trim().toLowerCase())
 
+  const handleMemberClick = (m: TeamMember) => {
+    if (showTasks) nav('tasks')
+    if (canSeeAllTeamMembers && setViewingAll && setMemberFilter) {
+      const isMe = m.name.trim().toLowerCase() === currentUser.name.trim().toLowerCase()
+      if (isMe && !viewingAll) {
+        setMemberFilter(m.name)
+        return
+      }
+      setViewingAll(true)
+      setMemberFilter(m.name)
+      try {
+        localStorage.setItem('pulse_viewingAll', 'true')
+        localStorage.setItem('pulse_memberFilter', m.name)
+      } catch {}
+    }
+  }
+
   return (
-    <>
-      <div className="sidebar">
-        <div className="logo">
-          <div className="logo-icon">P</div>
-          <div>
-            <div className="logo-text">Pulse Agenda</div>
-            <div className="logo-sub">Gestão de Tarefas</div>
-          </div>
-        </div>
-
-        <div className="stats-grid">
-          <div className="sc" onClick={() => showTasks && nav('tasks')}>
-            <div className="sc-n blue">{todayOpen}</div>
-            <div className="sc-l">Hoje</div>
-          </div>
-          <div className="sc" onClick={() => showAtrasadas && nav('atrasadas')}>
-            <div className="sc-n red">{myAtrasadas}</div>
-            <div className="sc-l">Atraso</div>
-          </div>
-          <div className="sc" onClick={() => showHistory && nav('history')}>
-            <div className="sc-n green">{doneToday}</div>
-            <div className="sc-l">Feitas</div>
-          </div>
-        </div>
-
-        <nav className="nav">
-          <div className="ns">Principal</div>
-          {showTasks && (
-            <button className={`ni${page === 'tasks' ? ' active' : ''}`} onClick={() => nav('tasks')}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-              Minhas Tarefas
-            </button>
-          )}
-          {showAtrasadas && (
-            <button className={`ni${page === 'atrasadas' ? ' active' : ''}`} onClick={() => nav('atrasadas')}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-              Atrasadas
-              {myAtrasadas > 0 && <span className="nb">{myAtrasadas}</span>}
-            </button>
-          )}
-          {showHistory && (
-            <button className={`ni${page === 'history' ? ' active' : ''}`} onClick={() => nav('history')}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-              Histórico
-            </button>
-          )}
-          {showPops && (
-            <button className={`ni${page === 'pops' ? ' active' : ''}`} onClick={() => nav('pops')}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-              Procedimentos (POP)
-            </button>
-          )}
-
-          {(showTeam || showMeetings || showMessages) && <div className="ns">Equipe</div>}
-          {showTeam && (
-            <button className={`ni${page === 'team' ? ' active' : ''}`} onClick={() => nav('team')}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-              Equipe
-              <span className="nb blue">{team.length}</span>
-            </button>
-          )}
-          {showMeetings && (
-            <button className={`ni${page === 'meetings' ? ' active' : ''}`} onClick={() => nav('meetings')}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-              Reuniões
-            </button>
-          )}
-          {showMessages && (
-            <button className={`ni${page === 'messages' ? ' active' : ''}`} onClick={() => nav('messages')}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-              Mensagens
-            </button>
-          )}
-
-          {(showBackup || showSettings) && (
-            <>
-              <div className="ns">Sistema</div>
-              {showBackup && (
-                <button className={`ni${page === 'backup' ? ' active' : ''}`} onClick={() => nav('backup')}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                  Backup
-                </button>
-              )}
-              {showSettings && (
-                <button className={`ni${page === 'settings' ? ' active' : ''}`} onClick={() => nav('settings')}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-                  Configurações
-                </button>
-              )}
-            </>
-          )}
-
-          {visibleMembers.length > 0 && <div className="ns">Membros</div>}
-          {visibleMembers.map(m => (
-            <button key={m.id} className="ni" onClick={() => {
-              if (showTasks) nav('tasks')
-            }} style={{ gap: '7px' }}>
-              <div className="avsm" style={{ background: m.color }}>{getInitials(m.name)}</div>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '12px' }}>
-                {m.name.split(' ')[0]}
-              </span>
-              {m.name === currentUser.name && <span style={{ fontSize: '9px', opacity: 0.5, marginLeft: 'auto' }}>eu</span>}
-            </button>
-          ))}
-        </nav>
-
-
-        <div className="user-area">
-          <div className="uc">
-            <div className="av" style={{ background: currentUser.color }}>{getInitials(currentUser.name)}</div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="un" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{currentUser.name}</div>
-              <div className="ur">{currentUser.role}</div>
-            </div>
-            <div className="od" />
-          </div>
-          <button className="logout-btn" onClick={onLogout}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-            Sair
-          </button>
+    <aside className="sidebar navy-sidebar">
+      <div className="navy-brand">
+        <div className="navy-logo-mark">P</div>
+        <div className="navy-brand-text">
+          <span className="navy-brand-title">Pulse Agenda</span>
+          <span className="navy-brand-sub">Dinheiro em Caixa</span>
         </div>
       </div>
-    </>
+
+      <div className="navy-kpi-strip">
+        <button
+          type="button"
+          className="navy-kpi-cell"
+          onClick={() => showTasks && nav('tasks')}
+          title="Ver tarefas de hoje"
+        >
+          <span className="navy-kpi-num navy-kpi-today">{todayOpen}</span>
+          <span className="navy-kpi-lbl">Hoje</span>
+        </button>
+        <button
+          type="button"
+          className="navy-kpi-cell navy-kpi-mid"
+          onClick={() => showAtrasadas && nav('atrasadas')}
+          title="Ver tarefas em atraso"
+        >
+          <span className={`navy-kpi-num ${myAtrasadas > 0 ? 'navy-kpi-late-active' : 'navy-kpi-late-zero'}`}>
+            {myAtrasadas}
+          </span>
+          <span className="navy-kpi-lbl">Atraso</span>
+        </button>
+        <button
+          type="button"
+          className="navy-kpi-cell"
+          onClick={() => showHistory && nav('history')}
+          title="Ver histórico de concluídas"
+        >
+          <span className="navy-kpi-num navy-kpi-done">{doneToday}</span>
+          <span className="navy-kpi-lbl">Feitas</span>
+        </button>
+      </div>
+
+      <nav className="navy-nav">
+        <div className="navy-ns">PRINCIPAL</div>
+        {showTasks && (
+          <button
+            type="button"
+            className={`navy-ni${page === 'tasks' ? ' active' : ''}`}
+            onClick={() => nav('tasks')}
+          >
+            <span className="material-symbols-outlined navy-ni-icon">task_alt</span>
+            <span className="navy-ni-label">Minhas Tarefas</span>
+            <span className="navy-ni-count">{todayOpen}</span>
+          </button>
+        )}
+        {showAtrasadas && (
+          <button
+            type="button"
+            className={`navy-ni${page === 'atrasadas' ? ' active' : ''}`}
+            onClick={() => nav('atrasadas')}
+          >
+            <span className="material-symbols-outlined navy-ni-icon">schedule</span>
+            <span className="navy-ni-label">Atrasadas</span>
+            {myAtrasadas > 0 && <span className="navy-nb navy-nb-danger">{myAtrasadas}</span>}
+          </button>
+        )}
+        {showHistory && (
+          <button
+            type="button"
+            className={`navy-ni${page === 'history' ? ' active' : ''}`}
+            onClick={() => nav('history')}
+          >
+            <span className="material-symbols-outlined navy-ni-icon">history</span>
+            <span className="navy-ni-label">Histórico</span>
+          </button>
+        )}
+        {showPops && (
+          <button
+            type="button"
+            className={`navy-ni${page === 'pops' ? ' active' : ''}`}
+            onClick={() => nav('pops')}
+          >
+            <span className="material-symbols-outlined navy-ni-icon">menu_book</span>
+            <span className="navy-ni-label">Procedimentos (POP)</span>
+          </button>
+        )}
+
+        {(showTeam || showMeetings || showMessages) && <div className="navy-ns navy-ns-spaced">EQUIPE</div>}
+        {showTeam && (
+          <button
+            type="button"
+            className={`navy-ni${page === 'team' ? ' active' : ''}`}
+            onClick={() => nav('team')}
+          >
+            <span className="material-symbols-outlined navy-ni-icon">group</span>
+            <span className="navy-ni-label">Equipe</span>
+            <span className="navy-nb">{team.length}</span>
+          </button>
+        )}
+        {showMeetings && (
+          <button
+            type="button"
+            className={`navy-ni${page === 'meetings' ? ' active' : ''}`}
+            onClick={() => nav('meetings')}
+          >
+            <span className="material-symbols-outlined navy-ni-icon">event</span>
+            <span className="navy-ni-label">Reuniões</span>
+          </button>
+        )}
+        {showMessages && (
+          <button
+            type="button"
+            className={`navy-ni${page === 'messages' ? ' active' : ''}`}
+            onClick={() => nav('messages')}
+          >
+            <span className="material-symbols-outlined navy-ni-icon">chat_bubble</span>
+            <span className="navy-ni-label">Mensagens</span>
+          </button>
+        )}
+
+        {(showBackup || showSettings) && (
+          <>
+            <div className="navy-ns navy-ns-spaced">SISTEMA</div>
+            {showBackup && (
+              <button
+                type="button"
+                className={`navy-ni${page === 'backup' ? ' active' : ''}`}
+                onClick={() => nav('backup')}
+              >
+                <span className="material-symbols-outlined navy-ni-icon">backup</span>
+                <span className="navy-ni-label">Backup</span>
+              </button>
+            )}
+            {showSettings && (
+              <button
+                type="button"
+                className={`navy-ni${page === 'settings' ? ' active' : ''}`}
+                onClick={() => nav('settings')}
+              >
+                <span className="material-symbols-outlined navy-ni-icon">settings</span>
+                <span className="navy-ni-label">Configurações</span>
+              </button>
+            )}
+          </>
+        )}
+
+        {visibleMembers.length > 0 && <div className="navy-ns navy-ns-spaced">MEMBROS</div>}
+        {visibleMembers.map(m => {
+          const isMe = m.name.trim().toLowerCase() === currentUser.name.trim().toLowerCase()
+          const isSelectedMember =
+            page === 'tasks' &&
+            viewingAll &&
+            memberFilter &&
+            memberFilter.trim().toLowerCase() === m.name.trim().toLowerCase()
+          const firstName = toTitleCaseName(m.name.split(' ')[0])
+          return (
+            <button
+              key={m.id}
+              type="button"
+              className={`navy-member-row${isSelectedMember ? ' active' : ''}`}
+              onClick={() => handleMemberClick(m)}
+            >
+              <span className="navy-member-av" style={{ background: m.color || '#3D55D6' }}>
+                {getInitials(m.name)}
+              </span>
+              <span className="navy-member-name">{firstName}</span>
+              {isMe && <span className="navy-member-tag">você</span>}
+            </button>
+          )
+        })}
+      </nav>
+
+      <div className="navy-user-card">
+        <div className="navy-user-av" style={{ background: currentUser.color || '#3D55D6' }}>
+          {getInitials(currentUser.name)}
+          <span className="navy-user-online" />
+        </div>
+        <div className="navy-user-info">
+          <span className="navy-user-name">{toTitleCaseName(currentUser.name)}</span>
+          <span className="navy-user-role">{currentUser.role}</span>
+        </div>
+        <button
+          type="button"
+          className="navy-logout-icon-btn"
+          onClick={onLogout}
+          title="Sair"
+          aria-label="Sair"
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: 18 }}>logout</span>
+        </button>
+      </div>
+    </aside>
   )
 }
