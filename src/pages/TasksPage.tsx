@@ -35,6 +35,8 @@ interface Props {
   onDeleteSub: (taskId: string, idx: number) => Promise<void>
   showToast: (msg: string, type?: string) => void
   setPage: (p: any) => void
+  theme?: 'dark' | 'light'
+  toggleTheme?: () => void
 }
 
 export function TasksPage(props: Props) {
@@ -462,6 +464,15 @@ export function TasksPage(props: Props) {
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          className="theme-toggle-btn"
+          onClick={props.toggleTheme}
+          title={props.theme === 'light' ? 'Mudar para modo escuro' : 'Mudar para modo claro'}
+          aria-label={props.theme === 'light' ? 'Mudar para modo escuro' : 'Mudar para modo claro'}
+        >
+          {props.theme === 'light' ? '🌙' : '☀️'}
+        </button>
         <button className="add-btn" onClick={() => props.openNewTask()}>+ Nova Tarefa</button>
       </div>
 

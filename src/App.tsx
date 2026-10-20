@@ -45,6 +45,16 @@ export default function App() {
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Tema claro / escuro
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('pulse-theme') as 'dark' | 'light') || 'dark'
+  })
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme === 'light' ? 'light' : ''
+    localStorage.setItem('pulse-theme', theme)
+  }, [theme])
+  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
+
   // Auth forms
   const [authTab, setAuthTab] = useState<'login' | 'signup' | 'recover'>('login')
   const [lEmail, setLEmail] = useState('')
@@ -315,6 +325,8 @@ export default function App() {
     onUpdateUser: updateUser,
     showToast,
     setPage,
+    theme,
+    toggleTheme,
   }
 
   return (
