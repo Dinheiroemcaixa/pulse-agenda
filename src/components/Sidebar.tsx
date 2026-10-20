@@ -4,8 +4,6 @@ import { getInitials, getTodayStr, hashPass, COLORS } from '../lib/utils'
 import { canAccessModule, canViewAllTasks, isProgrammer } from '../lib/accessControlApi'
 import type { Page } from '../types'
 
-import logoImg from '../assets/logo-dinheiro-transparent.png'
-
 interface Props {
   page: Page
   setPage: (p: Page) => void
@@ -99,7 +97,11 @@ export function Sidebar({ page, setPage, currentUser, tasks, atrasadas, hist, te
     <>
       <div className="sidebar">
         <div className="logo">
-          <img src={logoImg} alt="Dinheiro em Caixa" className="logo-img" />
+          <div className="logo-icon">P</div>
+          <div>
+            <div className="logo-text">Pulse Agenda</div>
+            <div className="logo-sub">Gestão de Tarefas</div>
+          </div>
         </div>
 
         <div className="stats-grid">

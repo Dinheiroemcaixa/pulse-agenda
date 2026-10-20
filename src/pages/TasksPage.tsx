@@ -3,6 +3,7 @@ import type { Task, TeamMember, User, ViewMode, FilterMode, Pop } from '../types
 import { isLate, dateTimeLabel, dateStatus, getInitials, getTodayStr, priorityClass, RECUR_LABELS, MONTHS_LONG } from '../lib/utils'
 import { PopRunnerModal } from '../components/PopRunnerModal'
 import { resolveTaskPopId } from '../lib/popsApi'
+import logoImg from '../assets/logo-dinheiro-transparent.png'
 
 interface Props {
   tasks: Task[]
@@ -437,7 +438,7 @@ export function TasksPage(props: Props) {
       {/* TOPBAR */}
       <div className="topbar">
         <div className="topbar-brand">
-          <div className="brand-text">Pulse <span>Agenda</span></div>
+          <img src={logoImg} alt="Dinheiro em Caixa" className="topbar-logo-img" />
         </div>
         <div>
           <div className="pt">{PAGE_TITLES['tasks']}</div>
