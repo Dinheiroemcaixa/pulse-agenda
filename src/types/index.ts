@@ -15,6 +15,17 @@ export interface UserPermissions {
   view_all_tasks: boolean
 }
 
+export type AccessAuditAction =
+  | 'APPROVE_USER'
+  | 'REJECT_USER'
+  | 'SUSPEND_USER'
+  | 'REACTIVATE_USER'
+  | 'UPDATE_PERMISSIONS'
+  | 'UPDATE_PROFILE'
+  | 'START_OPERATOR_SESSION'
+  | 'END_OPERATOR_SESSION'
+  | 'REJECT_FORGED_SESSION'
+
 export interface AccessAuditLog {
   id: string
   actor_id: string
@@ -23,12 +34,28 @@ export interface AccessAuditLog {
   target_user_id: string
   target_user_name: string
   target_user_email: string
-  action: 'APPROVE_USER' | 'REJECT_USER' | 'SUSPEND_USER' | 'REACTIVATE_USER' | 'UPDATE_PERMISSIONS' | 'UPDATE_PROFILE'
+  action: AccessAuditAction
   details: string
   previous_state?: Record<string, unknown>
   new_state?: Record<string, unknown>
   created_at: string
 }
+
+export interface OperatorTestSession {
+  sessionId: string
+  adminId: string
+  adminEmail: string
+  adminName: string
+  adminProof: string
+  targetId: string
+  targetEmail: string
+  targetName: string
+  targetProfile: AccessProfile
+  startedAt: string
+  endedAt?: string
+  transitionSignature: string
+}
+
 
 export interface User {
   id: string

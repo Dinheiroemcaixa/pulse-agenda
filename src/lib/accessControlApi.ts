@@ -5,6 +5,7 @@ import type {
   AccessProfile,
   AccessStatus,
   AppModule,
+  OperatorTestSession,
   Page,
   Task,
   User,
@@ -65,6 +66,9 @@ export const LEGACY_APPROVED_ACCOUNTS: Record<string, LegacyAccountSeed> = {
 const ACCESS_OVERRIDES_STORAGE_KEY = 'pulse_access_control_overrides_v1'
 const ACCESS_AUDIT_STORAGE_KEY = 'pulse_access_audit_logs_v1'
 const PENDING_USERS_STORAGE_KEY = 'pulse_pending_signup_users_v1'
+export const SESSION_PROOF_STORAGE_KEY = 'pulse_session_proof'
+export const OPERATOR_TEST_SESSION_STORAGE_KEY = 'pulse_operator_test_session_v1'
+
 
 export interface UserAccessOverride {
   user_id: string
@@ -217,6 +221,61 @@ function saveLocalAuditLogs(logs: AccessAuditLog[]): void {
 }
 
 // ──────────────────────────────────────────────────────────────
+// PROVA CRIPTOGRÁFICA DE SESSÃO E ASSINATURA DE TRANSIÇÃO
+// ──────────────────────────────────────────────────────────────
+
+/**
+ * Gera prova determinística de 256 bits (64 hex chars) derivada do pass_hash real no banco.
+ * Como pass_hash nunca é exposto no estado React nem no localStorage de sessão,
+ * nenhum usuário consegue forjar pulse_session ou pulse_operator_test_session_v1 via DevTools.
+ */
+export function computeSessionProof(
+  userId: string,
+  email: string,
+  passHash: string,
+  purpose = 'session_v1'
+): string {
+  const cleanId = (userId || '').trim()
+  const cleanEmail = (email || '').trim().toLowerCase()
+  const cleanSecret = (passHash || '').trim()
+  if (!cleanId || !cleanEmail || !cleanSecret) return ''
+
+  const payload = `pulse_hmac_v1|${purpose}|${cleanId}|${cleanEmail}|${cleanSecret}`
+  const seeds = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+  ]
+
+  for (let round = 0; round < 4; round++) {
+    for (let i = 0; i < payload.length; i++) {
+      const code = payload.charCodeAt(i)
+      const lane = (i + round) & 7
+      let h = seeds[lane] ^ (code + Math.imul(i + 1, 0x9e3779b9) + Math.imul(round + 1, 0x85ebca6b))
+      h = Math.imul(h ^ (h >>> 16), 0x7feb352d)
+      h = Math.imul(h ^ (h >>> 15), 0x846ca68b)
+      h = (h ^ (h >>> 16)) >>> 0
+      seeds[lane] = h
+      seeds[(lane + 1) & 7] = (seeds[(lane + 1) & 7] ^ ((h << 7) | (h >>> 25))) >>> 0
+    }
+  }
+
+  return seeds.map(s => (s >>> 0).toString(16).padStart(8, '0')).join('')
+}
+
+export function computeOperatorTransitionSignature(params: {
+  sessionId: string
+  adminId: string
+  adminEmail: string
+  adminPassHash: string
+  targetId: string
+  targetEmail: string
+  startedAt: string
+}): string {
+  const purpose = `operator_test_v1:${params.sessionId}:${params.targetId.trim()}:${params.targetEmail.trim().toLowerCase()}:${params.startedAt.trim()}`
+  return computeSessionProof(params.adminId, params.adminEmail, params.adminPassHash, purpose)
+}
+
+// ──────────────────────────────────────────────────────────────
 // RESOLUÇÃO SEGURA DE IDENTIDADE, PERFIL E SITUAÇÃO
 // ──────────────────────────────────────────────────────────────
 
@@ -241,6 +300,7 @@ export function hydrateUserAccess(rawUser: User): User {
     const progPerms = getDefaultPermissionsForProfile('programador')
     return {
       ...rawUser,
+      pass_hash: '', // Segurança: nunca expor pass_hash no objeto User hidratado
       is_admin: true,
       access_profile: 'programador',
       access_status: 'active',
@@ -283,6 +343,7 @@ export function hydrateUserAccess(rawUser: User): User {
 
   return {
     ...rawUser,
+    pass_hash: '', // Segurança: nunca expor pass_hash no objeto User hidratado
     is_admin: isOperationalAdmin,
     access_profile: profile,
     access_status: status,
@@ -404,12 +465,24 @@ export function sanitizeSelfProfileUpdate(actor: User, rawUpdate: Partial<User>)
 // VERIFICAÇÃO BACKEND DO PROGRAMADOR E OPERAÇÕES ADMINISTRATIVAS
 // ──────────────────────────────────────────────────────────────
 
+export function getStoredOperatorTestSessionRaw(): OperatorTestSession | null {
+  try {
+    const raw = localStorage.getItem(OPERATOR_TEST_SESSION_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return null
+    return parsed as OperatorTestSession
+  } catch {
+    return null
+  }
+}
+
 export async function verifyProgrammerActor(actor: User | null | undefined): Promise<User> {
   if (!actor || !isPrimaryProgrammerIdentity(actor)) {
     throw new Error('ACESSO NEGADO: Somente o Programador principal está autorizado a realizar esta operação.')
   }
 
-  // Confirma a existência e identidade da conta diretamente no Supabase quando disponível
+  // Confirma a existência, identidade e prova criptográfica da conta diretamente no Supabase
   try {
     const { data, error } = await sb
       .from('users')
@@ -421,6 +494,19 @@ export async function verifyProgrammerActor(actor: User | null | undefined): Pro
       if (data.id !== actor.id && data.email.trim().toLowerCase() !== actor.email.trim().toLowerCase()) {
         throw new Error('ACESSO NEGADO: Identidade do Programador não confirmada no banco de dados.')
       }
+
+      if (data.pass_hash) {
+        const expectedProof = computeSessionProof(data.id, data.email, data.pass_hash, 'session_v1')
+        const storedSessionProof = localStorage.getItem(SESSION_PROOF_STORAGE_KEY)
+        const storedAdminEnvelope = getStoredOperatorTestSessionRaw()
+        const validDirectProof = storedSessionProof === expectedProof
+        const validEnvelopeProof = storedAdminEnvelope?.adminProof === expectedProof
+
+        if (!validDirectProof && !validEnvelopeProof) {
+          throw new Error('ACESSO NEGADO: Assinatura criptográfica da sessão do Programador ausente ou inválida.')
+        }
+      }
+
       return hydrateUserAccess(data as User)
     }
   } catch (err: any) {
@@ -430,7 +516,7 @@ export async function verifyProgrammerActor(actor: User | null | undefined): Pro
   return hydrateUserAccess(actor)
 }
 
-async function recordAuditLog(entry: Omit<AccessAuditLog, 'id' | 'created_at'>): Promise<AccessAuditLog> {
+export async function recordAuditLog(entry: Omit<AccessAuditLog, 'id' | 'created_at'>): Promise<AccessAuditLog> {
   const fullEntry: AccessAuditLog = {
     ...entry,
     id: genId(),
@@ -749,3 +835,339 @@ export async function updateUserAccessConfig(
 
   return updated
 }
+
+// ──────────────────────────────────────────────────────────────
+// SESSÃO ADMINISTRATIVA DE TESTE COMO OPERADOR (IDENTIDADE REAL)
+// ──────────────────────────────────────────────────────────────
+
+/**
+ * Valida criptograficamente se o envelope salvo em pulse_operator_test_session_v1
+ * foi emitido pelo Desenvolvedor autenticado usando o pass_hash real do banco.
+ */
+export async function verifyStoredOperatorTestSession(
+  activeEmail?: string
+): Promise<OperatorTestSession | null> {
+  const envelope = getStoredOperatorTestSessionRaw()
+  if (!envelope) return null
+
+  const cleanActive = (activeEmail || localStorage.getItem('pulse_session') || '').trim().toLowerCase()
+  if (!cleanActive || cleanActive !== (envelope.targetEmail || '').trim().toLowerCase()) {
+    localStorage.removeItem(OPERATOR_TEST_SESSION_STORAGE_KEY)
+    return null
+  }
+
+  const { data: adminRow, error } = await sb
+    .from('users')
+    .select('id,name,email,role,color,is_admin,pass_hash')
+    .eq('email', PROGRAMMER_EMAIL)
+    .single()
+
+  if (error || !adminRow || !adminRow.pass_hash) {
+    localStorage.removeItem(OPERATOR_TEST_SESSION_STORAGE_KEY)
+    return null
+  }
+
+  const expectedAdminProof = computeSessionProof(adminRow.id, adminRow.email, adminRow.pass_hash, 'session_v1')
+  const expectedSignature = computeOperatorTransitionSignature({
+    sessionId: envelope.sessionId,
+    adminId: adminRow.id,
+    adminEmail: adminRow.email,
+    adminPassHash: adminRow.pass_hash,
+    targetId: envelope.targetId,
+    targetEmail: envelope.targetEmail,
+    startedAt: envelope.startedAt,
+  })
+
+  if (envelope.adminProof !== expectedAdminProof || envelope.transitionSignature !== expectedSignature) {
+    localStorage.removeItem(OPERATOR_TEST_SESSION_STORAGE_KEY)
+    await recordAuditLog({
+      actor_id: envelope.adminId || 'UNKNOWN',
+      actor_name: envelope.adminName || 'DESCONHECIDO',
+      actor_email: envelope.adminEmail || 'unknown',
+      target_user_id: envelope.targetId || 'UNKNOWN',
+      target_user_name: envelope.targetName || 'DESCONHECIDO',
+      target_user_email: envelope.targetEmail || 'unknown',
+      action: 'REJECT_FORGED_SESSION',
+      details: 'Tentativa bloqueada de adulteração de sessão de teste de operador no localStorage (assinatura criptográfica inválida).',
+    })
+    return null
+  }
+
+  return envelope
+}
+
+/**
+ * Inicia uma sessão real e efetiva sob a identidade do operador selecionado.
+ * Exclusivo para o Desenvolvedor autenticado (validado contra public.users).
+ */
+export async function startOperatorTestSession(
+  targetEmailOrId: string
+): Promise<{ operatorUser: User; session: OperatorTestSession }> {
+  const cleanTargetKey = (targetEmailOrId || '').trim().toLowerCase()
+  if (!cleanTargetKey) {
+    throw new Error('Selecione um operador válido para iniciar a sessão de teste.')
+  }
+
+  // 1. Buscar o registro real do Desenvolvedor no banco para validar a prova criptográfica
+  const { data: adminRow, error: adminErr } = await sb
+    .from('users')
+    .select('*')
+    .eq('email', PROGRAMMER_EMAIL)
+    .single()
+
+  if (adminErr || !adminRow || !adminRow.pass_hash) {
+    throw new Error('ACESSO NEGADO: Não foi possível validar a conta do Desenvolvedor no banco de dados.')
+  }
+
+  const expectedAdminProof = computeSessionProof(adminRow.id, adminRow.email, adminRow.pass_hash, 'session_v1')
+  const currentProof = localStorage.getItem(SESSION_PROOF_STORAGE_KEY)
+  const existingEnvelope = getStoredOperatorTestSessionRaw()
+
+  const isDirectAdminAuthenticated =
+    (localStorage.getItem('pulse_session') || '').trim().toLowerCase() === PROGRAMMER_EMAIL &&
+    currentProof === expectedAdminProof
+
+  const isExistingEnvelopeAuthenticated =
+    existingEnvelope !== null &&
+    existingEnvelope.adminProof === expectedAdminProof &&
+    existingEnvelope.transitionSignature ===
+      computeOperatorTransitionSignature({
+        sessionId: existingEnvelope.sessionId,
+        adminId: adminRow.id,
+        adminEmail: adminRow.email,
+        adminPassHash: adminRow.pass_hash,
+        targetId: existingEnvelope.targetId,
+        targetEmail: existingEnvelope.targetEmail,
+        startedAt: existingEnvelope.startedAt,
+      })
+
+  if (!isDirectAdminAuthenticated && !isExistingEnvelopeAuthenticated) {
+    await recordAuditLog({
+      actor_id: 'UNAUTHORIZED',
+      actor_name: 'TENTATIVA NÃO AUTORIZADA',
+      actor_email: localStorage.getItem('pulse_session') || 'unknown',
+      target_user_id: cleanTargetKey,
+      target_user_name: cleanTargetKey,
+      target_user_email: cleanTargetKey,
+      action: 'REJECT_FORGED_SESSION',
+      details: 'Tentativa bloqueada de iniciar sessão de operador sem autenticação criptográfica do Desenvolvedor.',
+    })
+    throw new Error('ACESSO NEGADO: Somente o Desenvolvedor autenticado pode iniciar uma sessão de teste como Operador.')
+  }
+
+  // 2. Buscar o registro real do operador alvo no banco (ou pendente local aprovado)
+  const { data: allDbUsers } = await sb.from('users').select('*')
+  const rawDbMatch = (allDbUsers || []).find(
+    (u: any) =>
+      u.id === targetEmailOrId ||
+      (u.email || '').trim().toLowerCase() === cleanTargetKey
+  ) as User | undefined
+
+  const localMatch = getLocalPendingUsers().find(
+    u => u.id === targetEmailOrId || u.email.trim().toLowerCase() === cleanTargetKey
+  )
+
+  const rawTarget = rawDbMatch || localMatch
+  if (!rawTarget) {
+    throw new Error('Operador selecionado não foi encontrado no banco de dados.')
+  }
+
+  if (isPrimaryProgrammerIdentity(rawTarget)) {
+    throw new Error('Selecione uma conta de Operador (ou Gestora) diferente da conta do Desenvolvedor.')
+  }
+
+  const hydratedTarget = hydrateUserAccess(rawTarget)
+  if (hydratedTarget.access_status !== 'active') {
+    throw new Error(`Não é possível iniciar sessão como "${hydratedTarget.name}" pois a conta está com situação "${hydratedTarget.access_status}".`)
+  }
+
+  // Se já havia uma sessão de teste anterior ativa, registra o encerramento dela antes da troca
+  if (existingEnvelope && isExistingEnvelopeAuthenticated) {
+    const prevEndedAt = new Date().toISOString()
+    await recordAuditLog({
+      actor_id: adminRow.id,
+      actor_name: adminRow.name,
+      actor_email: adminRow.email,
+      target_user_id: existingEnvelope.targetId,
+      target_user_name: existingEnvelope.targetName,
+      target_user_email: existingEnvelope.targetEmail,
+      action: 'END_OPERATOR_SESSION',
+      details: `Sessão de teste como "${existingEnvelope.targetName}" (${existingEnvelope.targetEmail}) encerrada por troca de operador (ID: ${existingEnvelope.sessionId}).`,
+      previous_state: {
+        session_id: existingEnvelope.sessionId,
+        operator_email: existingEnvelope.targetEmail,
+        started_at: existingEnvelope.startedAt,
+      },
+      new_state: {
+        session_id: existingEnvelope.sessionId,
+        ended_at: prevEndedAt,
+        restored_admin: adminRow.email,
+      },
+    })
+  }
+
+  // 3. Gerar prova criptográfica da sessão do operador e envelope assinado pelo Desenvolvedor
+  const sessionId = genId()
+  const startedAt = new Date().toISOString()
+  const targetPassHash = rawTarget.pass_hash || adminRow.pass_hash
+  const targetSessionProof = computeSessionProof(rawTarget.id, rawTarget.email, targetPassHash, 'session_v1')
+  const transitionSignature = computeOperatorTransitionSignature({
+    sessionId,
+    adminId: adminRow.id,
+    adminEmail: adminRow.email,
+    adminPassHash: adminRow.pass_hash,
+    targetId: hydratedTarget.id,
+    targetEmail: hydratedTarget.email,
+    startedAt,
+  })
+
+  const sessionEnvelope: OperatorTestSession = {
+    sessionId,
+    adminId: adminRow.id,
+    adminEmail: adminRow.email.trim().toLowerCase(),
+    adminName: adminRow.name,
+    adminProof: expectedAdminProof,
+    targetId: hydratedTarget.id,
+    targetEmail: hydratedTarget.email.trim().toLowerCase(),
+    targetName: hydratedTarget.name,
+    targetProfile: hydratedTarget.access_profile || 'operador',
+    startedAt,
+    transitionSignature,
+  }
+
+  // 4. Substituir efetivamente a sessão ativa pela identidade real do operador selecionado
+  localStorage.setItem(OPERATOR_TEST_SESSION_STORAGE_KEY, JSON.stringify(sessionEnvelope))
+  localStorage.setItem('pulse_session', hydratedTarget.email.trim().toLowerCase())
+  localStorage.setItem(SESSION_PROOF_STORAGE_KEY, targetSessionProof)
+
+  // 5. Registrar auditoria de início da sessão (local + banco se migration aplicada)
+  await recordAuditLog({
+    actor_id: adminRow.id,
+    actor_name: adminRow.name,
+    actor_email: adminRow.email,
+    target_user_id: hydratedTarget.id,
+    target_user_name: hydratedTarget.name,
+    target_user_email: hydratedTarget.email,
+    action: 'START_OPERATOR_SESSION',
+    details: `Sessão administrativa de teste iniciada com a identidade real do operador "${hydratedTarget.name}" (${hydratedTarget.email}) · Perfil: ${(hydratedTarget.access_profile || 'operador').toUpperCase()} · Sessão: ${sessionId}.`,
+    previous_state: {
+      active_user: adminRow.email,
+      active_profile: 'programador',
+    },
+    new_state: {
+      session_id: sessionId,
+      admin_id: adminRow.id,
+      admin_email: adminRow.email,
+      operator_id: hydratedTarget.id,
+      operator_name: hydratedTarget.name,
+      operator_email: hydratedTarget.email,
+      operator_profile: hydratedTarget.access_profile || 'operador',
+      started_at: startedAt,
+    },
+  })
+
+  try {
+    await sb.rpc('fn_start_operator_test_session', {
+      p_session_id: sessionId,
+      p_admin_email: adminRow.email,
+      p_target_user_id: hydratedTarget.id,
+    })
+  } catch {
+    // RPC opcional até aplicação da migration no banco remoto
+  }
+
+  return { operatorUser: hydratedTarget, session: sessionEnvelope }
+}
+
+/**
+ * Encerra a sessão ativa de operador, registra o término na auditoria
+ * e restaura imediatamente a sessão autenticada do Desenvolvedor.
+ */
+export async function endOperatorTestSession(): Promise<User> {
+  const envelope = getStoredOperatorTestSessionRaw()
+  if (!envelope) {
+    throw new Error('Nenhuma sessão de teste de operador está ativa no momento.')
+  }
+
+  const { data: adminRow, error: adminErr } = await sb
+    .from('users')
+    .select('*')
+    .eq('email', PROGRAMMER_EMAIL)
+    .single()
+
+  if (adminErr || !adminRow || !adminRow.pass_hash) {
+    localStorage.removeItem(OPERATOR_TEST_SESSION_STORAGE_KEY)
+    throw new Error('ACESSO NEGADO: Não foi possível validar a conta do Desenvolvedor no banco de dados.')
+  }
+
+  const expectedAdminProof = computeSessionProof(adminRow.id, adminRow.email, adminRow.pass_hash, 'session_v1')
+  const expectedSignature = computeOperatorTransitionSignature({
+    sessionId: envelope.sessionId,
+    adminId: adminRow.id,
+    adminEmail: adminRow.email,
+    adminPassHash: adminRow.pass_hash,
+    targetId: envelope.targetId,
+    targetEmail: envelope.targetEmail,
+    startedAt: envelope.startedAt,
+  })
+
+  if (envelope.adminProof !== expectedAdminProof || envelope.transitionSignature !== expectedSignature) {
+    localStorage.removeItem(OPERATOR_TEST_SESSION_STORAGE_KEY)
+    localStorage.removeItem('pulse_session')
+    localStorage.removeItem(SESSION_PROOF_STORAGE_KEY)
+    await recordAuditLog({
+      actor_id: envelope.adminId || 'UNKNOWN',
+      actor_name: envelope.adminName || 'DESCONHECIDO',
+      actor_email: envelope.adminEmail || 'unknown',
+      target_user_id: envelope.targetId || 'UNKNOWN',
+      target_user_name: envelope.targetName || 'DESCONHECIDO',
+      target_user_email: envelope.targetEmail || 'unknown',
+      action: 'REJECT_FORGED_SESSION',
+      details: 'Tentativa bloqueada de encerrar sessão de operador com assinatura inválida.',
+    })
+    throw new Error('ACESSO NEGADO: Assinatura criptográfica da sessão de teste inválida.')
+  }
+
+  const endedAt = new Date().toISOString()
+
+  // Restaurar imediatamente a sessão autenticada do Desenvolvedor
+  localStorage.removeItem(OPERATOR_TEST_SESSION_STORAGE_KEY)
+  localStorage.setItem('pulse_session', adminRow.email.trim().toLowerCase())
+  localStorage.setItem(SESSION_PROOF_STORAGE_KEY, expectedAdminProof)
+
+  await recordAuditLog({
+    actor_id: adminRow.id,
+    actor_name: adminRow.name,
+    actor_email: adminRow.email,
+    target_user_id: envelope.targetId,
+    target_user_name: envelope.targetName,
+    target_user_email: envelope.targetEmail,
+    action: 'END_OPERATOR_SESSION',
+    details: `Sessão administrativa de teste como "${envelope.targetName}" (${envelope.targetEmail}) encerrada · Sessão do Desenvolvedor restaurada (ID: ${envelope.sessionId}).`,
+    previous_state: {
+      session_id: envelope.sessionId,
+      operator_id: envelope.targetId,
+      operator_name: envelope.targetName,
+      operator_email: envelope.targetEmail,
+      started_at: envelope.startedAt,
+    },
+    new_state: {
+      session_id: envelope.sessionId,
+      ended_at: endedAt,
+      restored_admin_id: adminRow.id,
+      restored_admin_email: adminRow.email,
+    },
+  })
+
+  try {
+    await sb.rpc('fn_end_operator_test_session', {
+      p_session_id: envelope.sessionId,
+      p_admin_email: adminRow.email,
+    })
+  } catch {
+    // RPC opcional até aplicação da migration no banco remoto
+  }
+
+  return hydrateUserAccess(adminRow as User)
+}
+

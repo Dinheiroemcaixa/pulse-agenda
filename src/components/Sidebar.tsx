@@ -1,4 +1,4 @@
-import type { User, TeamMember, Task, Page } from '../types'
+import type { User, TeamMember, Task, Page, OperatorTestSession } from '../types'
 import { getInitials, getTodayStr } from '../lib/utils'
 import { canAccessModule, canViewAllTasks, isProgrammer } from '../lib/accessControlApi'
 
@@ -18,6 +18,8 @@ interface Props {
   onLogout: () => void
   onUpdateUser?: (id: string, data: Partial<User>) => Promise<boolean>
   showToast: (msg: string, type?: string) => void
+  operatorTestSession?: OperatorTestSession | null
+  onEndOperatorSession?: () => Promise<void>
 }
 
 function toTitleCaseName(str: string): string {
@@ -43,6 +45,8 @@ export function Sidebar({
   setMemberFilter,
   onLogout,
   showToast,
+  operatorTestSession,
+  onEndOperatorSession,
 }: Props) {
   const today = getTodayStr()
   const me = currentUser.name
@@ -260,6 +264,48 @@ export function Sidebar({
           )
         })}
       </nav>
+
+      {operatorTestSession && onEndOperatorSession && (
+        <div
+          data-testid="sidebar-operator-session-card"
+          style={{
+            margin: '8px 12px 4px',
+            padding: '10px 12px',
+            borderRadius: 10,
+            background: 'rgba(79, 110, 247, 0.16)',
+            border: '1px solid rgba(79, 110, 247, 0.45)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+          }}
+        >
+          <div style={{ fontSize: 10, fontWeight: 800, color: '#91a7ff', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            🧑‍💻 Sessão de Teste · Operador
+          </div>
+          <div style={{ fontSize: 11, color: '#e6ebff', lineHeight: 1.35 }}>
+            Operando como <strong>{currentUser.name}</strong>
+          </div>
+          <button
+            type="button"
+            data-testid="sidebar-end-operator-session-btn"
+            onClick={onEndOperatorSession}
+            style={{
+              marginTop: 2,
+              padding: '6px 10px',
+              borderRadius: 7,
+              border: '1px solid rgba(255, 255, 255, 0.25)',
+              background: '#4f6ef7',
+              color: '#fff',
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: 'pointer',
+              textAlign: 'center',
+            }}
+          >
+            ↩ Voltar para Desenvolvedor
+          </button>
+        </div>
+      )}
 
       <div className="navy-user-card">
         <div className="navy-user-av" style={{ background: currentUser.color || '#3D55D6' }}>

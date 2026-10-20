@@ -25,9 +25,22 @@ import { PendingAccessView } from './components/PendingAccessView'
 const VALID_PAGES: Page[] = ['tasks', 'team', 'history', 'atrasadas', 'meetings', 'messages', 'backup', 'pops', 'settings']
 
 export default function App() {
-  const { currentUser, authLoading, login, signup, logout, updateUser, resetPassword, refreshCurrentUser } = useAuth()
+  const {
+    currentUser,
+    operatorTestSession,
+    authLoading,
+    login,
+    signup,
+    logout,
+    updateUser,
+    resetPassword,
+    refreshCurrentUser,
+    startOperatorSession,
+    endOperatorSession,
+  } = useAuth()
   const data = useAppData(currentUser)
   const [appReady, setAppReady] = useState(false)
+  const loadedUserIdRef = useRef<string | null>(null)
   const [page, setPageState] = useState<Page>('tasks')
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [filterMode, setFilterMode] = useState<FilterMode>('all')
@@ -128,18 +141,49 @@ export default function App() {
     }
   }, [currentUser, page])
 
-  // Launch app after login ONLY if user is active (approved)
+  // Launch app after login ONLY if user is active (approved) and reload whenever active user identity changes
   useEffect(() => {
-    if (currentUser && isUserActive(currentUser) && !appReady) {
-      data.loadAll(currentUser).then(() => {
-        setAppReady(true)
-        data.checkDailyBackup()
-      })
-    }
-    if (!currentUser || !isUserActive(currentUser)) {
+    if (currentUser && isUserActive(currentUser)) {
+      if (!appReady || loadedUserIdRef.current !== currentUser.id) {
+        loadedUserIdRef.current = currentUser.id
+        if (!canViewAllTasks(currentUser)) {
+          setViewingAll(false)
+          setMemberFilter(currentUser.name)
+        }
+        data.loadAll(currentUser).then(() => {
+          setAppReady(true)
+          data.checkDailyBackup()
+        })
+      }
+    } else {
+      loadedUserIdRef.current = null
       setAppReady(false)
     }
-  }, [currentUser])
+  }, [currentUser, appReady])
+
+  const handleStartOperatorSession = useCallback(async (targetEmailOrId: string) => {
+    const operatorUser = await startOperatorSession(targetEmailOrId)
+    loadedUserIdRef.current = operatorUser.id
+    if (!canViewAllTasks(operatorUser)) {
+      setViewingAll(false)
+      setMemberFilter(operatorUser.name)
+    }
+    setPageState('tasks')
+    await data.loadAll(operatorUser)
+    showToast(`🧑‍💻 Sessão iniciada com a identidade real de ${operatorUser.name} (${operatorUser.email})`, 'success')
+  }, [startOperatorSession, data, showToast])
+
+  const handleEndOperatorSession = useCallback(async () => {
+    try {
+      const restoredAdmin = await endOperatorSession()
+      loadedUserIdRef.current = restoredAdmin.id
+      await data.loadAll(restoredAdmin)
+      setPageState('settings')
+      showToast(`🛡️ Sessão de teste encerrada. Retornado para Desenvolvedor (${restoredAdmin.name}).`, 'info')
+    } catch (err: any) {
+      showToast(err?.message || '❌ Erro ao encerrar sessão de teste', 'error')
+    }
+  }, [endOperatorSession, data, showToast])
 
   const handleLogin = async () => {
     setAuthErr(''); setAuthLoading2(true)
@@ -348,8 +392,70 @@ export default function App() {
         onLogout={logout}
         onUpdateUser={updateUser}
         showToast={showToast}
+        operatorTestSession={operatorTestSession}
+        onEndOperatorSession={handleEndOperatorSession}
       />
       <div className="main">
+        {operatorTestSession && (
+          <div
+            data-testid="operator-test-session-banner"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: 12,
+              padding: '10px 20px',
+              background: 'linear-gradient(90deg, #1b2856 0%, #263875 100%)',
+              borderBottom: '1px solid rgba(116, 192, 252, 0.35)',
+              color: '#f8fafc',
+              fontSize: 12,
+              zIndex: 40,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span
+                style={{
+                  padding: '3px 9px',
+                  borderRadius: 999,
+                  background: 'rgba(61, 214, 140, 0.2)',
+                  border: '1px solid rgba(61, 214, 140, 0.5)',
+                  color: '#69db7c',
+                  fontWeight: 800,
+                  fontSize: 11,
+                }}
+              >
+                🧑‍💻 SESSÃO REAL DE OPERADOR ATIVA
+              </span>
+              <span>
+                Sessão ativa como: <strong>{currentUser.name}</strong> ({currentUser.email}) · Perfil:{' '}
+                <strong>{(currentUser.access_profile || 'operador').toUpperCase()}</strong>
+              </span>
+              <span style={{ color: '#94a3b8' }}>|</span>
+              <span style={{ color: '#cbd5e1' }}>
+                Iniciada por: <strong>{operatorTestSession.adminName}</strong> ({operatorTestSession.adminEmail})
+              </span>
+            </div>
+
+            <button
+              type="button"
+              data-testid="end-operator-session-btn"
+              onClick={handleEndOperatorSession}
+              style={{
+                padding: '6px 14px',
+                borderRadius: 8,
+                border: '1px solid rgba(255, 255, 255, 0.3)',
+                background: '#4f6ef7',
+                color: '#ffffff',
+                fontWeight: 700,
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              ↩ Encerrar sessão de teste e voltar para Desenvolvedor
+            </button>
+          </div>
+        )}
         {page === 'tasks' && canAccessModule(currentUser, 'tasks') && <TasksPage {...pageProps} />}
         {page === 'history' && canAccessModule(currentUser, 'history') && <HistoryPage {...pageProps} />}
         {page === 'atrasadas' && canAccessModule(currentUser, 'atrasadas') && <AtrasadasPage {...pageProps} />}
@@ -365,6 +471,7 @@ export default function App() {
             currentUser={currentUser}
             showToast={showToast}
             onRefreshCurrentUser={refreshCurrentUser}
+            onStartOperatorSession={handleStartOperatorSession}
           />
         )}
       </div>

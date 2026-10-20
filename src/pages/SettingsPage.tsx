@@ -26,6 +26,7 @@ interface SettingsPageProps {
   currentUser: User
   showToast: (msg: string, type?: string) => void
   onRefreshCurrentUser?: () => Promise<void>
+  onStartOperatorSession?: (targetEmailOrId: string) => Promise<void>
 }
 
 const PROFILE_LABELS: Record<AccessProfile, { label: string; color: string; bg: string; desc: string }> = {
@@ -63,14 +64,19 @@ const ACTION_LABELS: Record<AccessAuditLog['action'], { label: string; color: st
   REACTIVATE_USER: { label: 'Reativação de Acesso', color: '#4f6ef7' },
   UPDATE_PERMISSIONS: { label: 'Alteração de Permissões', color: '#cc5de8' },
   UPDATE_PROFILE: { label: 'Alteração de Perfil/Permissões', color: '#74c0fc' },
+  START_OPERATOR_SESSION: { label: 'Início de Sessão como Operador', color: '#4f6ef7' },
+  END_OPERATOR_SESSION: { label: 'Término de Sessão como Operador', color: '#3dd68c' },
+  REJECT_FORGED_SESSION: { label: 'Bloqueio de Segurança (Sessão)', color: '#ff4d6d' },
 }
 
-export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser }: SettingsPageProps) {
+export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser, onStartOperatorSession }: SettingsPageProps) {
   const [users, setUsers] = useState<User[]>([])
   const [auditLogs, setAuditLogs] = useState<AccessAuditLog[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<'all' | AccessStatus>('all')
   const [pendingProfiles, setPendingProfiles] = useState<Record<string, AccessProfile>>({})
+  const [selectedTestOperatorId, setSelectedTestOperatorId] = useState<string>('')
+  const [startingSessionId, setStartingSessionId] = useState<string | null>(null)
 
   // Modal de edição de permissões e perfil por usuário
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
@@ -95,6 +101,12 @@ export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser }: S
       ])
       setUsers(managedUsers)
       setAuditLogs(logs)
+      const firstTestable = managedUsers.find(
+        u => !isPrimaryProgrammerIdentity(u) && u.access_status === 'active'
+      )
+      if (firstTestable) {
+        setSelectedTestOperatorId(prev => prev || firstTestable.id)
+      }
     } catch (err: any) {
       showToast(err?.message || 'Erro ao carregar configurações de acesso', 'error')
     } finally {
@@ -225,6 +237,27 @@ export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser }: S
     }
   }
 
+  const testableOperators = users.filter(
+    u => !isPrimaryProgrammerIdentity(u) && u.access_status === 'active'
+  )
+
+  const handleLaunchOperatorSession = async (targetUserOrId: User | string) => {
+    if (!onStartOperatorSession) return
+    const targetId = typeof targetUserOrId === 'string' ? targetUserOrId : targetUserOrId.id
+    if (!targetId) {
+      showToast('Selecione um operador ativo para iniciar a sessão.', 'warn')
+      return
+    }
+    setStartingSessionId(targetId)
+    try {
+      await onStartOperatorSession(targetId)
+    } catch (err: any) {
+      showToast(err?.message || '❌ Erro ao iniciar sessão como operador', 'error')
+    } finally {
+      setStartingSessionId(null)
+    }
+  }
+
   const formatDateTime = (iso?: string) => {
     if (!iso) return '—'
     try {
@@ -299,6 +332,106 @@ export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser }: S
             <div className="hist-stat-label">Registros de Auditoria</div>
             <div className="hist-stat-sub">Histórico administrativo</div>
           </div>
+        </div>
+
+        {/* SESSÃO ADMINISTRATIVA DE TESTE COMO OPERADOR (IDENTIDADE REAL) */}
+        <div
+          data-testid="operator-test-session-panel"
+          style={{
+            background: 'var(--bg2)',
+            border: '1.5px solid rgba(79, 110, 247, 0.4)',
+            borderRadius: 12,
+            padding: 20,
+            marginBottom: 24,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: 14,
+              marginBottom: 14,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, maxWidth: 680 }}>
+              <span style={{ fontSize: 20, lineHeight: 1.2 }}>🧑‍💻</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>
+                  Sessão Administrativa de Teste como Operador (Identidade Real)
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 3, lineHeight: 1.45 }}>
+                  Inicia uma sessão real autenticada sob o <strong>ID, e-mail, permissões e escopo de banco de dados</strong> do operador selecionado, sem expor senhas e com auditoria completa de início e término.
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <select
+                data-testid="operator-session-select"
+                className="inp"
+                style={{ height: 36, padding: '4px 12px', fontSize: 12, minWidth: 260 }}
+                value={selectedTestOperatorId}
+                onChange={e => setSelectedTestOperatorId(e.target.value)}
+              >
+                {testableOperators.map(op => (
+                  <option key={op.id} value={op.id}>
+                    {op.name} ({op.email}) · {(op.access_profile || 'operador').toUpperCase()}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                data-testid="start-operator-session-btn"
+                className="btn-primary"
+                style={{ height: 36, padding: '0 16px', fontSize: 12, fontWeight: 700 }}
+                disabled={!selectedTestOperatorId || startingSessionId !== null}
+                onClick={() => handleLaunchOperatorSession(selectedTestOperatorId)}
+              >
+                {startingSessionId ? 'Iniciando sessão...' : '▶ Entrar com a Identidade deste Operador'}
+              </button>
+            </div>
+          </div>
+
+          {testableOperators.length > 0 && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+              <span style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 700, alignSelf: 'center', marginRight: 4 }}>
+                Acesso rápido por operador:
+              </span>
+              {testableOperators.map(op => (
+                <button
+                  key={op.id}
+                  type="button"
+                  data-testid={`quick-operator-session-${op.id}`}
+                  className="mc-btn"
+                  style={{
+                    width: 'auto',
+                    padding: '5px 11px',
+                    fontSize: 11,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                  disabled={startingSessionId !== null}
+                  onClick={() => handleLaunchOperatorSession(op)}
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: op.color || '#3dd68c',
+                      display: 'inline-block',
+                    }}
+                  />
+                  <strong>{op.name}</strong>
+                  <span style={{ color: 'var(--text3)' }}>({op.access_profile || 'operador'})</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* 1. SOLICITAÇÕES PENDENTES */}
@@ -570,6 +703,26 @@ export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser }: S
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      {!isPrimaryProg && st === 'active' && onStartOperatorSession && (
+                        <button
+                          type="button"
+                          data-testid={`enter-as-operator-${u.id}`}
+                          className="mc-btn"
+                          style={{
+                            width: 'auto',
+                            padding: '7px 12px',
+                            fontSize: 12,
+                            color: '#74c0fc',
+                            borderColor: 'rgba(79, 110, 247, 0.45)',
+                            background: 'rgba(79, 110, 247, 0.12)',
+                          }}
+                          disabled={startingSessionId !== null}
+                          onClick={() => handleLaunchOperatorSession(u)}
+                        >
+                          👤 Entrar como Operador
+                        </button>
+                      )}
+
                       <button
                         type="button"
                         className="mc-btn"
