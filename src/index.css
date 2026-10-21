@@ -1900,4 +1900,18 @@ select.inp{cursor:pointer}
   }
 }
 
+/* LOGIN SAAS DARK INPUT REFINEMENTS */
+.new-login-input {
+  color-scheme: dark;
+}
+
+.new-login-input:-webkit-autofill,
+.new-login-input:-webkit-autofill:hover,
+.new-login-input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #f8fafc;
+  -webkit-box-shadow: 0 0 0px 1000px #0b101b inset;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+
 
