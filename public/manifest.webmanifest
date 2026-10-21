@@ -1,0 +1,17 @@
+﻿{
+  "name": "DCX Flow — Dinheiro em Caixa",
+  "short_name": "DCX Flow",
+  "description": "Plataforma inteligente de gestão de rotinas, tarefas e procedimentos operacionais — Dinheiro em Caixa",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#0F172A",
+  "background_color": "#F4F7FB",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

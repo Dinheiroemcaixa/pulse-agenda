@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import type { User } from '../types'
 import { getInitials } from '../lib/utils'
+import { DcxFlowBrand } from './DcxFlowLogo'
 
 interface PendingAccessViewProps {
   user: User
@@ -31,7 +32,7 @@ export const PendingAccessView: React.FC<PendingAccessViewProps> = ({
       icon: '⏳',
       title: 'Seu cadastro aguarda liberação',
       description:
-        'Sua solicitação de acesso ao Pulse Agenda foi registrada com sucesso e está pendente de aprovação pelo administrador do sistema.',
+        'Sua solicitação de acesso ao DCX Flow foi registrada com sucesso e está pendente de aprovação pelo administrador do sistema.',
       subtext:
         'Enquanto o cadastro estiver pendente, os módulos internos, tarefas e dados da equipe permanecem bloqueados por segurança.',
     },
@@ -45,7 +46,7 @@ export const PendingAccessView: React.FC<PendingAccessViewProps> = ({
       description:
         'Sua conta está com o acesso suspenso pelo administrador do sistema. Seu histórico de atividades permanece preservado.',
       subtext:
-        'Caso precise de reativação, entre em contato com o administrador responsável pelo Pulse Agenda.',
+        'Caso precise de reativação, entre em contato com o administrador responsável pelo DCX Flow.',
     },
     rejected: {
       badge: 'Solicitação Não Aprovada',
@@ -55,7 +56,7 @@ export const PendingAccessView: React.FC<PendingAccessViewProps> = ({
       icon: '🚫',
       title: 'Solicitação de cadastro recusada',
       description:
-        'Seu pedido de acesso ao Pulse Agenda não foi autorizado pelo administrador principal.',
+        'Seu pedido de acesso ao DCX Flow não foi autorizado pelo administrador principal.',
       subtext:
         'Entre em contato com a gestão caso acredite que houve um engano.',
     },
@@ -95,6 +96,9 @@ export const PendingAccessView: React.FC<PendingAccessViewProps> = ({
           textAlign: 'center',
         }}
       >
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
+          <DcxFlowBrand variant="compact" />
+        </div>
         <div
           style={{
             width: 64,

@@ -408,7 +408,7 @@ function buildValidPdfBytes(title: string, lines: string[]): Uint8Array {
     'BT',
     '/F1 16 Tf',
     '48 770 Td',
-    `(PULSE AGENDA - DOCUMENTO OPERACIONAL POP) Tj`,
+    `(DCX FLOW - DOCUMENTO OPERACIONAL POP) Tj`,
     '0 -26 Td',
     '/F1 13 Tf',
     `(${safeTitle}) Tj`,
@@ -500,7 +500,7 @@ async function generateSyntheticTutorialVideoBlob(title: string): Promise<Blob |
 
       ctx.fillStyle = '#4f6bff'
       ctx.font = 'bold 14px sans-serif'
-      ctx.fillText('PULSE AGENDA • TUTORIAL OPERACIONAL POP', 40, 48)
+      ctx.fillText('DCX FLOW • TUTORIAL OPERACIONAL POP', 40, 48)
       ctx.fillStyle = '#e6e9f2'
       ctx.font = 'bold 16px sans-serif'
       ctx.fillText(title.slice(0, 48), 40, 68)
@@ -581,7 +581,7 @@ export async function buildReferenceMediaBlob(media: PopStepMedia): Promise<{
       <circle cx="54" cy="53" r="7" fill="#ff6b7a"/>
       <circle cx="76" cy="53" r="7" fill="#f5b851"/>
       <circle cx="98" cy="53" r="7" fill="#4cd98c"/>
-      <text x="128" y="58" fill="#a9b8ff" font-family="IBM Plex Sans, Segoe UI, sans-serif" font-size="16" font-weight="700">PULSE AGENDA • GUIA VISUAL DE REFERÊNCIA DO POP</text>
+      <text x="128" y="58" fill="#a9b8ff" font-family="IBM Plex Sans, Segoe UI, sans-serif" font-size="16" font-weight="700">DCX FLOW • GUIA VISUAL DE REFERÊNCIA DO POP</text>
       <rect x="28" y="102" width="904" height="446" rx="12" fill="#11182d" stroke="#263359" stroke-width="1.5"/>
       <rect x="56" y="130" width="848" height="72" rx="8" fill="#182240" stroke="#395196" stroke-width="1.2"/>
       <text x="80" y="160" fill="#7d93ff" font-family="IBM Plex Mono, monospace" font-size="13" font-weight="600">TELA / ETAPA ILUSTRADA</text>
@@ -622,7 +622,7 @@ export async function buildReferenceMediaBlob(media: PopStepMedia): Promise<{
       return entry
     }
     const fallbackText = [
-      `ROTEIRO DE VÍDEO OPERACIONAL — PULSE AGENDA`,
+      `ROTEIRO DE VÍDEO OPERACIONAL — DCX FLOW`,
       `Anexo: ${media.name}`,
       `------------------------------------------------------------`,
       `00:00 - Abertura do sistema / Internet Banking do cliente`,
@@ -747,7 +747,7 @@ export async function buildReferenceMediaBlob(media: PopStepMedia): Promise<{
 
   // DOCX, DOC, TXT e demais documentos
   const docText = [
-    `DOCUMENTO OPERACIONAL DE REFERÊNCIA — PULSE AGENDA`,
+    `DOCUMENTO OPERACIONAL DE REFERÊNCIA — DCX FLOW`,
     `Arquivo: ${media.name}`,
     `Formato: ${ext || 'DOC'}`,
     `====================================================================`,
@@ -760,7 +760,7 @@ export async function buildReferenceMediaBlob(media: PopStepMedia): Promise<{
     `   - Em caso de dúvidas ou exceções operacionais, acione a gestão financeira.`,
     ``,
     `3. CONTROLE DE QUALIDADE`,
-    `   Documento gerado pelo módulo de Procedimentos (POP) do Pulse Agenda.`
+    `   Documento gerado pelo módulo de Procedimentos (POP) do DCX Flow.`
   ].join('\r\n')
   const blob = new Blob([docText], { type: 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)

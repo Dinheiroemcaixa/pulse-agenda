@@ -21,6 +21,7 @@ import { TaskModal } from './components/TaskModal'
 import { Toast } from './components/Toast'
 import { LoginView } from './components/LoginView'
 import { PendingAccessView } from './components/PendingAccessView'
+import { DcxFlowIcon } from './components/DcxFlowLogo'
 
 const VALID_PAGES: Page[] = ['tasks', 'team', 'history', 'atrasadas', 'meetings', 'messages', 'backup', 'pops', 'settings']
 
@@ -286,7 +287,7 @@ export default function App() {
   if (authLoading) {
     return (
       <div className="loading-screen">
-        <div className="logo-icon loading-logo">P</div>
+        <DcxFlowIcon size={64} className="loading-logo" />
         <div className="loading-text">Carregando...</div>
       </div>
     )
@@ -346,8 +347,8 @@ export default function App() {
   if (!appReady) {
     return (
       <div className="loading-screen">
-        <div className="logo-icon loading-logo">P</div>
-        <div className="loading-text">Carregando Pulse Agenda...</div>
+        <DcxFlowIcon size={64} className="loading-logo" />
+        <div className="loading-text">Carregando DCX Flow...</div>
       </div>
     )
   }

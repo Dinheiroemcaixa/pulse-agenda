@@ -7,6 +7,7 @@ import type {
   UserPermissions,
 } from '../types'
 import { getInitials } from '../lib/utils'
+import { DcxFlowBrand } from '../components/DcxFlowLogo'
 import {
   MODULE_METADATA,
   approveUserRequest,
@@ -277,9 +278,7 @@ export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser, onS
     <>
       <div className="topbar">
         <div className="topbar-brand">
-          <div className="brand-text">
-            Pulse <span>Agenda</span>
-          </div>
+          <DcxFlowBrand variant="compact" />
         </div>
         <div>
           <div className="pt">Configurações & Controle de Acesso</div>
@@ -923,7 +922,7 @@ export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser, onS
             )}
 
             <div className="field">
-              <label className="label">Permissões de Módulos do Pulse Agenda</label>
+              <label className="label">Permissões de Módulos do DCX Flow</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 280, overflowY: 'auto', paddingRight: 4 }}>
                 {MODULE_METADATA.map(m => {
                   const checked = Boolean(editPermissions[m.key as keyof UserPermissions])

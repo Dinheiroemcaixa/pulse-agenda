@@ -1,6 +1,7 @@
 import type { User, TeamMember, Task, Page, OperatorTestSession } from '../types'
 import { getInitials, getTodayStr } from '../lib/utils'
 import { canAccessModule, canViewAllTasks, isProgrammer } from '../lib/accessControlApi'
+import { DcxFlowIcon } from './DcxFlowLogo'
 
 interface Props {
   page: Page
@@ -96,9 +97,11 @@ export function Sidebar({
   return (
     <aside className="sidebar navy-sidebar">
       <div className="navy-brand">
-        <div className="navy-logo-mark">P</div>
+        <DcxFlowIcon size={36} />
         <div className="navy-brand-text">
-          <span className="navy-brand-title">Pulse Agenda</span>
+          <span className="navy-brand-title" style={{ letterSpacing: '-0.02em', fontWeight: 700 }}>
+            DCX <span style={{ color: '#34D399' }}>Flow</span>
+          </span>
           <span className="navy-brand-sub">Dinheiro em Caixa</span>
         </div>
       </div>

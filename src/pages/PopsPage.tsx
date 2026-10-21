@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Pop, User } from '../types'
 import { togglePopActiveApi, deletePopApi } from '../lib/popsApi'
 import { PopRunnerModal } from '../components/PopRunnerModal'
+import { DcxFlowBrand } from '../components/DcxFlowLogo'
 
 interface Props {
   pops: Pop[]
@@ -77,7 +78,7 @@ export function PopsPage({
       {/* TOPBAR */}
       <div className="topbar">
         <div className="topbar-brand">
-          <div className="brand-text">Pulse <span>Agenda</span></div>
+          <DcxFlowBrand variant="compact" />
         </div>
         <div>
           <div className="pt">Procedimentos (POP)</div>

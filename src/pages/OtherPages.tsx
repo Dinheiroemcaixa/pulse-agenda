@@ -3,6 +3,7 @@ import type { Task, TeamMember, Meeting, User, Backup } from '../types'
 import { getInitials, genId, getTodayStr, COLORS } from '../lib/utils'
 import { sb } from '../lib/supabase'
 import { isLate } from '../lib/utils'
+import { DcxFlowBrand } from '../components/DcxFlowLogo'
 
 // ──────────────────────────────────────────────────────────────
 // TEAM PAGE
@@ -39,7 +40,7 @@ export function TeamPage({ tasks, hist, team, currentUser, isAdmin, setViewingAl
     <>
       <div className="topbar">
         <div className="topbar-brand">
-          <div className="brand-text">Pulse <span>Agenda</span></div>
+          <DcxFlowBrand variant="compact" />
         </div>
         <div><div className="pt">Equipe</div><div className="ps">Membros e produtividade</div></div>
       </div>
@@ -131,7 +132,7 @@ export function MeetingsPage({ meets, team, currentUser, isAdmin, onSaveMeet, on
     <>
       <div className="topbar">
         <div className="topbar-brand">
-          <div className="brand-text">Pulse <span>Agenda</span></div>
+          <DcxFlowBrand variant="compact" />
         </div>
         <div><div className="pt">Reuniões</div><div className="ps">Compromissos agendados</div></div>
         <button className="add-btn" onClick={() => setModalOpen(true)}>+ Nova Reunião</button>
@@ -246,7 +247,7 @@ export function MessagesPage({ team, currentUser, showToast }: MsgProps) {
     <>
       <div className="topbar">
         <div className="topbar-brand">
-          <div className="brand-text">Pulse <span>Agenda</span></div>
+          <DcxFlowBrand variant="compact" />
         </div>
         <div><div className="pt">Mensagens</div><div className="ps">Conversas diretas</div></div>
       </div>
@@ -361,7 +362,7 @@ export function BackupPage({ backups, tasks, currentUser, isAdmin, onSaveBackup,
     <>
       <div className="topbar">
         <div className="topbar-brand">
-          <div className="brand-text">Pulse <span>Agenda</span></div>
+          <DcxFlowBrand variant="compact" />
         </div>
         <div><div className="pt">Backup & Segurança</div><div className="ps">Gestão de cópias em nuvem e no PC</div></div>
       </div>

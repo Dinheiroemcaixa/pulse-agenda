@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { COLORS } from '../lib/utils';
+import { DcxFlowIcon } from './DcxFlowLogo';
 
 interface LoginViewProps {
   authTab: 'login' | 'signup' | 'recover';
@@ -31,48 +32,6 @@ interface LoginViewProps {
   handleSignup: () => void;
   handleRecover: () => void;
 }
-
-const BrandCubeEmblem: React.FC<{ size?: 'sm' | 'md' }> = ({ size = 'md' }) => (
-  <div
-    className={`relative flex-shrink-0 rounded-xl bg-white border border-slate-200/80 shadow-sm flex items-center justify-center ${
-      size === 'sm' ? 'w-11 h-11 p-1.5' : 'w-14 h-14 p-2'
-    }`}
-  >
-    <svg
-      className="w-full h-full drop-shadow-xs"
-      viewBox="0 0 100 100"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      <path d="M50 90 L90 75 L90 45 L50 60 Z" fill="#001B5E" />
-      <path d="M50 90 L10 75 L10 45 L50 60 Z" fill="#001B5E" />
-      <path d="M10 45 L50 30 L90 45 L50 60 Z" fill="#000d2e" />
-      <text
-        fill="white"
-        fontFamily="sans-serif"
-        fontSize="18"
-        fontWeight="900"
-        transform="matrix(1, 0.35, 0, 1, 18, 68)"
-      >
-        DC
-      </text>
-      <text
-        fill="#40e56c"
-        filter="drop-shadow(0 2px 4px rgba(0,0,0,0.35))"
-        fontFamily="sans-serif"
-        fontSize="42"
-        fontWeight="900"
-        textAnchor="middle"
-        x="50"
-        y="48"
-      >
-        $
-      </text>
-      <path d="M10 45 L50 60 L90 45" fill="none" stroke="#ffffff33" strokeWidth="1.5" />
-      <path d="M50 60 V90" fill="none" stroke="#ffffff33" strokeWidth="1.5" />
-    </svg>
-  </div>
-);
 
 export const LoginView: React.FC<LoginViewProps> = ({
   authTab,
@@ -149,24 +108,27 @@ export const LoginView: React.FC<LoginViewProps> = ({
             <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.92)_0%,rgba(248,250,252,0.28)_36%,rgba(248,250,252,0.25)_64%,rgba(255,255,255,0.95)_100%)]" />
           </div>
 
-          {/* Topo do Painel Esquerdo */}
+          {/* Topo do Painel Esquerdo: Marca do Produto DCX Flow + Logo Oficial Dinheiro em Caixa */}
           <div className="relative z-10 flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3.5">
-              <BrandCubeEmblem size="md" />
+              <DcxFlowIcon size={44} className="shadow-md rounded-xl" />
               <div className="flex flex-col">
-                <div className="text-2xl lg:text-3xl font-headline font-bold tracking-tight text-[#0F172A] leading-tight">
-                  <span>Dinheiro em </span>
-                  <span className="text-[#16A34A]">Caixa</span>
+                <div className="text-2xl lg:text-[28px] font-headline font-extrabold tracking-tight leading-none flex items-baseline gap-1.5">
+                  <span className="text-[#0F172A]">DCX</span>
+                  <span className="text-[#16A34A]">Flow</span>
                 </div>
-                <span className="text-[#475569] text-xs lg:text-sm font-semibold tracking-wider uppercase mt-0.5">
-                  TERCEIRIZAÇÃO FINANCEIRA
+                <span className="tracking-[0.22em] text-[10px] font-bold text-[#475569] uppercase mt-1.5">
+                  DINHEIRO EM CAIXA
                 </span>
               </div>
             </div>
 
-            <div className="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-white/90 backdrop-blur-md border border-slate-200/90 shadow-sm text-xs font-semibold text-[#0F172A]">
-              <span className="w-2 h-2 rounded-full bg-[#16A34A] shadow-[0_0_6px_rgba(22,163,74,0.45)]" />
-              <span className="tracking-wide">PULSE AGENDA</span>
+            <div className="bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-2xl px-3.5 py-1.5 shadow-sm flex items-center overflow-hidden">
+              <img
+                src="/logo-dinheiro-em-caixa.png"
+                alt="Dinheiro em Caixa — Terceirização Financeira"
+                className="h-16 lg:h-20 w-auto object-contain -my-2.5"
+              />
             </div>
           </div>
 
@@ -204,7 +166,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
             {/* Rodapé Institucional Esquerdo */}
             <div className="flex items-center justify-between text-xs text-slate-500 pt-3.5 border-t border-slate-200/80">
               <span>© Dinheiro em Caixa · Ambiente Corporativo</span>
-              <span className="text-[#0F172A] font-semibold">Pulse Agenda</span>
+              <span className="text-[#0F172A] font-semibold">DCX Flow</span>
             </div>
           </div>
         </div>
@@ -223,25 +185,44 @@ export const LoginView: React.FC<LoginViewProps> = ({
             <div className="absolute inset-0 bg-white/82 backdrop-blur-[2px]" />
             <div className="relative z-10 w-full h-full px-4 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <BrandCubeEmblem size="sm" />
-                <div>
-                  <div className="text-lg font-headline font-bold text-[#0F172A] leading-tight">
-                    Dinheiro em <span className="text-[#16A34A]">Caixa</span>
+                <DcxFlowIcon size={38} className="shadow-sm rounded-xl" />
+                <div className="flex flex-col">
+                  <div className="text-lg font-headline font-extrabold tracking-tight leading-none flex items-baseline gap-1">
+                    <span className="text-[#0F172A]">DCX</span>
+                    <span className="text-[#16A34A]">Flow</span>
                   </div>
-                  <div className="text-[11px] text-[#475569] font-semibold uppercase tracking-wider">
-                    Terceirização Financeira
-                  </div>
+                  <span className="tracking-[0.22em] text-[9px] font-bold text-[#475569] uppercase mt-1">
+                    DINHEIRO EM CAIXA
+                  </span>
                 </div>
               </div>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/90 backdrop-blur-md border border-slate-200/90 shadow-xs text-[11px] font-semibold text-[#0F172A]">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#16A34A]" />
-                Pulse Agenda
-              </span>
+              <div className="bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-xl px-2.5 py-1 shadow-xs flex items-center overflow-hidden">
+                <img
+                  src="/logo-dinheiro-em-caixa.png"
+                  alt="Dinheiro em Caixa — Terceirização Financeira"
+                  className="h-14 w-auto object-contain -my-2"
+                />
+              </div>
             </div>
           </div>
 
           {/* Card Principal de Autenticação (Branco Puro, Bordas Discretas e Alto Contraste) */}
           <div className="bg-white border border-slate-200/90 rounded-2xl p-7 sm:p-9 shadow-[0_18px_45px_-12px_rgba(15,23,42,0.09),0_2px_6px_rgba(15,23,42,0.03)] space-y-6">
+            {/* Assinatura no topo do Card: Logo Oficial Dinheiro em Caixa em destaque + Pílula DCX Flow */}
+            <div className="flex items-center justify-between gap-3 pb-4 border-b border-slate-100 overflow-hidden">
+              <img
+                src="/logo-dinheiro-em-caixa.png"
+                alt="Dinheiro em Caixa — Terceirização Financeira"
+                className="h-16 sm:h-[68px] w-auto object-contain -my-3 -ml-1.5"
+              />
+              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#F8FAFC] border border-slate-200/90 text-[11px] font-bold text-[#0F172A] shadow-2xs">
+                <DcxFlowIcon size={18} />
+                <span>
+                  DCX <span className="text-[#16A34A]">Flow</span>
+                </span>
+              </span>
+            </div>
+
             {/* Seletor Segmentado (Entrar / Cadastrar) ou Retorno no Recuperar Senha */}
             {authTab !== 'recover' ? (
               <div
@@ -311,7 +292,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 {authTab === 'login'
                   ? 'Insira suas credenciais corporativas para continuar.'
                   : authTab === 'signup'
-                  ? 'Preencha seus dados para solicitar acesso ao Pulse Agenda.'
+                  ? 'Preencha seus dados para solicitar acesso ao DCX Flow.'
                   : 'Confirme seu e-mail e nome cadastrado para definir uma nova senha.'}
               </p>
             </header>
