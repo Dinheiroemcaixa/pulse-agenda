@@ -2,10 +2,17 @@ import { useState, useEffect, useRef } from 'react'
 import type { Pop, PopStep, PopStepMedia, Task, User } from '../types'
 import {
   DEFAULT_POPS,
+  POP_MAX_FILE_SIZE_LABEL,
   getLocalPops,
   resolveTaskPopId,
   savePopApi,
-  linkTaskToPopApi
+  linkTaskToPopApi,
+  validatePopAttachmentFile,
+  uploadPopMediaFile,
+  resolvePopMediaAccess,
+  downloadPopMediaFile,
+  cleanupUnreferencedPopStorageFiles,
+  type ResolvedPopMediaAccess
 } from '../lib/popsApi'
 import { genId } from '../lib/utils'
 
@@ -28,46 +35,26 @@ interface Props {
   showToast: (msg: string, type?: string) => void
 }
 
-function readFileToMediaItem(f: File): Promise<PopStepMedia> {
-  return new Promise(resolve => {
-    const isVid = f.type.startsWith('video') || /\.(mp4|webm|mov|avi|mkv)$/i.test(f.name)
-    const isImg = f.type.startsWith('image') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(f.name)
-    const sizeStr =
-      f.size > 1048576
-        ? (f.size / 1048576).toFixed(1) + ' MB'
-        : Math.max(1, Math.round(f.size / 1024)) + ' KB'
-    const ext = (f.name.split('.').pop() || 'ARQ').slice(0, 4).toUpperCase()
-    const baseItem: PopStepMedia = {
-      id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      name: f.name,
-      type: isVid ? 'video' : isImg ? 'image' : 'doc',
-      size: sizeStr,
-      extension: ext
+function getYouTubeEmbedUrl(url: string): string | null {
+  try {
+    const u = new URL(url)
+    if (u.hostname.includes('youtube.com')) {
+      const v = u.searchParams.get('v')
+      if (v) return `https://www.youtube.com/embed/${v}`
+      if (u.pathname.startsWith('/embed/')) return url
     }
-
-    // Até 1.5 MB converte para Data URL para persistir em localStorage/Supabase após recarregar
-    if (f.size <= 1572864) {
-      const reader = new FileReader()
-      reader.onload = () => {
-        resolve({
-          ...baseItem,
-          url: typeof reader.result === 'string' ? reader.result : URL.createObjectURL(f)
-        })
-      }
-      reader.onerror = () => {
-        resolve({
-          ...baseItem,
-          url: URL.createObjectURL(f)
-        })
-      }
-      reader.readAsDataURL(f)
-    } else {
-      resolve({
-        ...baseItem,
-        url: URL.createObjectURL(f)
-      })
+    if (u.hostname === 'youtu.be') {
+      const id = u.pathname.replace(/^\//, '')
+      if (id) return `https://www.youtube.com/embed/${id}`
     }
-  })
+    if (u.hostname.includes('vimeo.com')) {
+      const match = u.pathname.match(/\/(\d+)/)
+      if (match?.[1]) return `https://player.vimeo.com/video/${match[1]}`
+    }
+  } catch {
+    // URL inválida ou relativa
+  }
+  return null
 }
 
 export function PopRunnerModal(props: Props) {
@@ -175,6 +162,11 @@ export function PopRunnerModal(props: Props) {
   )
   const [isSaving, setIsSaving] = useState(false)
 
+  // ID estável de rascunho para uploads no Storage mesmo antes do primeiro save de um Novo POP
+  const draftPopIdRef = useRef<string>(pop.id || `pop_${genId()}`)
+  const pendingDeletedStoragePathsRef = useRef<string[]>([])
+  const sessionUploadedStoragePathsRef = useRef<string[]>([])
+
   // Estados do formulário de edição completa no PopRunnerModal
   const [fTitle, setFTitle] = useState(pop.title || '')
   const [fResponsible, setFResponsible] = useState(
@@ -210,6 +202,32 @@ export function PopRunnerModal(props: Props) {
           }
         ]
   )
+
+  // Confirmação de exclusão de uma etapa inteira
+  const [stepIndexPendingDelete, setStepIndexPendingDelete] = useState<number | null>(null)
+
+  // Estados de upload direto para o Supabase Storage (pop-media)
+  const [uploadingState, setUploadingState] = useState<{
+    stepIdx: number
+    fileName: string
+    progress: number
+  } | null>(null)
+  const [failedUploadState, setFailedUploadState] = useState<{
+    stepIdx: number
+    file: File
+    error: string
+  } | null>(null)
+
+  // Estado do Modal Visualizador de Anexo unificado (Problema 4 e 5)
+  const [activeViewerMedia, setActiveViewerMedia] = useState<{
+    media: PopStepMedia
+    stepNum: number
+    stepTitle: string
+  } | null>(null)
+  const [viewerAccess, setViewerAccess] = useState<ResolvedPopMediaAccess | null>(null)
+  const [viewerLoading, setViewerLoading] = useState(false)
+  const [viewerLoadFailed, setViewerLoadFailed] = useState(false)
+  const [viewerZoom, setViewerZoom] = useState(100)
 
   // Mini-painel inline para adicionar vídeo/planilha/documento/imagem rapidamente em uma etapa
   const [quickMediaStepIdx, setQuickMediaStepIdx] = useState<number | null>(null)
@@ -248,6 +266,9 @@ export function PopRunnerModal(props: Props) {
             }
           ]
     )
+    setStepIndexPendingDelete(null)
+    pendingDeletedStoragePathsRef.current = []
+    sessionUploadedStoragePathsRef.current = []
   }
 
   // Estado de execução de etapas no modo visualização
@@ -301,43 +322,128 @@ export function PopRunnerModal(props: Props) {
     if (toastMsg) showToast(toastMsg, 'success')
   }
 
-  const handleAddFiles = async (stepIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
-    e.target.value = ''
+  const processFilesForStep = async (stepIdx: number, files: File[]) => {
     if (files.length === 0) return
 
-    const hasOversized = files.some(f => f.size > 1572864)
-    const added = await Promise.all(files.map(readFileToMediaItem))
+    const currentStepList = isEditing ? fSteps : pop.steps || []
+    const targetStep = currentStepList[stepIdx]
+    if (!targetStep) return
+
+    const existingMedia = targetStep.media || []
+    const uploadedItems: PopStepMedia[] = []
+    const targetPopId = pop.id || draftPopIdRef.current
+
+    for (const file of files) {
+      const validation = validatePopAttachmentFile(file)
+      if (!validation.valid) {
+        showToast(`⚠️ ${validation.error}`, 'warn')
+        continue
+      }
+
+      const candidateHash = `${file.name}::${file.size}::${file.lastModified}`
+      const isDuplicate =
+        existingMedia.some(
+          m =>
+            (m.content_hash && m.content_hash === candidateHash) ||
+            (m.name === file.name && m.file_size_bytes === file.size)
+        ) ||
+        uploadedItems.some(
+          m =>
+            (m.content_hash && m.content_hash === candidateHash) ||
+            (m.name === file.name && m.file_size_bytes === file.size)
+        )
+
+      if (isDuplicate) {
+        showToast(
+          `ℹ️ O arquivo "${file.name}" já está anexado nesta etapa.`,
+          'info'
+        )
+        continue
+      }
+
+      setFailedUploadState(null)
+      setUploadingState({
+        stepIdx,
+        fileName: file.name,
+        progress: 10
+      })
+
+      try {
+        const uploadedMedia = await uploadPopMediaFile(
+          targetPopId,
+          targetStep.id || `s${stepIdx + 1}`,
+          file,
+          pct => {
+            setUploadingState({
+              stepIdx,
+              fileName: file.name,
+              progress: pct
+            })
+          }
+        )
+        uploadedItems.push(uploadedMedia)
+        if (isEditing && uploadedMedia.storage_path) {
+          sessionUploadedStoragePathsRef.current.push(uploadedMedia.storage_path)
+        }
+      } catch (err: any) {
+        const errMsg =
+          err?.message ||
+          `Erro ao enviar "${file.name}" para o Supabase Storage. Verifique sua conexão e tente novamente.`
+        setFailedUploadState({
+          stepIdx,
+          file,
+          error: errMsg
+        })
+        showToast(`❌ ${errMsg}`, 'warn')
+      }
+    }
+
+    setUploadingState(null)
+
+    if (uploadedItems.length === 0) return
 
     if (isEditing) {
       setFSteps(prev =>
         prev.map((s, idx) =>
-          idx === stepIdx ? { ...s, media: [...(s.media || []), ...added] } : s
+          idx === stepIdx ? { ...s, media: [...(s.media || []), ...uploadedItems] } : s
         )
       )
-      if (hasOversized) {
-        showToast(
-          '⚠️ Arquivo acima de 1,5 MB: referência incluída na etapa. Para vídeos/arquivos grandes permanentes, informe o link em "+ Vídeo / Planilha".',
-          'info'
-        )
-      } else {
-        showToast('📎 Arquivo(s) incluído(s) na etapa!', 'info')
-      }
+      showToast(
+        `✅ ${uploadedItems.length === 1 ? `"${uploadedItems[0].name}" enviado` : `${uploadedItems.length} arquivos enviados`} ao Storage e anexado(s) à Etapa ${stepIdx + 1}!`,
+        'success'
+      )
     } else {
       const updatedSteps = (pop.steps || []).map((s, idx) =>
-        idx === stepIdx ? { ...s, media: [...(s.media || []), ...added] } : s
+        idx === stepIdx ? { ...s, media: [...(s.media || []), ...uploadedItems] } : s
       )
       await persistViewModeSteps(
         updatedSteps,
-        hasOversized
-          ? '⚠️ Arquivo > 1,5 MB: referência salva. Para arquivos grandes, use "+ Vídeo / Planilha" com link.'
-          : '📎 Anexo salvo no POP!'
+        `✅ Anexo salvo no POP e armazenado com segurança!`
       )
     }
   }
 
+  const handleAddFiles = async (stepIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    await processFilesForStep(stepIdx, files)
+  }
+
+  const handleRetryFailedUpload = async () => {
+    if (!failedUploadState) return
+    const { stepIdx, file } = failedUploadState
+    setFailedUploadState(null)
+    await processFilesForStep(stepIdx, [file])
+  }
+
   const handleRemoveMedia = async (stepIdx: number, mediaIdx: number) => {
+    const currentStepList = isEditing ? fSteps : pop.steps || []
+    const removedMedia = currentStepList[stepIdx]?.media?.[mediaIdx]
+
     if (isEditing) {
+      if (removedMedia?.storage_path) {
+        pendingDeletedStoragePathsRef.current.push(removedMedia.storage_path)
+      }
       setFSteps(prev =>
         prev.map((s, idx) =>
           idx === stepIdx
@@ -345,6 +451,7 @@ export function PopRunnerModal(props: Props) {
             : s
         )
       )
+      showToast('🗑 Anexo removido da etapa.', 'info')
     } else {
       const updatedSteps = (pop.steps || []).map((s, idx) =>
         idx === stepIdx
@@ -352,11 +459,63 @@ export function PopRunnerModal(props: Props) {
           : s
       )
       await persistViewModeSteps(updatedSteps, '🗑 Anexo removido do POP.')
+      if (removedMedia?.storage_path) {
+        const updatedPopForCheck: Pop = { ...pop, steps: updatedSteps }
+        const popsSnapshot = allPops.map(p =>
+          p.id === updatedPopForCheck.id ? updatedPopForCheck : p
+        )
+        await cleanupUnreferencedPopStorageFiles(
+          [removedMedia.storage_path],
+          popsSnapshot
+        )
+      }
+    }
+  }
+
+  const handleOpenMediaViewer = async (
+    media: PopStepMedia,
+    stepNum: number,
+    stepTitle: string,
+    forceRefresh = false
+  ) => {
+    setActiveViewerMedia({ media, stepNum, stepTitle })
+    setViewerLoading(true)
+    setViewerLoadFailed(false)
+    if (!forceRefresh) setViewerZoom(100)
+    try {
+      const userIdentifier =
+        currentUser?.email || currentUser?.name || 'usuario.autenticado@pulse.local'
+      const access = await resolvePopMediaAccess(media, userIdentifier, forceRefresh)
+      setViewerAccess(access)
+    } catch (err: any) {
+      setViewerAccess({
+        ok: false,
+        error: err?.message || 'Erro ao carregar visualização do anexo.'
+      })
+    } finally {
+      setViewerLoading(false)
+    }
+  }
+
+  const handleDownloadMedia = async (media: PopStepMedia, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    const userIdentifier =
+      currentUser?.email || currentUser?.name || 'usuario.autenticado@pulse.local'
+    const res = await downloadPopMediaFile(media, userIdentifier)
+    if (!res.ok) {
+      showToast(`⚠️ ${res.error || 'Não foi possível baixar o anexo.'}`, 'warn')
+      return
+    }
+    if (res.openedExternal) {
+      showToast(`↗ Link externo "${media.name}" aberto em nova guia.`, 'info')
+    } else {
+      showToast(`⬇ Download iniciado: ${media.name}`, 'info')
     }
   }
 
   const handleConfirmQuickMedia = async (stepIdx: number) => {
     const trimmedName = qmName.trim()
+    const trimmedUrl = qmUrl.trim()
     const defaultNameByKind: Record<'video' | 'xlsx' | 'pdf' | 'image', string> = {
       video: 'video-tutorial-etapa.mp4',
       xlsx: 'planilha-apoio-etapa.xlsx',
@@ -377,7 +536,11 @@ export function PopRunnerModal(props: Props) {
       id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       name: finalName,
       type: qmKind === 'video' ? 'video' : qmKind === 'image' ? 'image' : 'doc',
-      url: qmUrl.trim() || undefined,
+      url: trimmedUrl || undefined,
+      external_url:
+        trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')
+          ? trimmedUrl
+          : undefined,
       extension: extFromName || extByKind[qmKind],
       size: qmKind === 'video' ? 'Vídeo' : qmKind === 'xlsx' ? 'Planilha' : qmKind === 'pdf' ? 'Documento' : 'Imagem'
     }
@@ -401,8 +564,9 @@ export function PopRunnerModal(props: Props) {
     }
   }
 
-  // Manipulação de etapas no modo de edição
+  // Manipulação de etapas no modo de edição (suporta 8, 10, 20+ etapas sem qualquer limite)
   const addStep = () => {
+    const nextIdx = fSteps.length
     setFSteps(prev => [
       ...prev,
       {
@@ -415,6 +579,37 @@ export function PopRunnerModal(props: Props) {
         tipType: 'info'
       }
     ])
+    setTimeout(() => {
+      const el = stepRefs.current[nextIdx]
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    }, 80)
+  }
+
+  const handleAddStepFromViewMode = () => {
+    if (!canEdit) return
+    populateForm(pop)
+    const nextIdx = (pop.steps || []).length
+    setFSteps(prev => [
+      ...prev,
+      {
+        id: genId(),
+        order: prev.length + 1,
+        title: '',
+        instruction: '',
+        media: [],
+        tip: '',
+        tipType: 'info'
+      }
+    ])
+    setIsEditing(true)
+    setTimeout(() => {
+      const el = stepRefs.current[nextIdx]
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    }, 100)
   }
 
   const updateStepField = <K extends keyof PopStep>(idx: number, field: K, val: PopStep[K]) => {
@@ -425,12 +620,32 @@ export function PopRunnerModal(props: Props) {
     })
   }
 
-  const removeStep = (idx: number) => {
+  const requestDeleteStep = (idx: number) => {
+    if (fSteps.length <= 1) {
+      showToast('⚠️ O POP deve possuir pelo menos 1 etapa.', 'warn')
+      return
+    }
+    setStepIndexPendingDelete(idx)
+  }
+
+  const confirmDeleteStep = () => {
+    if (stepIndexPendingDelete === null) return
+    const idx = stepIndexPendingDelete
+    const stepToRemove = fSteps[idx]
+    if (stepToRemove?.media) {
+      for (const m of stepToRemove.media) {
+        if (m.storage_path) {
+          pendingDeletedStoragePathsRef.current.push(m.storage_path)
+        }
+      }
+    }
     setFSteps(prev => {
       if (prev.length <= 1) return prev
       const filtered = prev.filter((_, i) => i !== idx)
       return filtered.map((s, i) => ({ ...s, order: i + 1 }))
     })
+    setStepIndexPendingDelete(null)
+    showToast(`🗑 Etapa ${idx + 1} excluída. As demais etapas foram renumeradas.`, 'info')
   }
 
   const moveStep = (idx: number, dir: -1 | 1) => {
@@ -458,11 +673,8 @@ export function PopRunnerModal(props: Props) {
       return
     }
 
-    const validSteps = fSteps.filter(
-      s => s.title.trim() || s.instruction.trim() || (s.media && s.media.length > 0)
-    )
-    if (validSteps.length === 0) {
-      showToast('⚠ Adicione ao menos 1 etapa preenchida ao procedimento', 'warn')
+    if (fSteps.length === 0) {
+      showToast('⚠ Adicione ao menos 1 etapa ao procedimento', 'warn')
       return
     }
 
@@ -470,6 +682,7 @@ export function PopRunnerModal(props: Props) {
     try {
       const editTargetId = createNew && !currentPopOverride ? undefined : pop.id || undefined
       const payload: Partial<Pop> = {
+        id: editTargetId || draftPopIdRef.current,
         title: fTitle.trim(),
         objective: fObjective.trim(),
         when_to_use: fWhenToUse.trim(),
@@ -479,12 +692,12 @@ export function PopRunnerModal(props: Props) {
         contact_notes: fContactNotes.trim(),
         responsible: fResponsible.trim() || currentUser?.name || 'Raffaela Lima',
         estimated_time: fEstimatedTime.trim() || '30 min',
-        steps: validSteps.map((s, i) => ({
+        steps: fSteps.map((s, i) => ({
           ...s,
           id: s.id || genId(),
           order: i + 1,
           title: s.title.trim() || `Etapa ${i + 1}`,
-          instruction: s.instruction.trim(),
+          instruction: s.instruction.trim() || 'Executar conforme orientação operacional.',
           media: s.media || [],
           tip: s.tip?.trim() || undefined,
           tipType: s.tip?.trim() ? s.tipType || 'info' : undefined
@@ -493,17 +706,41 @@ export function PopRunnerModal(props: Props) {
       }
 
       const saved = await savePopApi(payload, editTargetId)
+
+      if (pendingDeletedStoragePathsRef.current.length > 0) {
+        const popsSnapshot = allPops.some(p => p.id === saved.id)
+          ? allPops.map(p => (p.id === saved.id ? saved : p))
+          : [saved, ...allPops]
+        await cleanupUnreferencedPopStorageFiles(
+          pendingDeletedStoragePathsRef.current,
+          popsSnapshot
+        )
+        pendingDeletedStoragePathsRef.current = []
+      }
+      sessionUploadedStoragePathsRef.current = []
+
       setCurrentPopOverride(saved)
       await onRefreshPops?.()
       onSaved?.(saved)
       setIsEditing(false)
-      showToast('✅ POP salvo com sucesso!', 'success')
+      showToast(`✅ POP salvo com sucesso (${saved.steps.length} etapas)!`, 'success')
     } finally {
       setIsSaving(false)
     }
   }
 
-  const handleCancelEdit = () => {
+  const handleCancelEdit = async () => {
+    if (sessionUploadedStoragePathsRef.current.length > 0) {
+      await cleanupUnreferencedPopStorageFiles(
+        sessionUploadedStoragePathsRef.current,
+        allPops
+      )
+      sessionUploadedStoragePathsRef.current = []
+    }
+    pendingDeletedStoragePathsRef.current = []
+    setStepIndexPendingDelete(null)
+    setFailedUploadState(null)
+
     if ((createNew && !currentPopOverride) || initialMode === 'edit') {
       onClose()
       return
@@ -1111,7 +1348,9 @@ export function PopRunnerModal(props: Props) {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              paddingTop: 4
+              paddingTop: 4,
+              flexWrap: 'wrap',
+              gap: 8
             }}
           >
             <div
@@ -1121,12 +1360,13 @@ export function PopRunnerModal(props: Props) {
                 color: '#5b6688'
               }}
             >
-              ETAPAS NUMERADAS ({totalSteps})
+              ETAPAS NUMERADAS ({totalSteps}) — SUPORTE ILIMITADO A ETAPAS (8, 10, 20+)
             </div>
 
             {isEditing && (
               <button
                 type="button"
+                data-testid="add-step-top-btn"
                 onClick={addStep}
                 style={{
                   height: 30,
@@ -1149,14 +1389,18 @@ export function PopRunnerModal(props: Props) {
             const stepNum = idx + 1
             const displayTitle = step.title?.startsWith('Etapa ')
               ? step.title
-              : `Etapa ${stepNum}: ${step.title}`
+              : `Etapa ${stepNum}: ${step.title || `Etapa ${stepNum}`}`
 
             const stepMedia = step.media || []
             const isWarnTip = step.tipType === 'warn'
+            const isPendingDeleteThisStep = isEditing && stepIndexPendingDelete === idx
+            const isUploadingThisStep = uploadingState?.stepIdx === idx
+            const hasFailedUploadThisStep = failedUploadState?.stepIdx === idx
 
             return (
               <div
                 key={step.id || idx}
+                data-testid={`pop-step-card-${idx}`}
                 ref={el => {
                   stepRefs.current[idx] = el
                 }}
@@ -1167,7 +1411,13 @@ export function PopRunnerModal(props: Props) {
                   padding: 16,
                   borderRadius: 10,
                   background: '#141b31',
-                  border: `1px solid ${isOk ? '#2a6b4d' : '#26304f'}`
+                  border: `1px solid ${
+                    isPendingDeleteThisStep
+                      ? '#d64545'
+                      : isOk
+                        ? '#2a6b4d'
+                        : '#26304f'
+                  }`
                 }}
               >
                 <button
@@ -1201,12 +1451,12 @@ export function PopRunnerModal(props: Props) {
                 >
                   {isEditing ? (
                     <>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                         <input
                           value={step.title}
                           onChange={e => updateStepField(idx, 'title', e.target.value)}
                           placeholder={`Título da Etapa ${stepNum} (ex: Conferência de saldos bancários)`}
-                          style={{ ...inputStyle, fontWeight: 600, flex: 1 }}
+                          style={{ ...inputStyle, fontWeight: 600, flex: '1 1 240px' }}
                         />
                         <button
                           type="button"
@@ -1244,25 +1494,91 @@ export function PopRunnerModal(props: Props) {
                         >
                           ▼
                         </button>
-                        {steps.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => removeStep(idx)}
-                            title="Remover etapa"
-                            style={{
-                              width: 30,
-                              height: 32,
-                              borderRadius: 6,
-                              border: '1px solid #7a2e3a',
-                              background: '#2a1720',
-                              color: '#ff7a8a',
-                              cursor: 'pointer'
-                            }}
-                          >
-                            ✕
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          data-testid={`delete-step-btn-${idx}`}
+                          onClick={() => requestDeleteStep(idx)}
+                          title="Excluir esta etapa"
+                          style={{
+                            height: 32,
+                            padding: '0 10px',
+                            borderRadius: 6,
+                            border: '1px solid #7a2e3a',
+                            background: '#2a1720',
+                            color: '#ff7a8a',
+                            font: "600 11.5px 'IBM Plex Sans', sans-serif",
+                            cursor: steps.length <= 1 ? 'not-allowed' : 'pointer',
+                            opacity: steps.length <= 1 ? 0.45 : 1,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 5,
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
+                          🗑 Excluir etapa
+                        </button>
                       </div>
+
+                      {/* Diálogo de confirmação inline de exclusão da etapa */}
+                      {isPendingDeleteThisStep && (
+                        <div
+                          data-testid={`confirm-delete-step-box-${idx}`}
+                          style={{
+                            background: '#2a141c',
+                            border: '1px solid #d64545',
+                            borderRadius: 8,
+                            padding: '12px 14px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 12,
+                            flexWrap: 'wrap'
+                          }}
+                        >
+                          <div style={{ fontSize: 12.5, color: '#ffd6dc', lineHeight: 1.45, flex: '1 1 280px' }}>
+                            <strong>
+                              Confirma a exclusão da Etapa {stepNum} ({step.title?.trim() || 'Sem título'})?
+                            </strong>{' '}
+                            As demais etapas serão renumeradas automaticamente.
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <button
+                              type="button"
+                              onClick={() => setStepIndexPendingDelete(null)}
+                              style={{
+                                height: 30,
+                                padding: '0 12px',
+                                borderRadius: 6,
+                                border: '1px solid #6b3b47',
+                                background: 'transparent',
+                                color: '#f1d6da',
+                                fontSize: 12,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="button"
+                              data-testid="confirm-delete-step-btn"
+                              onClick={confirmDeleteStep}
+                              style={{
+                                height: 30,
+                                padding: '0 14px',
+                                borderRadius: 6,
+                                border: 'none',
+                                background: '#d64545',
+                                color: '#fff',
+                                fontSize: 12,
+                                fontWeight: 700,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              Confirmar exclusão da etapa
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       <textarea
                         rows={3}
@@ -1325,18 +1641,106 @@ export function PopRunnerModal(props: Props) {
                     </>
                   )}
 
+                  {/* Cabeçalho orientativo de Anexos e Limite Supabase Storage */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      flexWrap: 'wrap',
+                      gap: 6,
+                      paddingTop: 2
+                    }}
+                  >
+                    <span style={{ fontSize: 11, color: '#7d93ff', fontWeight: 600 }}>
+                      📎 Anexos e Mídias da Etapa ({stepMedia.length})
+                    </span>
+                    <span style={{ fontSize: 10.5, color: '#6c779c' }}>
+                      Envio direto (Vídeos MP4/WebM/MOV, PDF, Planilhas XLSX/CSV, Word DOCX, Imagens) · Limite: até {POP_MAX_FILE_SIZE_LABEL} por arquivo
+                    </span>
+                  </div>
+
+                  {/* Barra de progresso de upload no Supabase Storage */}
+                  {isUploadingThisStep && uploadingState && (
+                    <div
+                      style={{
+                        background: '#0d1324',
+                        border: '1px solid #3c5299',
+                        borderRadius: 8,
+                        padding: '10px 12px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 6
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: '#a9b8ff' }}>
+                        <span>Enviando "{uploadingState.fileName}" para o Supabase Storage (pop-media)...</span>
+                        <strong>{uploadingState.progress}%</strong>
+                      </div>
+                      <div style={{ height: 6, background: '#1b223b', borderRadius: 4, overflow: 'hidden' }}>
+                        <div
+                          style={{
+                            height: '100%',
+                            width: `${uploadingState.progress}%`,
+                            background: '#4f6bff',
+                            transition: 'width 0.2s ease'
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Alerta de falha de upload com opção de Tentar enviar novamente sem perder dados */}
+                  {hasFailedUploadThisStep && failedUploadState && (
+                    <div
+                      style={{
+                        background: '#2a1720',
+                        border: '1px solid #d64545',
+                        borderRadius: 8,
+                        padding: '10px 12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 10,
+                        flexWrap: 'wrap'
+                      }}
+                    >
+                      <div style={{ fontSize: 12, color: '#ffd6dc', flex: 1 }}>
+                        ⚠️ {failedUploadState.error}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleRetryFailedUpload}
+                        style={{
+                          height: 28,
+                          padding: '0 12px',
+                          borderRadius: 6,
+                          border: '1px solid #ff7a8a',
+                          background: '#4a1d28',
+                          color: '#fff',
+                          fontSize: 11.5,
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        ↻ Tentar enviar novamente
+                      </button>
+                    </div>
+                  )}
+
                   {/* Grade de Mídias + Botões de Anexo (Vídeos, Planilhas, PDFs, Imagens) */}
                   <div
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
-                      gap: 8
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(175px, 1fr))',
+                      gap: 10
                     }}
                   >
                     {stepMedia.map((m, mediaIdx) => {
                       const ext = (
                         m.extension ||
-                        (m.name.split('.').pop() || 'ARQ')
+                        (m.name.includes('.') ? m.name.split('.').pop() || '' : '') ||
+                        (m.type === 'video' ? 'MP4' : m.type === 'image' ? 'IMG' : 'DOC')
                       )
                         .slice(0, 4)
                         .toUpperCase()
@@ -1350,180 +1754,318 @@ export function PopRunnerModal(props: Props) {
                             DOCX: '#2f62d6',
                             DOC: '#2f62d6',
                             OFX: '#8a5cd6',
-                            ZIP: '#7a7f95'
+                            TXT: '#5b6688',
+                            MP4: '#4f6bff',
+                            WEBM: '#4f6bff',
+                            MOV: '#4f6bff'
                           } as Record<string, string>
                         )[ext] || '#4f6bff'
 
-                      const isImgWithUrl = m.type === 'image' && !!m.url
-                      const isVidWithUrl = m.type === 'video' && !!m.url
-                      const showPlayIcon = m.type === 'video' && !m.url
-                      const isDoc = m.type === 'doc'
+                      const isImgWithImmediateUrl =
+                        m.type === 'image' &&
+                        Boolean(m.url && (m.url.startsWith('data:') || m.url.startsWith('http')))
+                      const isVideo = m.type === 'video'
+                      const isImage = m.type === 'image'
+                      const isExternal = Boolean(
+                        m.external_url ||
+                          (m.url &&
+                            (m.url.startsWith('http://') || m.url.startsWith('https://')) &&
+                            !m.url.includes('/storage/v1/object/'))
+                      )
 
                       return (
                         <div
                           key={m.id || `${idx}-${mediaIdx}`}
+                          data-testid={`media-card-${idx}-${mediaIdx}`}
+                          onClick={() => handleOpenMediaViewer(m, stepNum, displayTitle)}
+                          title={`Clique para visualizar ou reproduzir: ${m.name}`}
                           style={{
                             position: 'relative',
-                            aspectRatio: '4/3',
-                            borderRadius: 8,
-                            border: '1px solid #26304f',
+                            borderRadius: 9,
+                            border: '1px solid #2b3860',
                             overflow: 'hidden',
-                            background:
-                              'repeating-linear-gradient(135deg, #161e36 0 10px, #131a30 10px 20px)',
+                            background: '#11182d',
                             display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center'
+                            flexDirection: 'column',
+                            cursor: 'pointer',
+                            transition: 'border-color 0.15s ease, transform 0.15s ease'
                           }}
                         >
-                          {isImgWithUrl && (
-                            <img
-                              src={m.url}
-                              alt=""
-                              style={{
-                                position: 'absolute',
-                                inset: 0,
-                                width: '100%',
-                                height: '100%',
-                                objectFit: 'cover'
-                              }}
-                            />
-                          )}
-
-                          {isVidWithUrl && (
-                            <video
-                              src={m.url}
-                              controls
-                              style={{
-                                position: 'absolute',
-                                inset: 0,
-                                width: '100%',
-                                height: '100%',
-                                objectFit: 'cover',
-                                background: '#000'
-                              }}
-                            />
-                          )}
-
-                          {isDoc && (
-                            <a
-                              href={m.url || '#'}
-                              download={m.url ? m.name : undefined}
-                              target={m.url && m.url.startsWith('http') ? '_blank' : undefined}
-                              rel="noreferrer"
-                              onClick={e => {
-                                if (!m.url) {
-                                  e.preventDefault()
-                                  showToast(`Arquivo de referência: ${m.name}`, 'info')
-                                }
-                              }}
-                              style={{
-                                position: 'absolute',
-                                inset: 0,
-                                background: '#141b31',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 8,
-                                textDecoration: 'none'
-                              }}
-                            >
-                              <span
+                          {/* Área visual superior do card */}
+                          <div
+                            style={{
+                              position: 'relative',
+                              height: 102,
+                              background:
+                                'repeating-linear-gradient(135deg, #161e36 0 10px, #131a30 10px 20px)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 6,
+                              overflow: 'hidden'
+                            }}
+                          >
+                            {isImgWithImmediateUrl && (
+                              <img
+                                src={m.url}
+                                alt={m.name}
                                 style={{
-                                  width: 44,
-                                  height: 54,
-                                  borderRadius: 5,
-                                  background: docColor,
-                                  display: 'flex',
-                                  alignItems: 'flex-end',
-                                  justifyContent: 'center',
-                                  paddingBottom: 7,
-                                  font: "700 10px 'IBM Plex Mono', monospace",
-                                  color: '#fff'
-                                }}
-                              >
-                                {ext}
-                              </span>
-                              <span style={{ fontSize: 10.5, color: '#8b94b3' }}>
-                                {m.size || ''}
-                              </span>
-                            </a>
-                          )}
-
-                          {showPlayIcon && (
-                            <div
-                              style={{
-                                width: 40,
-                                height: 40,
-                                borderRadius: '50%',
-                                background: '#4f6bff',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center'
-                              }}
-                            >
-                              <div
-                                style={{
-                                  width: 0,
-                                  height: 0,
-                                  borderLeft: '12px solid #fff',
-                                  borderTop: '8px solid transparent',
-                                  borderBottom: '8px solid transparent',
-                                  marginLeft: 3
+                                  position: 'absolute',
+                                  inset: 0,
+                                  width: '100%',
+                                  height: '100%',
+                                  objectFit: 'cover'
                                 }}
                               />
+                            )}
+
+                            {isVideo && (
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  gap: 5,
+                                  zIndex: 1
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    width: 42,
+                                    height: 42,
+                                    borderRadius: '50%',
+                                    background: '#4f6bff',
+                                    boxShadow: '0 4px 14px rgba(79, 107, 255, 0.45)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      width: 0,
+                                      height: 0,
+                                      borderLeft: '13px solid #fff',
+                                      borderTop: '8px solid transparent',
+                                      borderBottom: '8px solid transparent',
+                                      marginLeft: 3
+                                    }}
+                                  />
+                                </div>
+                                <span
+                                  style={{
+                                    fontSize: 9.5,
+                                    fontWeight: 700,
+                                    color: '#c6d2ff',
+                                    background: 'rgba(13, 19, 36, 0.82)',
+                                    padding: '2px 7px',
+                                    borderRadius: 4
+                                  }}
+                                >
+                                  {m.storage_path ? 'VÍDEO STORAGE' : isExternal ? 'VÍDEO EXTERNO' : 'ASSISTIR VÍDEO'}
+                                </span>
+                              </div>
+                            )}
+
+                            {isImage && !isImgWithImmediateUrl && (
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  gap: 5
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    width: 42,
+                                    height: 42,
+                                    borderRadius: 8,
+                                    background: '#1e2c54',
+                                    border: '1px solid #3c5299',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 20
+                                  }}
+                                >
+                                  🖼
+                                </span>
+                                <span style={{ fontSize: 9.5, fontWeight: 600, color: '#a9b8ff' }}>
+                                  {ext || 'IMAGEM'}
+                                </span>
+                              </div>
+                            )}
+
+                            {!isVideo && !isImage && (
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  gap: 5
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    width: 42,
+                                    height: 48,
+                                    borderRadius: 6,
+                                    background: docColor,
+                                    display: 'flex',
+                                    alignItems: 'flex-end',
+                                    justifyContent: 'center',
+                                    paddingBottom: 6,
+                                    font: "700 10px 'IBM Plex Mono', monospace",
+                                    color: '#fff',
+                                    boxShadow: '0 4px 10px rgba(0,0,0,0.3)'
+                                  }}
+                                >
+                                  {ext}
+                                </span>
+                                <span style={{ fontSize: 10, color: '#9aa4c7' }}>
+                                  {m.size || (m.storage_path ? 'Storage' : 'Documento')}
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Selo de origem (Storage ou Link) */}
+                            {m.storage_path && (
+                              <span
+                                style={{
+                                  position: 'absolute',
+                                  top: 6,
+                                  left: 6,
+                                  fontSize: 9,
+                                  fontWeight: 700,
+                                  padding: '2px 5px',
+                                  borderRadius: 4,
+                                  background: 'rgba(29, 74, 54, 0.92)',
+                                  color: '#5ed39a',
+                                  border: '1px solid #2a6b4d'
+                                }}
+                              >
+                                ☁ Storage
+                              </span>
+                            )}
+
+                            {/* Botão de remover anexo */}
+                            {(isEditing || canEdit) && (
+                              <button
+                                type="button"
+                                onClick={e => {
+                                  e.stopPropagation()
+                                  handleRemoveMedia(idx, mediaIdx)
+                                }}
+                                title="Remover anexo desta etapa"
+                                style={{
+                                  position: 'absolute',
+                                  top: 6,
+                                  right: 6,
+                                  width: 22,
+                                  height: 22,
+                                  borderRadius: 5,
+                                  border: '1px solid rgba(255, 122, 138, 0.35)',
+                                  background: 'rgba(13, 18, 32, 0.9)',
+                                  color: '#ff7a8a',
+                                  fontSize: 13,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  zIndex: 2
+                                }}
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Nome do arquivo e metadados */}
+                          <div
+                            style={{
+                              padding: '7px 8px 6px',
+                              background: '#0e1426',
+                              borderTop: '1px solid #1f2947',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: 6
+                            }}
+                          >
+                            <div
+                              style={{
+                                font: "500 10.5px 'IBM Plex Mono', monospace",
+                                color: '#dbe1f5',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis'
+                              }}
+                              title={m.name}
+                            >
+                              {m.name}
                             </div>
-                          )}
 
-                          <span
-                            style={{
-                              position: 'absolute',
-                              left: 6,
-                              bottom: 6,
-                              right: 6,
-                              font: "500 10px 'IBM Plex Mono', monospace",
-                              color: '#aab2cc',
-                              background: 'rgba(13, 18, 32, 0.85)',
-                              padding: '3px 6px',
-                              borderRadius: 4,
-                              whiteSpace: 'nowrap',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis'
-                            }}
-                          >
-                            {m.name}
-                          </span>
-
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveMedia(idx, mediaIdx)}
-                            title="Remover anexo"
-                            style={{
-                              position: 'absolute',
-                              top: 6,
-                              right: 6,
-                              width: 22,
-                              height: 22,
-                              borderRadius: 5,
-                              border: 'none',
-                              background: 'rgba(13, 18, 32, 0.85)',
-                              color: '#c6cce0',
-                              fontSize: 13,
-                              cursor: 'pointer'
-                            }}
-                          >
-                            ×
-                          </button>
+                            {/* Barra de ações diretas: Visualizar e Baixar */}
+                            <div style={{ display: 'flex', gap: 5 }}>
+                              <button
+                                type="button"
+                                data-testid={`view-media-btn-${idx}-${mediaIdx}`}
+                                onClick={e => {
+                                  e.stopPropagation()
+                                  handleOpenMediaViewer(m, stepNum, displayTitle)
+                                }}
+                                style={{
+                                  flex: 1,
+                                  height: 25,
+                                  borderRadius: 5,
+                                  border: '1px solid #354780',
+                                  background: '#182346',
+                                  color: '#a9b8ff',
+                                  font: "600 10.5px 'IBM Plex Sans', sans-serif",
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 4
+                                }}
+                              >
+                                👁 {isVideo ? 'Assistir' : 'Visualizar'}
+                              </button>
+                              <button
+                                type="button"
+                                data-testid={`download-media-btn-${idx}-${mediaIdx}`}
+                                onClick={e => handleDownloadMedia(m, e)}
+                                title={isExternal ? 'Abrir link externo' : `Baixar ${m.name}`}
+                                style={{
+                                  height: 25,
+                                  padding: '0 8px',
+                                  borderRadius: 5,
+                                  border: '1px solid #264d3b',
+                                  background: '#132a20',
+                                  color: '#5ed39a',
+                                  font: "600 10.5px 'IBM Plex Sans', sans-serif",
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: 3
+                                }}
+                              >
+                                {isExternal ? '↗ Abrir' : '⬇ Baixar'}
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       )
                     })}
 
-                    {/* Upload direto de arquivo do computador */}
+                    {/* Upload direto de arquivo do computador para o Supabase Storage */}
                     <label
                       className="pop-dc-attach-label"
                       style={{
-                        aspectRatio: '4/3',
-                        borderRadius: 8,
+                        minHeight: 156,
+                        borderRadius: 9,
                         border: '1.5px dashed #34407a',
                         display: 'flex',
                         flexDirection: 'column',
@@ -1532,32 +2074,34 @@ export function PopRunnerModal(props: Props) {
                         gap: 4,
                         cursor: 'pointer',
                         color: '#a9b8ff',
-                        background: '#121933'
+                        background: '#121933',
+                        padding: 10
                       }}
                     >
                       <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>
-                      <span style={{ fontSize: 12, fontWeight: 600 }}>
-                        Anexar arquivo
+                      <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'center' }}>
+                        Anexar vídeo ou arquivo
                       </span>
                       <span
                         style={{
-                          fontSize: 10.5,
+                          fontSize: 10,
                           color: '#6c779c',
                           textAlign: 'center',
-                          padding: '0 6px'
+                          lineHeight: 1.35
                         }}
                       >
-                        Foto, vídeo, PDF, Excel, Word, OFX…
+                        MP4, WebM, MOV, PDF, Excel, Word, Fotos (até {POP_MAX_FILE_SIZE_LABEL})
                       </span>
                       <input
                         type="file"
                         multiple
+                        accept=".mp4,.webm,.mov,.avi,.ogg,.mkv,.png,.jpg,.jpeg,.webp,.gif,.svg,.pdf,.xlsx,.xls,.csv,.docx,.doc,.ofx,.txt,video/*,image/*,application/pdf"
                         onChange={e => handleAddFiles(idx, e)}
                         style={{ display: 'none' }}
                       />
                     </label>
 
-                    {/* Botão para cadastrar vídeo / planilha / anexo nomeado */}
+                    {/* Botão para cadastrar vídeo / planilha / link externo */}
                     <button
                       type="button"
                       className="pop-dc-attach-label"
@@ -1568,8 +2112,8 @@ export function PopRunnerModal(props: Props) {
                         setQmUrl('')
                       }}
                       style={{
-                        aspectRatio: '4/3',
-                        borderRadius: 8,
+                        minHeight: 156,
+                        borderRadius: 9,
                         border: '1.5px dashed #2d4d5c',
                         display: 'flex',
                         flexDirection: 'column',
@@ -1579,21 +2123,22 @@ export function PopRunnerModal(props: Props) {
                         cursor: 'pointer',
                         color: '#7dd3fc',
                         background: '#101d2e',
-                        padding: 6
+                        padding: 10
                       }}
                     >
                       <span style={{ fontSize: 18, lineHeight: 1 }}>🎬 📊</span>
                       <span style={{ fontSize: 11.5, fontWeight: 600, textAlign: 'center' }}>
-                        + Vídeo / Planilha
+                        + Link / Referência
                       </span>
                       <span
                         style={{
                           fontSize: 10,
                           color: '#6c8a9c',
-                          textAlign: 'center'
+                          textAlign: 'center',
+                          lineHeight: 1.35
                         }}
                       >
-                        Incluir tutorial, XLSX ou link
+                        Link externo (YouTube, Drive) ou modelo
                       </span>
                     </button>
                   </div>
@@ -1612,7 +2157,7 @@ export function PopRunnerModal(props: Props) {
                       }}
                     >
                       <div style={{ fontSize: 11, fontWeight: 600, color: '#a9b8ff' }}>
-                        Incluir Vídeo, Planilha ou Documento na Etapa {stepNum}
+                        Incluir Link Externo ou Referência na Etapa {stepNum}
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr 1fr', gap: 8 }} className="pop-dc-grid2">
                         <select
@@ -1620,7 +2165,7 @@ export function PopRunnerModal(props: Props) {
                           onChange={e => setQmKind(e.target.value as 'video' | 'xlsx' | 'pdf' | 'image')}
                           style={inputStyle}
                         >
-                          <option value="video">🎬 Vídeo (MP4)</option>
+                          <option value="video">🎬 Vídeo (MP4 / Link)</option>
                           <option value="xlsx">📊 Planilha (XLSX)</option>
                           <option value="pdf">📄 Documento (PDF)</option>
                           <option value="image">🖼 Imagem (PNG)</option>
@@ -1700,6 +2245,57 @@ export function PopRunnerModal(props: Props) {
               </div>
             )
           })}
+
+          {/* BOTÃO DE ADICIONAR ETAPA NO FINAL DA LISTA (FACILITA POPS COM 8+ ETAPAS) */}
+          {isEditing && (
+            <button
+              type="button"
+              data-testid="add-step-bottom-btn"
+              onClick={addStep}
+              style={{
+                width: '100%',
+                minHeight: 44,
+                padding: '10px 16px',
+                borderRadius: 10,
+                border: '1.5px dashed #4f6bff',
+                background: '#141e42',
+                color: '#a9b8ff',
+                font: "600 13px 'IBM Plex Sans', sans-serif",
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8
+              }}
+            >
+              <span>+ Adicionar Etapa (Etapa {steps.length + 1})</span>
+            </button>
+          )}
+
+          {!isEditing && canEdit && (
+            <button
+              type="button"
+              data-testid="add-step-from-view-btn"
+              onClick={handleAddStepFromViewMode}
+              style={{
+                width: '100%',
+                minHeight: 40,
+                padding: '8px 16px',
+                borderRadius: 9,
+                border: '1px dashed #344478',
+                background: '#121930',
+                color: '#8fa2ff',
+                font: "600 12.5px 'IBM Plex Sans', sans-serif",
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6
+              }}
+            >
+              + Adicionar nova etapa a este POP (Etapa {steps.length + 1})
+            </button>
+          )}
 
           {/* CUIDADOS E ATENÇÃO & RESULTADO ESPERADO */}
           <div
@@ -1798,7 +2394,7 @@ export function PopRunnerModal(props: Props) {
           {isEditing ? (
             <>
               <span style={{ fontSize: 12, color: '#8b94b3', flex: 1 }}>
-                Todos os vídeos, planilhas e alterações ficam salvos na versão atualizada do POP.
+                Todos os vídeos, planilhas e etapas ficam salvos no Supabase e no POP atualizado.
               </span>
               <button
                 type="button"
@@ -1818,6 +2414,7 @@ export function PopRunnerModal(props: Props) {
               </button>
               <button
                 type="button"
+                data-testid="save-pop-btn"
                 disabled={isSaving}
                 onClick={handleSavePop}
                 style={{
@@ -1892,6 +2489,614 @@ export function PopRunnerModal(props: Props) {
           )}
         </footer>
       </section>
+
+      {/* MODAL VISUALIZADOR UNIFICADO DE ANEXOS E VÍDEOS (PROBLEMAS 4 E 5) */}
+      {activeViewerMedia && (
+        <div
+          data-testid="pop-media-viewer-modal"
+          onClick={e => {
+            e.stopPropagation()
+            if (e.target === e.currentTarget) {
+              setActiveViewerMedia(null)
+            }
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 10050,
+            background: 'rgba(5, 8, 18, 0.85)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: 'min(900px, 100%)',
+              maxHeight: '90vh',
+              background: '#0f162b',
+              border: '1px solid #304072',
+              borderRadius: 14,
+              boxShadow: '0 32px 90px rgba(0, 0, 0, 0.7)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              color: '#e6e9f2'
+            }}
+          >
+            {/* Header do Visualizador */}
+            <div
+              style={{
+                padding: '14px 20px',
+                borderBottom: '1px solid #222d4d',
+                background: '#131c36',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                flexWrap: 'wrap'
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                <div style={{ fontSize: 11, color: '#7d93ff', fontWeight: 600 }}>
+                  {activeViewerMedia.stepTitle} • Visualizador de Anexo do POP
+                </div>
+                <div
+                  style={{
+                    fontSize: 15,
+                    fontWeight: 700,
+                    color: '#fff',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}
+                >
+                  {activeViewerMedia.media.name}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {activeViewerMedia.media.type === 'image' && viewerAccess?.ok && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginRight: 6 }}>
+                    <button
+                      type="button"
+                      onClick={() => setViewerZoom(z => Math.max(50, z - 25))}
+                      style={{
+                        height: 30,
+                        padding: '0 8px',
+                        borderRadius: 6,
+                        border: '1px solid #2f3d69',
+                        background: '#182346',
+                        color: '#c6cce0',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      −
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewerZoom(100)}
+                      style={{
+                        height: 30,
+                        padding: '0 8px',
+                        borderRadius: 6,
+                        border: '1px solid #2f3d69',
+                        background: '#182346',
+                        color: '#a9b8ff',
+                        fontSize: 11.5,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {viewerZoom}%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewerZoom(z => Math.min(200, z + 25))}
+                      style={{
+                        height: 30,
+                        padding: '0 8px',
+                        borderRadius: 6,
+                        border: '1px solid #2f3d69',
+                        background: '#182346',
+                        color: '#c6cce0',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      +
+                    </button>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  data-testid="viewer-download-btn"
+                  onClick={e => handleDownloadMedia(activeViewerMedia.media, e)}
+                  style={{
+                    height: 32,
+                    padding: '0 14px',
+                    borderRadius: 7,
+                    border: 'none',
+                    background: '#22a06b',
+                    color: '#fff',
+                    font: "600 12px 'IBM Plex Sans', sans-serif",
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6
+                  }}
+                >
+                  {viewerAccess?.isExternalLink
+                    ? '↗ Abrir Link Externo'
+                    : activeViewerMedia.media.type === 'video'
+                      ? '⬇ Baixar Vídeo Original'
+                      : activeViewerMedia.media.type === 'image'
+                        ? '⬇ Baixar Imagem Original'
+                        : `⬇ Baixar Arquivo Original (${(activeViewerMedia.media.extension || 'ARQ').toUpperCase()})`}
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="close-media-viewer-btn"
+                  onClick={() => setActiveViewerMedia(null)}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 7,
+                    border: '1px solid #2f3d69',
+                    background: 'transparent',
+                    color: '#c6cce0',
+                    fontSize: 16,
+                    cursor: 'pointer'
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            {/* Corpo do Visualizador */}
+            <div
+              style={{
+                padding: 20,
+                overflowY: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 14,
+                minHeight: 320
+              }}
+            >
+              {viewerLoading ? (
+                <div style={{ color: '#a9b8ff', fontSize: 13.5 }}>
+                  Carregando acesso seguro ao anexo...
+                </div>
+              ) : !viewerAccess?.ok ? (
+                <div
+                  style={{
+                    background: '#2a1720',
+                    border: '1px solid #d64545',
+                    borderRadius: 10,
+                    padding: 20,
+                    textAlign: 'center',
+                    maxWidth: 520,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 12,
+                    alignItems: 'center'
+                  }}
+                >
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#ff7a8a' }}>
+                    ⚠️ {viewerAccess?.error || 'URL expirada ou arquivo indisponível'}
+                  </div>
+                  {activeViewerMedia.media.storage_path && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleOpenMediaViewer(
+                          activeViewerMedia.media,
+                          activeViewerMedia.stepNum,
+                          activeViewerMedia.stepTitle,
+                          true
+                        )
+                      }
+                      style={{
+                        height: 34,
+                        padding: '0 16px',
+                        borderRadius: 7,
+                        border: 'none',
+                        background: '#4f6bff',
+                        color: '#fff',
+                        fontWeight: 600,
+                        fontSize: 12.5,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ↻ Renovar Link Assinado
+                    </button>
+                  )}
+                </div>
+              ) : viewerLoadFailed ? (
+                <div
+                  style={{
+                    background: '#2a1720',
+                    border: '1px solid #d64545',
+                    borderRadius: 10,
+                    padding: 20,
+                    textAlign: 'center',
+                    maxWidth: 520,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 12,
+                    alignItems: 'center'
+                  }}
+                >
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#ff7a8a' }}>
+                    ⚠️ URL expirada ou arquivo indisponível para reprodução direta.
+                  </div>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleOpenMediaViewer(
+                          activeViewerMedia.media,
+                          activeViewerMedia.stepNum,
+                          activeViewerMedia.stepTitle,
+                          true
+                        )
+                      }
+                      style={{
+                        height: 34,
+                        padding: '0 14px',
+                        borderRadius: 7,
+                        border: 'none',
+                        background: '#4f6bff',
+                        color: '#fff',
+                        fontWeight: 600,
+                        fontSize: 12.5,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ↻ Renovar Link Assinado
+                    </button>
+                    <button
+                      type="button"
+                      onClick={e => handleDownloadMedia(activeViewerMedia.media, e)}
+                      style={{
+                        height: 34,
+                        padding: '0 14px',
+                        borderRadius: 7,
+                        border: 'none',
+                        background: '#22a06b',
+                        color: '#fff',
+                        fontWeight: 600,
+                        fontSize: 12.5,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ⬇ Baixar Arquivo Original
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* 1. Player de Vídeo */}
+                  {activeViewerMedia.media.type === 'video' && (
+                    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
+                      {viewerAccess.isExternalLink && viewerAccess.url ? (
+                        (() => {
+                          const embedUrl = getYouTubeEmbedUrl(viewerAccess.url)
+                          return embedUrl ? (
+                            <iframe
+                              src={embedUrl}
+                              title={activeViewerMedia.media.name}
+                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                              allowFullScreen
+                              style={{
+                                width: '100%',
+                                height: '58vh',
+                                border: 'none',
+                                borderRadius: 10,
+                                background: '#000'
+                              }}
+                            />
+                          ) : (
+                            <div
+                              style={{
+                                width: '100%',
+                                background: '#141d36',
+                                border: '1px solid #304072',
+                                borderRadius: 10,
+                                padding: 24,
+                                textAlign: 'center',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                gap: 12
+                              }}
+                            >
+                              <div style={{ fontSize: 14, fontWeight: 700, color: '#a9b8ff' }}>
+                                🎬 Link de Vídeo Externo
+                              </div>
+                              <div style={{ fontSize: 12.5, color: '#8b94b3', wordBreak: 'break-all' }}>
+                                {viewerAccess.url}
+                              </div>
+                              <a
+                                href={viewerAccess.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  padding: '9px 18px',
+                                  borderRadius: 7,
+                                  background: '#4f6bff',
+                                  color: '#fff',
+                                  textDecoration: 'none',
+                                  fontWeight: 600,
+                                  fontSize: 13
+                                }}
+                              >
+                                ↗ Abrir Vídeo Externo em Nova Guia
+                              </a>
+                            </div>
+                          )
+                        })()
+                      ) : (
+                        <video
+                          data-testid="pop-viewer-video-element"
+                          src={viewerAccess.url}
+                          controls
+                          autoPlay
+                          onError={() => setViewerLoadFailed(true)}
+                          style={{
+                            width: '100%',
+                            maxHeight: '62vh',
+                            borderRadius: 10,
+                            background: '#000'
+                          }}
+                        />
+                      )}
+                      {viewerAccess.previewText && (
+                        <div
+                          style={{
+                            width: '100%',
+                            background: '#141b31',
+                            border: '1px solid #26304f',
+                            borderRadius: 8,
+                            padding: '10px 14px',
+                            fontSize: 12,
+                            color: '#aab2cc',
+                            lineHeight: 1.5
+                          }}
+                        >
+                          {viewerAccess.previewText}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 2. Visualizador de Imagem com Zoom */}
+                  {activeViewerMedia.media.type === 'image' && viewerAccess.url && (
+                    <div
+                      style={{
+                        width: '100%',
+                        overflow: 'auto',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        background: '#0a0f1d',
+                        borderRadius: 10,
+                        padding: 12,
+                        maxHeight: '66vh'
+                      }}
+                    >
+                      <img
+                        data-testid="pop-viewer-image-element"
+                        src={viewerAccess.url}
+                        alt={activeViewerMedia.media.name}
+                        onError={() => setViewerLoadFailed(true)}
+                        style={{
+                          width: `${viewerZoom}%`,
+                          maxWidth: viewerZoom === 100 ? '100%' : 'none',
+                          height: 'auto',
+                          borderRadius: 8,
+                          objectFit: 'contain'
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* 3. Visualizador de Documentos (PDF, Planilhas XLSX/CSV, Word DOCX, Links Externos) */}
+                  {activeViewerMedia.media.type === 'doc' && (
+                    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                      {viewerAccess.isExternalLink && viewerAccess.url ? (
+                        <div
+                          style={{
+                            background: '#141d36',
+                            border: '1px solid #304072',
+                            borderRadius: 10,
+                            padding: 24,
+                            textAlign: 'center',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: 12
+                          }}
+                        >
+                          <div style={{ fontSize: 15, fontWeight: 700, color: '#a9b8ff' }}>
+                            🔗 Link Externo Vinculado à Etapa
+                          </div>
+                          <div style={{ fontSize: 12.5, color: '#8b94b3', wordBreak: 'break-all' }}>
+                            {viewerAccess.url}
+                          </div>
+                          <a
+                            href={viewerAccess.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              padding: '9px 18px',
+                              borderRadius: 7,
+                              background: '#4f6bff',
+                              color: '#fff',
+                              textDecoration: 'none',
+                              fontWeight: 600,
+                              fontSize: 13
+                            }}
+                          >
+                            ↗ Abrir Link Externo em Nova Guia
+                          </a>
+                        </div>
+                      ) : (activeViewerMedia.media.extension || '').toUpperCase() === 'PDF' ||
+                        activeViewerMedia.media.name.toLowerCase().endsWith('.pdf') ? (
+                        <iframe
+                          data-testid="pop-viewer-pdf-iframe"
+                          src={viewerAccess.url}
+                          title={activeViewerMedia.media.name}
+                          style={{
+                            width: '100%',
+                            height: '65vh',
+                            border: 'none',
+                            borderRadius: 8,
+                            background: '#fff'
+                          }}
+                        />
+                      ) : viewerAccess.previewRows && viewerAccess.previewRows.length > 0 ? (
+                        <div
+                          style={{
+                            width: '100%',
+                            background: '#131b31',
+                            border: '1px solid #28365e',
+                            borderRadius: 10,
+                            overflow: 'hidden'
+                          }}
+                        >
+                          <div
+                            style={{
+                              padding: '10px 14px',
+                              background: '#182342',
+                              borderBottom: '1px solid #28365e',
+                              fontSize: 12,
+                              fontWeight: 600,
+                              color: '#5ed39a',
+                              display: 'flex',
+                              justifyContent: 'space-between'
+                            }}
+                          >
+                            <span>📊 Pré-visualização da Planilha ({activeViewerMedia.media.name})</span>
+                            <span>Compatível com Microsoft Excel / CSV</span>
+                          </div>
+                          <div style={{ overflowX: 'auto' }}>
+                            <table
+                              style={{
+                                width: '100%',
+                                borderCollapse: 'collapse',
+                                fontSize: 12,
+                                textAlign: 'left'
+                              }}
+                            >
+                              <thead>
+                                <tr style={{ background: '#0e1529', color: '#a9b8ff' }}>
+                                  {viewerAccess.previewRows[0].map((col, cIdx) => (
+                                    <th
+                                      key={cIdx}
+                                      style={{
+                                        padding: '9px 12px',
+                                        borderBottom: '1px solid #263359',
+                                        whiteSpace: 'nowrap'
+                                      }}
+                                    >
+                                      {col}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {viewerAccess.previewRows.slice(1).map((row, rIdx) => (
+                                  <tr
+                                    key={rIdx}
+                                    style={{
+                                      borderBottom: '1px solid #1d2746',
+                                      color: '#dbe1f5'
+                                    }}
+                                  >
+                                    {row.map((cell, cIdx) => (
+                                      <td key={cIdx} style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
+                                        {cell}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : viewerAccess.previewText ? (
+                        <pre
+                          style={{
+                            width: '100%',
+                            margin: 0,
+                            padding: 16,
+                            background: '#0d1324',
+                            border: '1px solid #28365e',
+                            borderRadius: 8,
+                            color: '#dbe1f5',
+                            font: "12.5px/1.6 'IBM Plex Mono', monospace",
+                            whiteSpace: 'pre-wrap',
+                            maxHeight: '60vh',
+                            overflowY: 'auto'
+                          }}
+                        >
+                          {viewerAccess.previewText}
+                        </pre>
+                      ) : (
+                        <div
+                          style={{
+                            background: '#141d36',
+                            border: '1px solid #304072',
+                            borderRadius: 10,
+                            padding: 24,
+                            textAlign: 'center',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: 12
+                          }}
+                        >
+                          <div style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>
+                            📄 {activeViewerMedia.media.name}
+                          </div>
+                          <div style={{ fontSize: 12.5, color: '#9aa4c7' }}>
+                            Formato: {(activeViewerMedia.media.extension || 'DOC').toUpperCase()} • Tamanho:{' '}
+                            {activeViewerMedia.media.size || 'Armazenado no Supabase Storage (pop-media)'}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={e => handleDownloadMedia(activeViewerMedia.media, e)}
+                            style={{
+                              height: 38,
+                              padding: '0 20px',
+                              borderRadius: 8,
+                              border: 'none',
+                              background: '#22a06b',
+                              color: '#fff',
+                              fontWeight: 700,
+                              fontSize: 13,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            ⬇ Baixar Arquivo Original ({(activeViewerMedia.media.extension || 'ARQ').toUpperCase()})
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

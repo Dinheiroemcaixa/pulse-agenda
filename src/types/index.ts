@@ -93,6 +93,12 @@ export interface PopStepMedia {
   id?: string
   name: string
   url?: string
+  external_url?: string
+  storage_bucket?: string
+  storage_path?: string
+  mime_type?: string
+  file_size_bytes?: number
+  content_hash?: string
   type: 'image' | 'video' | 'doc'
   size?: string
   extension?: string
