@@ -247,6 +247,10 @@ export function useAuth() {
 
     // Whitelist estrita: impede alteração de is_admin, access_profile, access_status ou permissions pelo próprio usuário
     const safeUpdate = sanitizeSelfProfileUpdate(currentUser, data)
+    // Impede que uma sessão administrativa de teste altere acidentalmente a senha real do operador no banco
+    if (operatorTestSession !== null) {
+      delete safeUpdate.pass_hash
+    }
     if (Object.keys(safeUpdate).length === 0) return false
 
     const pendingList = getLocalPendingUsers()

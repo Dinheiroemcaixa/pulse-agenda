@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import type { Task, TeamMember, User, RecurType, Priority, Pop } from '../types'
 import { getTodayStr, RECUR_LABELS } from '../lib/utils'
 import { resolveTaskPopId, linkTaskToPopApi } from '../lib/popsApi'
-import { canViewAllTasks } from '../lib/accessControlApi'
+import { canViewAllTasks, isUserActive } from '../lib/accessControlApi'
 
 interface Props {
   editTask?: Task
@@ -10,7 +10,7 @@ interface Props {
   currentUser: User
   pops?: Pop[]
   defaultDate?: string
-  onSave: (data: Partial<Task>) => Promise<void>
+  onSave: (data: Partial<Task>) => Promise<boolean | void>
   onClose: () => void
   showToast: (msg: string, type?: string) => void
 }
@@ -19,9 +19,36 @@ const DAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab']
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
 export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate, onSave, onClose, showToast }: Props) {
-  const canAssignOthers = canViewAllTasks(currentUser)
+  const canAssignOthers = Boolean(editTask ? isUserActive(currentUser) : (canViewAllTasks(currentUser) || isUserActive(currentUser)))
+
+  const availableOperators = useMemo(() => {
+    const list: Array<{ id: string; name: string }> = []
+    const seen = new Set<string>()
+    const addOp = (id: string, rawName?: string) => {
+      const trimmed = (rawName || '').trim()
+      if (!trimmed) return
+      const key = trimmed.toLowerCase()
+      if (!seen.has(key)) {
+        seen.add(key)
+        list.push({ id, name: trimmed })
+      }
+    }
+    team.forEach(m => addOp(m.id, m.name))
+    addOp(currentUser.id || 'current_user', currentUser.name)
+    if (editTask?.resp) {
+      addOp(`task_resp_${editTask.id}`, editTask.resp)
+    }
+    return list
+  }, [team, currentUser.id, currentUser.name, editTask?.id, editTask?.resp])
+
+  const resolveCanonicalOperatorName = (rawName?: string) => {
+    const target = (rawName || currentUser.name || '').trim()
+    const match = availableOperators.find(op => op.name.toLowerCase() === target.toLowerCase())
+    return match ? match.name : target
+  }
+
   const [desc, setDesc] = useState(editTask?.descricao || '')
-  const [resp, setResp] = useState(canAssignOthers ? (editTask?.resp || currentUser.name) : currentUser.name)
+  const [resp, setResp] = useState(() => resolveCanonicalOperatorName(editTask?.resp || currentUser.name))
   const [date, setDate] = useState(editTask?.date || defaultDate || getTodayStr())
   const [prio, setPrio] = useState<Priority>(editTask?.prio || 'Média')
   const [allDay, setAllDay] = useState(editTask?.all_day !== false)
@@ -43,14 +70,20 @@ export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate,
   const descRef = useRef<HTMLInputElement>(null)
   useEffect(() => { setTimeout(() => descRef.current?.focus(), 100) }, [])
 
+  const isTransferring = Boolean(
+    editTask &&
+    resp.trim() &&
+    resp.trim().toLowerCase() !== (editTask.resp || '').trim().toLowerCase()
+  )
+
   const handleSave = async () => {
     if (!desc.trim()) { showToast('⚠ Preencha a descrição', 'warn'); return }
     setSaving(true)
     const recurStart = editTask?.recur_start || (recur !== 'none' ? date : undefined)
     const selectedPopId = popId || undefined
-    await onSave({
+    const saved = await onSave({
       descricao: desc.trim(),
-      resp: canAssignOthers ? resp : currentUser.name,
+      resp: resp.trim() || currentUser.name.trim(),
       date,
       prio,
       status: editTask?.status || 'Em Aberto',
@@ -67,7 +100,7 @@ export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate,
       is_meeting: editTask?.is_meeting || false,
       pop_id: selectedPopId,
     })
-    if (editTask?.id) {
+    if (saved !== false && editTask?.id) {
       await linkTaskToPopApi(editTask.id, selectedPopId || null)
     }
     setSaving(false)
@@ -98,16 +131,33 @@ export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate,
               <label className="label">Responsável</label>
               <select
                 className="inp"
-                value={canAssignOthers ? resp : currentUser.name}
+                value={resolveCanonicalOperatorName(resp)}
                 disabled={!canAssignOthers}
                 onChange={e => setResp(e.target.value)}
               >
                 {canAssignOthers ? (
-                  team.map(m => <option key={m.id} value={m.name}>{m.name}</option>)
+                  availableOperators.map(m => <option key={m.id} value={m.name}>{m.name}</option>)
                 ) : (
                   <option value={currentUser.name}>{currentUser.name}</option>
                 )}
               </select>
+              {isTransferring && editTask && (
+                <div
+                  style={{
+                    marginTop: 6,
+                    padding: '5px 8px',
+                    borderRadius: 6,
+                    fontSize: 11.5,
+                    fontWeight: 500,
+                    background: 'rgba(37, 99, 235, 0.1)',
+                    border: '1px solid rgba(37, 99, 235, 0.28)',
+                    color: 'var(--accent, #2563eb)',
+                    lineHeight: 1.35,
+                  }}
+                >
+                  ↪ Transferindo responsável: de <strong>{editTask.resp}</strong> para <strong>{resp}</strong>
+                </div>
+              )}
             </div>
             <div className="field">
               <label className="label">Prioridade</label>

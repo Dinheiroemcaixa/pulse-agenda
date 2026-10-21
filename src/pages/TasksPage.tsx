@@ -27,7 +27,7 @@ interface Props {
   onComplete: (id: string, fromAtrasadas?: boolean) => Promise<boolean>
   onDelete: (id: string, deleteAll?: boolean) => Promise<void>
   onCycleStatus: (id: string) => Promise<void>
-  onReorder: (tasks: Task[]) => Promise<void>
+  onReorder: (tasks: Task[]) => Promise<boolean | void>
   onToggleSub: (taskId: string, idx: number) => Promise<void>
   onAddSub: (taskId: string, text: string) => Promise<void>
   onDeleteSub: (taskId: string, idx: number) => Promise<void>
@@ -120,6 +120,9 @@ export function TasksPage(props: Props) {
   const [agendaDate, setAgendaDate] = useState(new Date())
   const [selectedAgendaDay, setSelectedAgendaDay] = useState<string | null>(null)
   const [activePopTask, setActivePopTask] = useState<Task | null>(null)
+  const [editingOrderTaskId, setEditingOrderTaskId] = useState<string | null>(null)
+  const [orderInputValue, setOrderInputValue] = useState<string>('')
+  const orderCommitInProgressRef = useRef(false)
   const dragSrc = useRef<string | null>(null)
   const dateInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -179,16 +182,72 @@ export function TasksPage(props: Props) {
 
   const list = getFiltered()
 
+  const moveTaskInList = async (srcId: string, targetIndex: number) => {
+    if (list.length <= 1) return
+    const srcIdx = list.findIndex(t => t.id === srcId)
+    const clampedTarget = Math.max(0, Math.min(list.length - 1, targetIndex))
+    if (srcIdx === -1 || srcIdx === clampedTarget) return
+
+    const visibleReordered = [...list]
+    const [movedTask] = visibleReordered.splice(srcIdx, 1)
+    visibleReordered.splice(clampedTarget, 0, movedTask)
+
+    const minIdx = Math.min(srcIdx, clampedTarget)
+    const maxIdx = Math.max(srcIdx, clampedTarget)
+    const affectedOriginal = list.slice(minIdx, maxIdx + 1)
+    const rawSlots = affectedOriginal.map((t, i) => t.sort_order ?? (minIdx + i))
+    const isStrictlyIncreasing = rawSlots.every((v, i) => i === 0 || v > rawSlots[i - 1])
+
+    // Se a tarefa movida pertencer a uma s?rie recorrente (recur_group_id),
+    // garante que a ocorr?ncia movida prevale?a ao persistir o sort_order do mestre
+    const dedupSeries = (arr: Task[]) =>
+      movedTask.recur_group_id
+        ? arr.filter(t => t.id === movedTask.id || t.recur_group_id !== movedTask.recur_group_id)
+        : arr
+
+    let reorderedPayload: Task[]
+    if (isStrictlyIncreasing) {
+      const affectedReordered = dedupSeries(visibleReordered.slice(minIdx, maxIdx + 1))
+      reorderedPayload = affectedReordered.map((t, i) => ({ ...t, sort_order: rawSlots[i] }))
+    } else {
+      const baseOrder = Math.min(0, list[0]?.sort_order ?? 0)
+      const dedupedVisible = dedupSeries(visibleReordered)
+      reorderedPayload = dedupedVisible.map((t, i) => ({ ...t, sort_order: baseOrder + i }))
+    }
+    const ok = await props.onReorder(reorderedPayload)
+    if (ok === false) {
+      props.showToast('❌ Erro ao salvar nova posição', 'error')
+    } else {
+      props.showToast('↕ Ordem das tarefas salva', 'info')
+    }
+  }
+
+  const commitOrderInput = async (taskId: string, currentIdx: number, rawOverride?: string) => {
+    if (orderCommitInProgressRef.current) return
+    orderCommitInProgressRef.current = true
+    const raw = (rawOverride ?? orderInputValue).trim()
+    setEditingOrderTaskId(null)
+    try {
+      const parsed = parseInt(raw, 10)
+      if (!isNaN(parsed) && list.length > 1) {
+        const targetIdx = Math.max(0, Math.min(list.length - 1, parsed - 1))
+        if (targetIdx !== currentIdx) {
+          await moveTaskInList(taskId, targetIdx)
+        }
+      }
+    } finally {
+      orderCommitInProgressRef.current = false
+    }
+  }
+
   const handleDrop = async (srcId: string, dstId: string, before: boolean) => {
-    // Não reordena tarefas virtuais
-    if (srcId.startsWith('virtual_') || dstId.startsWith('virtual_')) return
-    const allTasks = [...tasks]
-    const srcIdx = allTasks.findIndex(t => t.id === srcId)
-    const [moved] = allTasks.splice(srcIdx, 1)
-    const dstIdx = allTasks.findIndex(t => t.id === dstId)
-    allTasks.splice(before ? dstIdx : dstIdx + 1, 0, moved)
-    const reordered = allTasks.map((t, i) => ({ ...t, sort_order: i }))
-    await props.onReorder(reordered)
+    const srcIdx = list.findIndex(t => t.id === srcId)
+    const dstIdx = list.findIndex(t => t.id === dstId)
+    if (srcIdx === -1 || dstIdx === -1 || srcId === dstId) return
+    let targetIndex = before ? dstIdx : dstIdx + 1
+    if (srcIdx < targetIndex) targetIndex -= 1
+    targetIndex = Math.max(0, Math.min(list.length - 1, targetIndex))
+    await moveTaskInList(srcId, targetIndex)
   }
 
   const recurLabel = (t: Task) => {
@@ -292,7 +351,7 @@ export function TasksPage(props: Props) {
           <div key={t.id} className="navy-row-group">
             <div
               className={`navy-tr${late ? ' navy-tr-late' : ''}${isExp || expandedNotes[t.id] ? ' navy-tr-expanded' : ''}`}
-              draggable
+              draggable={editingOrderTaskId !== t.id}
               onDragStart={e => {
                 dragSrc.current = t.id
                 e.dataTransfer.effectAllowed = 'move'
@@ -319,7 +378,75 @@ export function TasksPage(props: Props) {
                 await handleDrop(dragSrc.current, t.id, before)
               }}
             >
-              <span className="navy-td-num">{idx + 1}</span>
+              <div className="navy-td-num" onClick={e => e.stopPropagation()}>
+                <span
+                  className="material-symbols-outlined navy-order-drag"
+                  title="Arraste para reordenar"
+                >
+                  drag_indicator
+                </span>
+                {editingOrderTaskId === t.id ? (
+                  <input
+                    type="number"
+                    min={1}
+                    max={list.length}
+                    className="navy-order-input"
+                    value={orderInputValue}
+                    autoFocus
+                    onFocus={e => e.currentTarget.select()}
+                    onChange={e => setOrderInputValue(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        void commitOrderInput(t.id, idx, e.currentTarget.value)
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        setEditingOrderTaskId(null)
+                      }
+                    }}
+                    onBlur={e => {
+                      void commitOrderInput(t.id, idx, e.currentTarget.value)
+                    }}
+                    aria-label={`Nova posição para ${t.descricao}`}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    className="navy-order-badge"
+                    title={`Posição ${idx + 1} de ${list.length} — clique para digitar nova posição`}
+                    onClick={() => {
+                      setEditingOrderTaskId(t.id)
+                      setOrderInputValue(String(idx + 1))
+                    }}
+                  >
+                    {idx + 1}
+                  </button>
+                )}
+                {list.length > 1 && editingOrderTaskId !== t.id && (
+                  <div className="navy-order-steppers">
+                    <button
+                      type="button"
+                      className="navy-order-step-btn"
+                      disabled={idx === 0}
+                      title="Subir 1 posição"
+                      aria-label={`Mover ${t.descricao} para cima`}
+                      onClick={() => void moveTaskInList(t.id, idx - 1)}
+                    >
+                      ▲
+                    </button>
+                    <button
+                      type="button"
+                      className="navy-order-step-btn"
+                      disabled={idx === list.length - 1}
+                      title="Descer 1 posição"
+                      aria-label={`Mover ${t.descricao} para baixo`}
+                      onClick={() => void moveTaskInList(t.id, idx + 1)}
+                    >
+                      ▼
+                    </button>
+                  </div>
+                )}
+              </div>
               <button
                 type="button"
                 className="navy-ck"

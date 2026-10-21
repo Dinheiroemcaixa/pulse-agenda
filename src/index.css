@@ -1324,7 +1324,7 @@ select.inp{cursor:pointer}
 
 .navy-thead {
   display: grid;
-  grid-template-columns: 44px 36px minmax(0, 1fr) 170px 120px 116px 128px 124px;
+  grid-template-columns: 64px 36px minmax(0, 1fr) 170px 120px 116px 128px 124px;
   align-items: center;
   height: 38px;
   background: var(--navy-surface-sub);
@@ -1355,7 +1355,7 @@ select.inp{cursor:pointer}
 
 .navy-tr {
   display: grid;
-  grid-template-columns: 44px 36px minmax(0, 1fr) 170px 120px 116px 128px 124px;
+  grid-template-columns: 64px 36px minmax(0, 1fr) 170px 120px 116px 128px 124px;
   align-items: center;
   min-height: 56px;
   padding: 6px 8px;
@@ -1381,9 +1381,119 @@ select.inp{cursor:pointer}
 }
 
 .navy-td-num {
-  text-align: center;
-  font: 400 12px 'IBM Plex Mono', monospace;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font: 500 12px 'IBM Plex Mono', monospace;
   color: #98A0B0;
+  position: relative;
+  user-select: none;
+}
+
+.navy-order-drag {
+  font-size: 15px !important;
+  color: #B0B7C6;
+  cursor: grab;
+  opacity: 0.65;
+  transition: opacity 0.15s, color 0.15s;
+  line-height: 1;
+}
+
+.navy-tr:hover .navy-order-drag {
+  opacity: 1;
+  color: var(--navy-primary, #2F46B8);
+}
+
+.navy-order-badge {
+  min-width: 24px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.14s ease;
+}
+
+.navy-tr:hover .navy-order-badge,
+.navy-order-badge:focus-visible {
+  border-color: var(--navy-border, #D8DEE9);
+  background: var(--navy-surface-sub, rgba(47, 70, 184, 0.06));
+  color: var(--navy-text, #1E293B);
+}
+
+.navy-order-badge:hover {
+  border-color: var(--navy-primary, #2F46B8);
+  color: var(--navy-primary, #2F46B8);
+}
+
+.navy-order-input {
+  width: 38px;
+  height: 24px;
+  padding: 0 3px;
+  border-radius: 5px;
+  border: 1.5px solid var(--navy-primary, #2F46B8);
+  background: var(--navy-surface, #ffffff);
+  color: var(--navy-text, #1E293B);
+  font: 600 12px 'IBM Plex Mono', monospace;
+  text-align: center;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(47, 70, 184, 0.15);
+  -moz-appearance: textfield;
+}
+
+.navy-order-input::-webkit-outer-spin-button,
+.navy-order-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.navy-order-steppers {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s ease;
+}
+
+.navy-tr:hover .navy-order-steppers,
+.navy-td-num:focus-within .navy-order-steppers {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.navy-order-step-btn {
+  width: 13px;
+  height: 11px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: #8A94A6;
+  font-size: 7px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, color 0.12s;
+}
+
+.navy-order-step-btn:hover:not(:disabled) {
+  background: rgba(47, 70, 184, 0.12);
+  color: var(--navy-primary, #2F46B8);
+}
+
+.navy-order-step-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
 }
 
 .navy-ck {
@@ -1747,8 +1857,8 @@ select.inp{cursor:pointer}
 
   .navy-thead,
   .navy-tr {
-    grid-template-columns: 30px 26px minmax(200px, 1fr) 104px 80px 80px 98px 106px;
-    min-width: 724px;
+    grid-template-columns: 58px 26px minmax(200px, 1fr) 104px 80px 80px 98px 106px;
+    min-width: 752px;
   }
 
   .navy-task-title {

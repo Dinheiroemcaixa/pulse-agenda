@@ -141,9 +141,12 @@ export default function App() {
     }
   }, [currentUser, page])
 
+  const isTransitioningSessionRef = useRef(false)
+
   // Launch app after login ONLY if user is active (approved) and reload whenever active user identity changes
   useEffect(() => {
     if (currentUser && isUserActive(currentUser)) {
+      if (isTransitioningSessionRef.current) return
       if (!appReady || loadedUserIdRef.current !== currentUser.id) {
         loadedUserIdRef.current = currentUser.id
         if (!canViewAllTasks(currentUser)) {
@@ -162,18 +165,24 @@ export default function App() {
   }, [currentUser, appReady])
 
   const handleStartOperatorSession = useCallback(async (targetEmailOrId: string) => {
-    const operatorUser = await startOperatorSession(targetEmailOrId)
-    loadedUserIdRef.current = operatorUser.id
-    if (!canViewAllTasks(operatorUser)) {
-      setViewingAll(false)
-      setMemberFilter(operatorUser.name)
+    isTransitioningSessionRef.current = true
+    try {
+      const operatorUser = await startOperatorSession(targetEmailOrId)
+      loadedUserIdRef.current = operatorUser.id
+      if (!canViewAllTasks(operatorUser)) {
+        setViewingAll(false)
+        setMemberFilter(operatorUser.name)
+      }
+      setPageState('tasks')
+      await data.loadAll(operatorUser)
+      showToast(`🧑‍💻 Sessão iniciada com a identidade real de ${operatorUser.name} (${operatorUser.email})`, 'success')
+    } finally {
+      isTransitioningSessionRef.current = false
     }
-    setPageState('tasks')
-    await data.loadAll(operatorUser)
-    showToast(`🧑‍💻 Sessão iniciada com a identidade real de ${operatorUser.name} (${operatorUser.email})`, 'success')
   }, [startOperatorSession, data, showToast])
 
   const handleEndOperatorSession = useCallback(async () => {
+    isTransitioningSessionRef.current = true
     try {
       const restoredAdmin = await endOperatorSession()
       loadedUserIdRef.current = restoredAdmin.id
@@ -182,6 +191,8 @@ export default function App() {
       showToast(`🛡️ Sessão de teste encerrada. Retornado para Desenvolvedor (${restoredAdmin.name}).`, 'info')
     } catch (err: any) {
       showToast(err?.message || '❌ Erro ao encerrar sessão de teste', 'error')
+    } finally {
+      isTransitioningSessionRef.current = false
     }
   }, [endOperatorSession, data, showToast])
 
@@ -224,14 +235,30 @@ export default function App() {
     setTaskModalOpen(true)
   }
 
-  const handleSaveTask = async (taskData: Partial<Task>) => {
+  const handleSaveTask = async (taskData: Partial<Task>): Promise<boolean> => {
+    const existingTask = editTaskId
+      ? data.expandedTasks.find(t => t.id === editTaskId) || data.allAtrasadas.find(t => t.id === editTaskId)
+      : undefined
+    const isTransfer = Boolean(
+      existingTask &&
+      taskData.resp &&
+      (existingTask.resp || '').trim().toLowerCase() !== taskData.resp.trim().toLowerCase()
+    )
     const ok = await data.saveTask(taskData, editTaskId || undefined)
     if (ok) {
-      showToast(editTaskId ? '✏ Atualizada!' : '✅ Criada!', 'success')
+      if (editTaskId) {
+        showToast(
+          isTransfer ? `✅ Tarefa transferida para ${taskData.resp}!` : '✏ Atualizada!',
+          'success'
+        )
+      } else {
+        showToast('✅ Criada!', 'success')
+      }
       setTaskModalOpen(false)
     } else {
-      showToast('❌ Erro ao salvar', 'error')
+      showToast('❌ Não foi possível salvar a alteração. Verifique sua conexão e tente novamente.', 'error')
     }
+    return ok
   }
 
   const handleComplete = async (id: string, fromAtrasadas = false): Promise<boolean> => {
@@ -478,7 +505,7 @@ export default function App() {
 
       {taskModalOpen && (
         <TaskModal
-          editTask={editTaskId ? data.expandedTasks.find(t => t.id === editTaskId) : undefined}
+          editTask={editTaskId ? (data.expandedTasks.find(t => t.id === editTaskId) || data.allAtrasadas.find(t => t.id === editTaskId)) : undefined}
           team={data.team}
           currentUser={currentUser}
           pops={data.pops}

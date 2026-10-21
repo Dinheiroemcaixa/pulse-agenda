@@ -8,6 +8,7 @@ import {
   canAccessTaskRecord,
   canViewAllTasks,
   filterTasksForUser,
+  hydrateUserAccess,
   isUserActive,
 } from '../lib/accessControlApi'
 
@@ -824,6 +825,7 @@ export function useAppData(currentUser?: User | null) {
   const [pops, setPops] = useState<Pop[]>([])
 
   const [loading, setLoading] = useState(false)
+  const loadGenerationRef = useRef(0)
 
   // Estado local para subtarefas de tarefas virtuais (não persiste no tasks state)
   // Chave: virtual task ID → array de booleans (done por índice)
@@ -989,6 +991,7 @@ export function useAppData(currentUser?: User | null) {
 
   // ── LOAD ALL ─────────────────────────────────────────────
   const loadAll = useCallback(async (userOverride?: User | null) => {
+    const myGen = ++loadGenerationRef.current
     const activeUser = userOverride ?? currentUser
     // Bloqueia carregamento de dados internos para usuários pendentes, suspensos, recusados ou não autenticados
     if (!activeUser || !isUserActive(activeUser)) {
@@ -1013,11 +1016,13 @@ export function useAppData(currentUser?: User | null) {
       let from = 0
       const step = 1000
       while (true) {
+        if (myGen !== loadGenerationRef.current) break
         let q = sb.from('tasks').select('*').order('sort_order', { ascending: true })
         if (!canSeeAll) {
           q = q.ilike('resp', userRespName)
         }
         const { data, error } = await q.range(from, from + step - 1)
+        if (myGen !== loadGenerationRef.current) break
         if (error || !data || data.length === 0) break
         all = all.concat(data)
         if (data.length < step) break
@@ -1032,11 +1037,13 @@ export function useAppData(currentUser?: User | null) {
       let from = 0
       const step = 1000
       while (true) {
+        if (myGen !== loadGenerationRef.current) break
         let q = sb.from('hist').select('*').order('created_at', { ascending: false })
         if (!canSeeAll) {
           q = q.ilike('resp', userRespName)
         }
         const { data, error } = await q.range(from, from + step - 1)
+        if (myGen !== loadGenerationRef.current) break
         if (error || !data || data.length === 0) break
         all = all.concat(data)
         if (data.length < step) break
@@ -1045,15 +1052,18 @@ export function useAppData(currentUser?: User | null) {
       return { data: filterTasksForUser(activeUser, all) }
     }
 
-    const [tasksRes, histRes, meetsRes, teamRes, backupsRes] = await Promise.all([
+    const [tasksRes, histRes, meetsRes, teamRes, usersRes, backupsRes] = await Promise.all([
       fetchAllTasks(),
       fetchAllHist(),
       sb.from('meets').select('*').order('created_at', { ascending: false }),
       sb.from('team').select('*'),
+      sb.from('users').select('id,name,email,role,color,is_admin'),
       canSeeBackup
         ? sb.from('backup_tasks').select('id,backup_date,backup_label,created_at').order('created_at', { ascending: false }).limit(30)
         : Promise.resolve({ data: [] as Backup[] }),
     ])
+
+    if (myGen !== loadGenerationRef.current) return
 
     // Normaliza campos de data (remove parte de hora se houver) para evitar bugs de filtro e recorrência
     const normalizeDate = (d?: string) => d ? d.substring(0, 10) : d
@@ -1064,7 +1074,29 @@ export function useAppData(currentUser?: User | null) {
       recur_start: normalizeDate(h.recur_start)
     })))
     setMeets(meetsRes.data || [])
-    setTeam(teamRes.data || [])
+
+    const mergedTeam: TeamMember[] = [...(teamRes.data || [])]
+    const seenTeamNames = new Set(
+      mergedTeam.map(m => (m.name || '').trim().toLowerCase()).filter(Boolean)
+    )
+    for (const rawUser of (usersRes.data || [])) {
+      const hydrated = hydrateUserAccess(rawUser as User)
+      const trimmedName = (hydrated.name || '').trim()
+      if (!trimmedName || !isUserActive(hydrated)) continue
+      const lowerName = trimmedName.toLowerCase()
+      if (!seenTeamNames.has(lowerName)) {
+        seenTeamNames.add(lowerName)
+        mergedTeam.push({
+          id: hydrated.id,
+          name: trimmedName,
+          role: hydrated.role || 'Operador',
+          email: hydrated.email || '',
+          color: hydrated.color || '#3D55D6',
+          is_admin: Boolean(hydrated.is_admin),
+        })
+      }
+    }
+    setTeam(mergedTeam)
     setBackups(backupsRes.data || [])
 
     setTasks((tasksRes.data || []).map(t => ({
@@ -1075,6 +1107,7 @@ export function useAppData(currentUser?: User | null) {
 
     // Carregar procedimentos operacionais padrão (POP)
     const popsData = await fetchPopsApi()
+    if (myGen !== loadGenerationRef.current) return
     setPops(popsData)
 
     setLoading(false)
@@ -1092,34 +1125,125 @@ export function useAppData(currentUser?: User | null) {
       return false
     }
 
-    // Se editando uma virtual, materializa como nova tarefa real
-    const isVirtual = editId?.startsWith('virtual_')
+    const isVirtual = Boolean(editId?.startsWith('virtual_'))
 
     // Limpar campos que não pertencem ao banco (como isVirtual)
-    const { isVirtual: _iv, ...cleanData } = taskData as any
+    const { isVirtual: _iv, pop_id: localPopId, moved_at: _ma, ...cleanData } = taskData as any
 
-    // Se o usuário for Operador (sem permissão de gerir tarefas de terceiros), força atribuição a si mesmo
-    if (!canViewAllTasks(currentUser)) {
-      cleanData.resp = currentUser.name.trim()
-    } else if (cleanData.resp) {
-      cleanData.resp = cleanData.resp.trim()
+    cleanData.resp = (cleanData.resp || currentUser.name || '').trim()
+
+    // Resolver tarefa existente (ou tarefa mestre real caso editId seja virtual_ de uma série recorrente)
+    let resolvedEditId = editId
+    let existingTask: Task | undefined
+    let virtualTask: Task | undefined
+
+    if (editId && isVirtual) {
+      virtualTask = expandedTasks.find(t => t.id === editId)
+      if (virtualTask?.recur_group_id) {
+        const masterTask = tasks.find(
+          t => t.recur_group_id && t.recur_group_id === virtualTask!.recur_group_id && t.status !== 'Concluída'
+        )
+        if (masterTask) {
+          resolvedEditId = masterTask.id
+          existingTask = masterTask
+          if (!cleanData.date || cleanData.date === virtualTask.date) {
+            cleanData.date = masterTask.date
+          }
+        }
+      }
+    } else if (editId) {
+      existingTask = tasks.find(t => t.id === editId)
     }
 
-    if (editId && !isVirtual) {
-      const existingTask = tasks.find(t => t.id === editId)
-      if (existingTask && !canAccessTaskRecord(currentUser, existingTask)) {
-        console.error('❌ Acesso negado: tentativa de editar tarefa de terceiro sem autorização.')
-        return false
+    const taskForPermissionCheck = existingTask || virtualTask
+    if (editId && taskForPermissionCheck && !canAccessTaskRecord(currentUser, taskForPermissionCheck)) {
+      console.error('❌ Acesso negado: tentativa de editar tarefa de terceiro sem autorização.')
+      return false
+    }
+
+    if (resolvedEditId && !resolvedEditId.startsWith('virtual_') && existingTask) {
+      const isTransfer = Boolean(
+        existingTask &&
+        cleanData.resp &&
+        (existingTask.resp || '').trim().toLowerCase() !== cleanData.resp.trim().toLowerCase()
+      )
+
+      if (isTransfer) {
+        const { data: destTasks } = await sb
+          .from('tasks')
+          .select('sort_order')
+          .ilike('resp', cleanData.resp)
+          .neq('status', 'Concluída')
+          .order('sort_order', { ascending: false })
+          .limit(1)
+        const nextSortOrder =
+          destTasks && destTasks.length > 0
+            ? (destTasks[0].sort_order ?? 0) + 1
+            : (existingTask.sort_order ?? 0)
+        cleanData.sort_order = nextSortOrder
       }
+
       // Editar tarefa real existente
-      const { error } = await sb.from('tasks').update(cleanData).eq('id', editId)
+      const { error } = await sb.from('tasks').update(cleanData).eq('id', resolvedEditId)
       if (error) {
         console.error('❌ Erro ao atualizar tarefa:', error)
         return false
       }
-      setTasks(prev => prev.map(t => t.id === editId ? { ...t, ...cleanData } : t))
+
+      let transferredSiblingIds: string[] = []
+      if (
+        isTransfer &&
+        existingTask.recur_group_id &&
+        existingTask.recur &&
+        existingTask.recur !== 'none'
+      ) {
+        transferredSiblingIds = tasks
+          .filter(
+            t =>
+              t.id !== resolvedEditId &&
+              t.recur_group_id === existingTask!.recur_group_id &&
+              t.status !== 'Concluída' &&
+              (t.resp || '').trim().toLowerCase() === (existingTask!.resp || '').trim().toLowerCase()
+          )
+          .map(t => t.id)
+
+        if (transferredSiblingIds.length > 0) {
+          const { error: sibError } = await sb
+            .from('tasks')
+            .update({
+              resp: cleanData.resp,
+              sort_order: cleanData.sort_order,
+            })
+            .in('id', transferredSiblingIds)
+          if (sibError) {
+            console.error('❌ Erro ao atualizar série recorrente na transferência:', sibError)
+            return false
+          }
+        }
+      }
+
+      const localUpdates = localPopId !== undefined ? { ...cleanData, pop_id: localPopId } : cleanData
+      const updatedTask = { ...existingTask, ...localUpdates } as Task
+      const siblingSet = new Set(transferredSiblingIds)
+
+      setTasks(prev => {
+        if (!canViewAllTasks(currentUser) && !canAccessTaskRecord(currentUser, updatedTask)) {
+          return prev.filter(t => t.id !== resolvedEditId && !siblingSet.has(t.id))
+        }
+        return prev.map(t => {
+          if (t.id === resolvedEditId) return { ...t, ...localUpdates }
+          if (siblingSet.has(t.id)) {
+            return {
+              ...t,
+              resp: cleanData.resp,
+              sort_order: cleanData.sort_order,
+            }
+          }
+          return t
+        })
+      })
     } else {
-      // Nova tarefa ou materialização de virtual
+      // Nova tarefa ou materialização de virtual sem mestre real aberto
       const id = genId()
       const { data: allTasks } = await sb.from('tasks').select('sort_order').order('sort_order', { ascending: false }).limit(1)
       const maxOrder = (allTasks && allTasks.length > 0) ? (allTasks[0].sort_order || 0) : 0
@@ -1142,10 +1266,12 @@ export function useAppData(currentUser?: User | null) {
         console.error('❌ Erro Supabase (insert task):', error)
         return false
       }
-      setTasks(prev => [...prev, newTask])
+      if (canViewAllTasks(currentUser) || canAccessTaskRecord(currentUser, newTask)) {
+        setTasks(prev => [...prev, newTask])
+      }
     }
     return true
-  }, [currentUser, tasks])
+  }, [currentUser, tasks, expandedTasks])
 
   const tasksRef = useRef<Task[]>(tasks)
   tasksRef.current = tasks
@@ -1317,15 +1443,98 @@ export function useAppData(currentUser?: User | null) {
     setTasks(prev => prev.map(x => x.id === id ? { ...x, status: newStatus } : x))
   }, [currentUser, tasks])
 
-  const reorderTasks = useCallback(async (reordered: Task[]): Promise<void> => {
-    if (!currentUser || !isUserActive(currentUser)) return
-    // Filtra apenas tarefas reais (exclui virtuais geradas pelo expandedTasks)
-    // Sem esse filtro, setTasks recebe centenas de virtuais passadas,
-    // corrompendo atrasadasRecorrentes e causando o bug do contador 122+
-    const realOnly = reordered.filter(t => !String(t.id).startsWith('virtual_') && canAccessTaskRecord(currentUser, t))
-    setTasks(realOnly)
-    const updates = realOnly.map((t, i) => sb.from('tasks').update({ sort_order: i }).eq('id', t.id))
-    await Promise.all(updates)
+  const reorderSeqRef = useRef(0)
+
+  const reorderTasks = useCallback(async (reorderedList: Task[]): Promise<boolean> => {
+    if (!currentUser || !isUserActive(currentUser)) return false
+    const seq = ++reorderSeqRef.current
+    const prevSnapshot = tasksRef.current
+
+    const seenRealIds = new Set<string>()
+    const newOrderByRealId = new Map<string, number>()
+    let nextOrder = 0
+
+    for (const t of reorderedList) {
+      if (!canAccessTaskRecord(currentUser, t)) continue
+
+      const isVirt = String(t.id).startsWith('virtual_')
+      const resolvedRealIds: string[] = []
+
+      if (!isVirt) {
+        resolvedRealIds.push(t.id)
+        if (t.recur_group_id) {
+          for (const x of prevSnapshot) {
+            if (
+              x.id !== t.id &&
+              x.recur_group_id === t.recur_group_id &&
+              x.status !== 'Concluída' &&
+              canAccessTaskRecord(currentUser, x)
+            ) {
+              resolvedRealIds.push(x.id)
+            }
+          }
+        }
+      } else if (t.recur_group_id) {
+        for (const x of prevSnapshot) {
+          if (
+            x.recur_group_id === t.recur_group_id &&
+            x.status !== 'Concluída' &&
+            canAccessTaskRecord(currentUser, x)
+          ) {
+            resolvedRealIds.push(x.id)
+          }
+        }
+      }
+
+      for (const realId of resolvedRealIds) {
+        if (!seenRealIds.has(realId)) {
+          seenRealIds.add(realId)
+          const assignedOrder = typeof t.sort_order === "number" && !Number.isNaN(t.sort_order) ? t.sort_order : nextOrder++;
+          newOrderByRealId.set(realId, assignedOrder)
+        }
+      }
+    }
+
+    const changedEntries: Array<{ id: string; sort_order: number }> = []
+    for (const [realId, newOrder] of newOrderByRealId.entries()) {
+      const existing = prevSnapshot.find(x => x.id === realId)
+      if (existing && existing.sort_order !== newOrder) {
+        changedEntries.push({ id: realId, sort_order: newOrder })
+      }
+    }
+
+    if (changedEntries.length === 0) {
+      return true
+    }
+
+    setTasks(prev => {
+      const next = prev.map(t => {
+        const updatedOrder = newOrderByRealId.get(t.id)
+        return updatedOrder !== undefined && t.sort_order !== updatedOrder
+          ? { ...t, sort_order: updatedOrder }
+          : t
+      })
+      tasksRef.current = next
+      return next
+    })
+
+    const results = await Promise.all(
+      changedEntries.map(item =>
+        sb.from('tasks').update({ sort_order: item.sort_order }).eq('id', item.id)
+      )
+    )
+
+    const failed = results.find(r => r.error)
+    if (failed?.error) {
+      console.error('❌ Erro Supabase (reorderTasks):', failed.error)
+      if (seq === reorderSeqRef.current) {
+        tasksRef.current = prevSnapshot
+        setTasks(prevSnapshot)
+      }
+      return false
+    }
+
+    return true
   }, [currentUser])
 
   const reopenTask = useCallback(async (histId: string): Promise<boolean> => {

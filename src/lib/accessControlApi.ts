@@ -69,6 +69,26 @@ const PENDING_USERS_STORAGE_KEY = 'pulse_pending_signup_users_v1'
 export const SESSION_PROOF_STORAGE_KEY = 'pulse_session_proof'
 export const OPERATOR_TEST_SESSION_STORAGE_KEY = 'pulse_operator_test_session_v1'
 
+let auditTableAvailable: boolean | null = null
+let operatorSessionRpcAvailable: boolean | null = null
+
+function isMissingRemoteResourceError(error: any): boolean {
+  if (!error) return false
+  const code = String(error.code || '')
+  const status = Number(error.status || error.statusCode || 0)
+  const msg = String(error.message || error.details || '').toLowerCase()
+  return (
+    status === 404 ||
+    code === 'PGRST205' ||
+    code === 'PGRST202' ||
+    code === '42P01' ||
+    code === '42883' ||
+    msg.includes('could not find the table') ||
+    msg.includes('could not find the function') ||
+    msg.includes('does not exist')
+  )
+}
+
 
 export interface UserAccessOverride {
   user_id: string
@@ -527,10 +547,21 @@ export async function recordAuditLog(entry: Omit<AccessAuditLog, 'id' | 'created
   saveLocalAuditLogs([fullEntry, ...currentLogs])
 
   // Se a tabela access_audit_logs já existir no banco (pós-migration), persiste também no banco
-  try {
-    await sb.from('access_audit_logs').insert(fullEntry)
-  } catch {
-    // Silencioso antes da execução da migration no banco
+  if (auditTableAvailable !== false) {
+    try {
+      const { error } = await sb.from('access_audit_logs').insert(fullEntry)
+      if (error) {
+        if (isMissingRemoteResourceError(error)) {
+          auditTableAvailable = false
+        }
+      } else {
+        auditTableAvailable = true
+      }
+    } catch (err) {
+      if (isMissingRemoteResourceError(err)) {
+        auditTableAvailable = false
+      }
+    }
   }
 
   return fullEntry
@@ -566,20 +597,31 @@ export async function fetchAccessAuditLogs(actor: User | null | undefined): Prom
   await verifyProgrammerActor(actor)
 
   const localLogs = getLocalAuditLogs()
-  try {
-    const { data, error } = await sb
-      .from('access_audit_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(100)
-    if (!error && data && data.length > 0) {
-      const map = new Map<string, AccessAuditLog>()
-      for (const item of data as AccessAuditLog[]) map.set(item.id, item)
-      for (const item of localLogs) if (!map.has(item.id)) map.set(item.id, item)
-      return Array.from(map.values()).sort((a, b) => b.created_at.localeCompare(a.created_at))
+  if (auditTableAvailable !== false) {
+    try {
+      const { data, error } = await sb
+        .from('access_audit_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100)
+      if (error) {
+        if (isMissingRemoteResourceError(error)) {
+          auditTableAvailable = false
+        }
+      } else {
+        auditTableAvailable = true
+        if (data && data.length > 0) {
+          const map = new Map<string, AccessAuditLog>()
+          for (const item of data as AccessAuditLog[]) map.set(item.id, item)
+          for (const item of localLogs) if (!map.has(item.id)) map.set(item.id, item)
+          return Array.from(map.values()).sort((a, b) => b.created_at.localeCompare(a.created_at))
+        }
+      }
+    } catch (err) {
+      if (isMissingRemoteResourceError(err)) {
+        auditTableAvailable = false
+      }
     }
-  } catch {
-    // Usa logs locais enquanto a tabela não foi migrada
   }
   return localLogs
 }
@@ -1066,14 +1108,25 @@ export async function startOperatorTestSession(
     },
   })
 
-  try {
-    await sb.rpc('fn_start_operator_test_session', {
-      p_session_id: sessionId,
-      p_admin_email: adminRow.email,
-      p_target_user_id: hydratedTarget.id,
-    })
-  } catch {
-    // RPC opcional até aplicação da migration no banco remoto
+  if (operatorSessionRpcAvailable !== false) {
+    try {
+      const { error } = await sb.rpc('fn_start_operator_test_session', {
+        p_session_id: sessionId,
+        p_admin_email: adminRow.email,
+        p_target_user_id: hydratedTarget.id,
+      })
+      if (error) {
+        if (isMissingRemoteResourceError(error)) {
+          operatorSessionRpcAvailable = false
+        }
+      } else {
+        operatorSessionRpcAvailable = true
+      }
+    } catch (err) {
+      if (isMissingRemoteResourceError(err)) {
+        operatorSessionRpcAvailable = false
+      }
+    }
   }
 
   return { operatorUser: hydratedTarget, session: sessionEnvelope }
@@ -1159,13 +1212,24 @@ export async function endOperatorTestSession(): Promise<User> {
     },
   })
 
-  try {
-    await sb.rpc('fn_end_operator_test_session', {
-      p_session_id: envelope.sessionId,
-      p_admin_email: adminRow.email,
-    })
-  } catch {
-    // RPC opcional até aplicação da migration no banco remoto
+  if (operatorSessionRpcAvailable !== false) {
+    try {
+      const { error } = await sb.rpc('fn_end_operator_test_session', {
+        p_session_id: envelope.sessionId,
+        p_admin_email: adminRow.email,
+      })
+      if (error) {
+        if (isMissingRemoteResourceError(error)) {
+          operatorSessionRpcAvailable = false
+        }
+      } else {
+        operatorSessionRpcAvailable = true
+      }
+    } catch (err) {
+      if (isMissingRemoteResourceError(err)) {
+        operatorSessionRpcAvailable = false
+      }
+    }
   }
 
   return hydrateUserAccess(adminRow as User)
