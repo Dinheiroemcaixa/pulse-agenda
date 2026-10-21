@@ -31,6 +31,7 @@ interface Props {
   onOpenLibrary?: () => void
   onOpenPopEdit?: (pop: Pop) => void
   onPopLinked?: (taskId: string, popId: string | null) => void
+  onLinkTaskPop?: (taskId: string, popId: string | null) => Promise<boolean>
   onRefreshPops?: () => Promise<void>
   showToast: (msg: string, type?: string) => void
 }
@@ -70,23 +71,28 @@ export function PopRunnerModal(props: Props) {
     onClose,
     onSaved,
     onPopLinked,
+    onLinkTaskPop,
     onRefreshPops,
     showToast
   } = props
 
   const canEdit = Boolean(isAdmin)
 
-  const basePops =
-    propAllPops && propAllPops.length > 0
-      ? propAllPops
-      : propPops && propPops.length > 0
-        ? propPops
-        : getLocalPops()
-  const allPops = basePops.length > 0 ? basePops : DEFAULT_POPS
+  const basePops = propAllPops ?? propPops ?? getLocalPops()
+  const allPops = basePops
 
-  const initialLinkedPopId = task ? task.pop_id || resolveTaskPopId(task) : explicitPop?.id
+  useEffect(() => {
+    if (onRefreshPops) {
+      void onRefreshPops()
+    }
+  }, [])
+
+  const initialLinkedPopId = task ? resolveTaskPopId(task) : explicitPop?.id
   const [selectedTaskPopId, setSelectedTaskPopId] = useState<string | undefined>(initialLinkedPopId)
   const [currentPopOverride, setCurrentPopOverride] = useState<Pop | null>(null)
+  const [isCreatingForTask, setIsCreatingForTask] = useState<boolean>(false)
+  const [pendingSelectPopId, setPendingSelectPopId] = useState<string>('')
+  const [confirmUnlinkInRunner, setConfirmUnlinkInRunner] = useState<boolean>(false)
 
   const emptyPopTemplate: Pop = {
     id: '',
@@ -116,27 +122,26 @@ export function PopRunnerModal(props: Props) {
     updated_at: new Date().toISOString()
   }
 
-  // Resolução unificada: busca sempre a versão mais atualizada em allPops
-  const resolvedPopId = task
-    ? selectedTaskPopId || task.pop_id || resolveTaskPopId(task)
-    : explicitPop?.id
+  // Resolução estrita (Regra A): NUNCA faz fallback automático para DEFAULT_POPS[0] ou allPops[0]
+  const resolvedPopId = task ? selectedTaskPopId : explicitPop?.id
 
   const rawPop: Pop | undefined =
-    createNew && !currentPopOverride
+    (createNew || isCreatingForTask) && !currentPopOverride
       ? emptyPopTemplate
       : currentPopOverride
         ? allPops.find(p => p.id === currentPopOverride.id) || currentPopOverride
         : explicitPop
           ? allPops.find(p => p.id === explicitPop.id) || explicitPop
-          : allPops.find(p => p.id === resolvedPopId) || allPops[0] || DEFAULT_POPS[0]
+          : resolvedPopId
+            ? allPops.find(p => p.id === resolvedPopId)
+            : undefined
 
-  // Hidratação segura: só usa defaultMatch se o ID realmente pertencer a DEFAULT_POPS
-  // e nunca sobrescreve steps quando rawPop já possui etapas válidas.
-  const defaultMatch = DEFAULT_POPS.find(d => d.id === rawPop?.id)
+  // Hidratação segura apenas caso o POP realmente exista em rawPop
+  const defaultMatch = rawPop?.id ? DEFAULT_POPS.find(d => d.id === rawPop.id) : undefined
   const hasRawSteps = Array.isArray(rawPop?.steps) && rawPop.steps.length > 0
 
   const pop: Pop =
-    createNew && !currentPopOverride
+    (createNew || isCreatingForTask) && !currentPopOverride
       ? emptyPopTemplate
       : rawPop
         ? {
@@ -154,13 +159,15 @@ export function PopRunnerModal(props: Props) {
             estimated_time: rawPop.estimated_time || defaultMatch?.estimated_time || '30 min',
             steps: hasRawSteps ? rawPop.steps : defaultMatch?.steps || []
           }
-        : DEFAULT_POPS[0]
+        : emptyPopTemplate
 
   // Modo de visualização vs edição interna unificada
   const [isEditing, setIsEditing] = useState<boolean>(
     Boolean((createNew || initialMode === 'edit') && canEdit)
   )
   const [isSaving, setIsSaving] = useState(false)
+
+  const isUnlinkedTaskView = Boolean(task && !createNew && !isEditing && !rawPop)
 
   // ID estável de rascunho para uploads no Storage mesmo antes do primeiro save de um Novo POP
   const draftPopIdRef = useRef<string>(pop.id || `pop_${genId()}`)
@@ -680,7 +687,8 @@ export function PopRunnerModal(props: Props) {
 
     setIsSaving(true)
     try {
-      const editTargetId = createNew && !currentPopOverride ? undefined : pop.id || undefined
+      const isNewPopCreation = (createNew && !currentPopOverride) || isCreatingForTask
+      const editTargetId = isNewPopCreation ? undefined : pop.id || undefined
       const payload: Partial<Pop> = {
         id: editTargetId || draftPopIdRef.current,
         title: fTitle.trim(),
@@ -720,6 +728,16 @@ export function PopRunnerModal(props: Props) {
       sessionUploadedStoragePathsRef.current = []
 
       setCurrentPopOverride(saved)
+      if (task && isNewPopCreation) {
+        setSelectedTaskPopId(saved.id)
+        if (onLinkTaskPop) {
+          await onLinkTaskPop(task.id, saved.id)
+        } else {
+          await linkTaskToPopApi(task.id, saved.id)
+        }
+        onPopLinked?.(task.id, saved.id)
+      }
+      setIsCreatingForTask(false)
       await onRefreshPops?.()
       onSaved?.(saved)
       setIsEditing(false)
@@ -741,6 +759,13 @@ export function PopRunnerModal(props: Props) {
     setStepIndexPendingDelete(null)
     setFailedUploadState(null)
 
+    if (isCreatingForTask) {
+      setIsCreatingForTask(false)
+      setIsEditing(false)
+      setQuickMediaStepIdx(null)
+      return
+    }
+
     if ((createNew && !currentPopOverride) || initialMode === 'edit') {
       onClose()
       return
@@ -749,14 +774,49 @@ export function PopRunnerModal(props: Props) {
     setQuickMediaStepIdx(null)
   }
 
-  const handleChangeTaskPop = async (newPopId: string) => {
-    setSelectedTaskPopId(newPopId)
+  const handleChangeTaskPop = async (newPopId: string | null) => {
+    const normalized = newPopId && newPopId.trim() ? newPopId.trim() : null
+    setSelectedTaskPopId(normalized || '')
     setCurrentPopOverride(null)
+    setConfirmUnlinkInRunner(false)
     if (task) {
-      await linkTaskToPopApi(task.id, newPopId)
-      onPopLinked?.(task.id, newPopId)
-      showToast('🔗 Procedimento (POP) vinculado à tarefa!', 'info')
+      if (onLinkTaskPop) {
+        await onLinkTaskPop(task.id, normalized)
+      } else {
+        await linkTaskToPopApi(task.id, normalized)
+      }
+      onPopLinked?.(task.id, normalized || '')
+      if (normalized) {
+        showToast('🔗 Procedimento (POP) vinculado à tarefa!', 'info')
+      } else {
+        showToast('🔓 POP desvinculado desta tarefa com sucesso.', 'info')
+      }
     }
+  }
+
+  const handleStartCreatePopForTask = () => {
+    draftPopIdRef.current = `pop_${Date.now()}`
+    setCurrentPopOverride(null)
+    setIsCreatingForTask(true)
+    setFTitle(task?.descricao ? `POP - ${task.descricao}` : '')
+    setFObjective('')
+    setFWhenToUse('')
+    setFPrerequisites('')
+    setFCautions('')
+    setFExpectedResult('')
+    setFContactNotes('')
+    setFResponsible(currentUser?.name || 'Raffaela Lima')
+    setFEstimatedTime('30 min')
+    setFSteps([
+      {
+        id: genId(),
+        order: 1,
+        title: 'Etapa 1',
+        instruction: '',
+        media: []
+      }
+    ])
+    setIsEditing(true)
   }
 
   function parsePrerequisites(raw?: string): string[] {
@@ -985,51 +1045,75 @@ export function PopRunnerModal(props: Props) {
             <span
               style={{
                 font: "500 11px 'IBM Plex Mono', monospace",
-                color: '#7d93ff',
-                background: '#1b2550',
+                color: isUnlinkedTaskView ? '#f59e0b' : '#7d93ff',
+                background: isUnlinkedTaskView ? 'rgba(245, 158, 11, 0.14)' : '#1b2550',
                 padding: '4px 8px',
                 borderRadius: 5
               }}
             >
               {isEditing
-                ? createNew && !currentPopOverride
+                ? (createNew && !currentPopOverride) || isCreatingForTask
                   ? 'NOVO POP · MODO EDIÇÃO'
                   : `EDITANDO POP · v${pop.version || 1}`
+                : isUnlinkedTaskView
+                ? 'TAREFA SEM POP VINCULADO'
                 : `POP · v${pop.version || 1}`}
             </span>
 
-            {/* Seletor rápido de POP vinculado quando aberto por uma Tarefa */}
-            {!isEditing && task && allPops.length > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 11, color: '#8b94b3' }}>Procedimento da tarefa:</span>
-                <select
-                  aria-label="Trocar POP da tarefa"
-                  value={pop.id}
-                  onChange={e => handleChangeTaskPop(e.target.value)}
+            {/* Seletor rápido e botão Desvincular POP quando aberto por uma Tarefa vinculada */}
+            {!isEditing && !isUnlinkedTaskView && task && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {allPops.length > 0 && (
+                  <>
+                    <span style={{ fontSize: 11, color: '#8b94b3' }}>Procedimento da tarefa:</span>
+                    <select
+                      aria-label="Trocar POP da tarefa"
+                      value={pop.id}
+                      onChange={e => handleChangeTaskPop(e.target.value)}
+                      style={{
+                        background: '#141b31',
+                        border: '1px solid #2a3454',
+                        borderRadius: 6,
+                        color: '#c6cce0',
+                        fontSize: 11.5,
+                        padding: '4px 8px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {allPops
+                        .filter(p => p.active || p.id === pop.id)
+                        .map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.title}
+                          </option>
+                        ))}
+                    </select>
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  data-testid="runner-unlink-pop-btn"
+                  onClick={() => setConfirmUnlinkInRunner(true)}
                   style={{
-                    background: '#141b31',
-                    border: '1px solid #2a3454',
+                    height: 28,
+                    padding: '0 10px',
                     borderRadius: 6,
-                    color: '#c6cce0',
-                    fontSize: 11.5,
-                    padding: '4px 8px',
+                    border: '1px solid rgba(239, 68, 68, 0.45)',
+                    background: 'rgba(239, 68, 68, 0.12)',
+                    color: '#ff8a96',
+                    font: "600 11px 'IBM Plex Sans', sans-serif",
                     cursor: 'pointer'
                   }}
                 >
-                  {allPops
-                    .filter(p => p.active || p.id === pop.id)
-                    .map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.title}
-                      </option>
-                    ))}
-                </select>
+                  🔓 Desvincular POP
+                </button>
               </div>
             )}
 
             <span style={{ flex: 1 }} />
 
-            {!isEditing && (
+            {!isEditing && !isUnlinkedTaskView && (
               <button
                 type="button"
                 onClick={handlePrint}
@@ -1048,7 +1132,7 @@ export function PopRunnerModal(props: Props) {
               </button>
             )}
 
-            {!isEditing && canEdit && (
+            {!isEditing && !isUnlinkedTaskView && canEdit && (
               <button
                 type="button"
                 onClick={handleEditPop}
@@ -1085,6 +1169,64 @@ export function PopRunnerModal(props: Props) {
               ×
             </button>
           </div>
+
+          {confirmUnlinkInRunner && !isEditing && !isUnlinkedTaskView && task && (
+            <div
+              data-testid="runner-confirm-unlink-banner"
+              style={{
+                padding: '10px 14px',
+                borderRadius: 8,
+                background: 'rgba(239, 68, 68, 0.12)',
+                border: '1px solid rgba(239, 68, 68, 0.45)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                flexWrap: 'wrap'
+              }}
+            >
+              <span style={{ fontSize: 12, color: '#ffd1d6', fontWeight: 500 }}>
+                Tem certeza que deseja desvincular o POP desta tarefa? O procedimento continuará salvo na biblioteca de POPs.
+              </span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setConfirmUnlinkInRunner(false)}
+                  style={{
+                    height: 28,
+                    padding: '0 12px',
+                    borderRadius: 6,
+                    border: '1px solid #2a3454',
+                    background: '#141b31',
+                    color: '#c6cce0',
+                    fontSize: 11.5,
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  data-testid="runner-confirm-unlink-btn"
+                  onClick={() => handleChangeTaskPop(null)}
+                  style={{
+                    height: 28,
+                    padding: '0 12px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: '#ef4444',
+                    color: '#fff',
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Confirmar desvinculação
+                </button>
+              </div>
+            </div>
+          )}
 
           {isEditing ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -1142,6 +1284,23 @@ export function PopRunnerModal(props: Props) {
                     style={inputStyle}
                   />
                 </div>
+              </div>
+            </div>
+          ) : isUnlinkedTaskView ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <h1
+                style={{
+                  margin: 0,
+                  fontSize: 19,
+                  fontWeight: 700,
+                  lineHeight: 1.25,
+                  color: '#e6e9f2'
+                }}
+              >
+                {task?.descricao || 'Tarefa selecionada'}
+              </h1>
+              <div style={{ fontSize: 12, color: '#8b94b3' }}>
+                Responsável: <b style={{ color: '#e6e9f2' }}>{task?.resp || 'Geral'}</b> • Nenhum POP está vinculado automaticamente a esta tarefa.
               </div>
             </div>
           ) : (
@@ -1232,6 +1391,131 @@ export function PopRunnerModal(props: Props) {
             colorScheme: 'dark'
           }}
         >
+          {isUnlinkedTaskView ? (
+            <div
+              data-testid="unlinked-task-pop-state"
+              style={{
+                background: '#141b31',
+                border: '1px solid #263359',
+                borderRadius: 12,
+                padding: '28px 24px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 20
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: '#e6e9f2' }}>
+                  📋 Nenhum POP vinculado a esta tarefa
+                </div>
+                <div style={{ fontSize: 13, color: '#9aa4c7', lineHeight: 1.5 }}>
+                  Esta tarefa não possui nenhum Procedimento Operacional Padrão (POP) vinculado no momento. Você pode vincular um POP já criado na sua biblioteca ou criar um novo POP agora mesmo.
+                </div>
+              </div>
+
+              <div
+                style={{
+                  background: '#0f1527',
+                  border: '1px solid #1f2740',
+                  borderRadius: 10,
+                  padding: 18,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12
+                }}
+              >
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: '#a9b8ff', letterSpacing: '.04em' }}>
+                  VINCULAR UM POP EXISTENTE DA BIBLIOTECA
+                </div>
+                {allPops.length > 0 ? (
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <select
+                      data-testid="link-existing-pop-select"
+                      aria-label="Selecionar POP para vincular"
+                      value={pendingSelectPopId}
+                      onChange={e => setPendingSelectPopId(e.target.value)}
+                      style={{
+                        ...inputStyle,
+                        flex: 1,
+                        minWidth: 240,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <option value="">— Selecione um POP criado por você —</option>
+                      {allPops
+                        .filter(p => p.active !== false)
+                        .map(p => (
+                          <option key={p.id} value={p.id}>
+                            📋 {p.title} ({p.steps?.length || 0} etapas)
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      type="button"
+                      data-testid="confirm-link-pop-btn"
+                      disabled={!pendingSelectPopId}
+                      onClick={() => {
+                        if (pendingSelectPopId) {
+                          void handleChangeTaskPop(pendingSelectPopId)
+                        }
+                      }}
+                      style={{
+                        height: 38,
+                        padding: '0 18px',
+                        borderRadius: 8,
+                        border: 'none',
+                        background: pendingSelectPopId ? '#4f6bff' : '#242e4c',
+                        color: pendingSelectPopId ? '#fff' : '#6c7696',
+                        font: "600 13px 'IBM Plex Sans', sans-serif",
+                        cursor: pendingSelectPopId ? 'pointer' : 'not-allowed'
+                      }}
+                    >
+                      🔗 Vincular POP à Tarefa
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12.5, color: '#8b94b3' }}>
+                    Ainda não há nenhum POP cadastrado na biblioteca. Crie o primeiro POP abaixo para vinculá-lo a esta tarefa.
+                  </div>
+                )}
+              </div>
+
+              {canEdit && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap',
+                    paddingTop: 4
+                  }}
+                >
+                  <span style={{ fontSize: 12.5, color: '#8b94b3' }}>
+                    Deseja documentar um novo procedimento exclusivo para esta atividade?
+                  </span>
+                  <button
+                    type="button"
+                    data-testid="create-pop-for-task-btn"
+                    onClick={handleStartCreatePopForTask}
+                    style={{
+                      height: 38,
+                      padding: '0 18px',
+                      borderRadius: 8,
+                      border: '1px solid #3c5299',
+                      background: '#182346',
+                      color: '#a9b8ff',
+                      font: "600 13px 'IBM Plex Sans', sans-serif",
+                      cursor: 'pointer'
+                    }}
+                  >
+                    + Criar Novo POP para esta Tarefa
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
           {/* OBJETIVO & QUANDO UTILIZAR */}
           <div
             className="pop-dc-grid2"
@@ -2377,6 +2661,8 @@ export function PopRunnerModal(props: Props) {
               )}
             </div>
           </div>
+            </>
+          )}
         </div>
 
         {/* RODAPÉ */}
@@ -2429,6 +2715,28 @@ export function PopRunnerModal(props: Props) {
                 }}
               >
                 {isSaving ? 'Salvando...' : 'Salvar POP'}
+              </button>
+            </>
+          ) : isUnlinkedTaskView ? (
+            <>
+              <span style={{ fontSize: 12, color: '#8b94b3', flex: 1 }}>
+                Nenhum POP padrão é vinculado automaticamente. Escolha ou crie um POP quando necessário.
+              </span>
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  height: 38,
+                  padding: '0 18px',
+                  borderRadius: 8,
+                  border: '1px solid #2a3454',
+                  background: 'transparent',
+                  color: '#c6cce0',
+                  font: "500 13px 'IBM Plex Sans', sans-serif",
+                  cursor: 'pointer'
+                }}
+              >
+                Fechar
               </button>
             </>
           ) : (

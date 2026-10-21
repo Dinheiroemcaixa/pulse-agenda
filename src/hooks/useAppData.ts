@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useRef } from 'react'
 import { sb } from '../lib/supabase'
 import { genId, getTodayStr, isTodayValidForRecur, getNextOccurrenceAfter, isLate } from '../lib/utils'
 import type { Task, TeamMember, Meeting, Backup, Pop, User } from '../types'
-import { fetchPopsApi } from '../lib/popsApi'
+import { fetchPopsApi, setLocalTaskPopLink } from '../lib/popsApi'
 import {
   canAccessModule,
   canAccessTaskRecord,
@@ -1127,8 +1127,14 @@ export function useAppData(currentUser?: User | null) {
 
     const isVirtual = Boolean(editId?.startsWith('virtual_'))
 
+    const hasExplicitPopId = Object.prototype.hasOwnProperty.call(taskData, 'pop_id')
+    const rawPopId = (taskData as any).pop_id
+    const normalizedPopId: string | null | undefined = hasExplicitPopId
+      ? (rawPopId && String(rawPopId).trim() ? String(rawPopId).trim() : null)
+      : undefined
+
     // Limpar campos que não pertencem ao banco (como isVirtual)
-    const { isVirtual: _iv, pop_id: localPopId, moved_at: _ma, ...cleanData } = taskData as any
+    const { isVirtual: _iv, pop_id: _rawPopId, moved_at: _ma, ...cleanData } = taskData as any
 
     cleanData.resp = (cleanData.resp || currentUser.name || '').trim()
 
@@ -1183,6 +1189,10 @@ export function useAppData(currentUser?: User | null) {
         cleanData.sort_order = nextSortOrder
       }
 
+      if (hasExplicitPopId) {
+        cleanData.pop_id = normalizedPopId
+      }
+
       // Editar tarefa real existente
       const { error } = await sb.from('tasks').update(cleanData).eq('id', resolvedEditId)
       if (error) {
@@ -1190,41 +1200,76 @@ export function useAppData(currentUser?: User | null) {
         return false
       }
 
+      if (hasExplicitPopId) {
+        setLocalTaskPopLink(resolvedEditId, normalizedPopId ?? null)
+        if (editId) {
+          setLocalTaskPopLink(editId, normalizedPopId ?? null)
+        }
+      }
+
       let transferredSiblingIds: string[] = []
+      let popUpdatedSiblingIds: string[] = []
       if (
-        isTransfer &&
         existingTask.recur_group_id &&
         existingTask.recur &&
         existingTask.recur !== 'none'
       ) {
-        transferredSiblingIds = tasks
-          .filter(
-            t =>
-              t.id !== resolvedEditId &&
-              t.recur_group_id === existingTask!.recur_group_id &&
-              t.status !== 'Concluída' &&
-              (t.resp || '').trim().toLowerCase() === (existingTask!.resp || '').trim().toLowerCase()
-          )
-          .map(t => t.id)
+        if (isTransfer) {
+          transferredSiblingIds = tasks
+            .filter(
+              t =>
+                t.id !== resolvedEditId &&
+                t.recur_group_id === existingTask!.recur_group_id &&
+                t.status !== 'Concluída' &&
+                (t.resp || '').trim().toLowerCase() === (existingTask!.resp || '').trim().toLowerCase()
+            )
+            .map(t => t.id)
 
-        if (transferredSiblingIds.length > 0) {
-          const { error: sibError } = await sb
-            .from('tasks')
-            .update({
+          if (transferredSiblingIds.length > 0) {
+            const sibPayload: Record<string, any> = {
               resp: cleanData.resp,
               sort_order: cleanData.sort_order,
-            })
-            .in('id', transferredSiblingIds)
-          if (sibError) {
-            console.error('❌ Erro ao atualizar série recorrente na transferência:', sibError)
-            return false
+            }
+            if (hasExplicitPopId) {
+              sibPayload.pop_id = normalizedPopId
+            }
+            const { error: sibError } = await sb
+              .from('tasks')
+              .update(sibPayload)
+              .in('id', transferredSiblingIds)
+            if (sibError) {
+              console.error('❌ Erro ao atualizar série recorrente na transferência:', sibError)
+              return false
+            }
+          }
+        } else if (hasExplicitPopId) {
+          popUpdatedSiblingIds = tasks
+            .filter(
+              t =>
+                t.id !== resolvedEditId &&
+                t.recur_group_id === existingTask!.recur_group_id &&
+                t.status !== 'Concluída'
+            )
+            .map(t => t.id)
+
+          if (popUpdatedSiblingIds.length > 0) {
+            await sb
+              .from('tasks')
+              .update({ pop_id: normalizedPopId })
+              .in('id', popUpdatedSiblingIds)
+            for (const sibId of popUpdatedSiblingIds) {
+              setLocalTaskPopLink(sibId, normalizedPopId ?? null)
+            }
           }
         }
       }
 
-      const localUpdates = localPopId !== undefined ? { ...cleanData, pop_id: localPopId } : cleanData
+      const localUpdates = hasExplicitPopId
+        ? { ...cleanData, pop_id: normalizedPopId }
+        : cleanData
       const updatedTask = { ...existingTask, ...localUpdates } as Task
       const siblingSet = new Set(transferredSiblingIds)
+      const popSiblingSet = new Set(popUpdatedSiblingIds)
 
       setTasks(prev => {
         if (!canViewAllTasks(currentUser) && !canAccessTaskRecord(currentUser, updatedTask)) {
@@ -1237,6 +1282,13 @@ export function useAppData(currentUser?: User | null) {
               ...t,
               resp: cleanData.resp,
               sort_order: cleanData.sort_order,
+              ...(hasExplicitPopId ? { pop_id: normalizedPopId } : {})
+            }
+          }
+          if (popSiblingSet.has(t.id) && hasExplicitPopId) {
+            return {
+              ...t,
+              pop_id: normalizedPopId
             }
           }
           return t
@@ -1257,6 +1309,7 @@ export function useAppData(currentUser?: User | null) {
         ...cleanData,
         id,
         recur_group_id,
+        pop_id: normalizedPopId ?? null,
         sort_order: maxOrder + 1,
         created_at: new Date().toISOString()
       } as Task
@@ -1266,10 +1319,70 @@ export function useAppData(currentUser?: User | null) {
         console.error('❌ Erro Supabase (insert task):', error)
         return false
       }
+      setLocalTaskPopLink(id, normalizedPopId ?? null)
       if (canViewAllTasks(currentUser) || canAccessTaskRecord(currentUser, newTask)) {
         setTasks(prev => [...prev, newTask])
       }
     }
+    return true
+  }, [currentUser, tasks, expandedTasks])
+
+  // ── LINK / UNLINK TASK POP ─────────────────────────────────
+  const linkTaskPop = useCallback(async (taskId: string, popId: string | null): Promise<boolean> => {
+    if (!currentUser || !isUserActive(currentUser)) return false
+    const normalized = popId && popId.trim() ? popId.trim() : null
+
+    let targetId = taskId
+    let targetRecurGroupId: string | undefined
+
+    if (taskId.startsWith('virtual_')) {
+      const virtualTask = expandedTasks.find(t => t.id === taskId)
+      if (virtualTask?.recur_group_id) {
+        targetRecurGroupId = virtualTask.recur_group_id
+        const masterTask = tasks.find(
+          t => t.recur_group_id === virtualTask.recur_group_id && t.status !== 'Concluída'
+        )
+        if (masterTask) {
+          targetId = masterTask.id
+        }
+      }
+    } else {
+      const existing = tasks.find(t => t.id === taskId)
+      if (existing?.recur_group_id && existing.recur && existing.recur !== 'none') {
+        targetRecurGroupId = existing.recur_group_id
+      }
+    }
+
+    setLocalTaskPopLink(taskId, normalized)
+    setLocalTaskPopLink(targetId, normalized)
+
+    if (!targetId.startsWith('virtual_')) {
+      const { error } = await sb.from('tasks').update({ pop_id: normalized }).eq('id', targetId)
+      if (error) {
+        console.error('❌ Erro ao atualizar vínculo de POP na tarefa:', error)
+        return false
+      }
+      if (targetRecurGroupId) {
+        const siblingIds = tasks
+          .filter(t => t.id !== targetId && t.recur_group_id === targetRecurGroupId && t.status !== 'Concluída')
+          .map(t => t.id)
+        if (siblingIds.length > 0) {
+          await sb.from('tasks').update({ pop_id: normalized }).in('id', siblingIds)
+          for (const sibId of siblingIds) {
+            setLocalTaskPopLink(sibId, normalized)
+          }
+        }
+      }
+    }
+
+    setTasks(prev =>
+      prev.map(t =>
+        t.id === targetId ||
+        (targetRecurGroupId && t.recur_group_id === targetRecurGroupId && t.status !== 'Concluída')
+          ? { ...t, pop_id: normalized }
+          : t
+      )
+    )
     return true
   }, [currentUser, tasks, expandedTasks])
 
@@ -1970,7 +2083,7 @@ export function useAppData(currentUser?: User | null) {
     allAtrasadas, backups, pops,
     setTasks, setHist, setMeets, setTeam, setPops,
     loadAll, loadPops,
-    saveTask, completeTask, completeTasksBulk, deleteTask, cycleStatus, reorderTasks, reopenTask, deleteAtrasada, deleteAtrasadasBulk,
+    saveTask, linkTaskPop, completeTask, completeTasksBulk, deleteTask, cycleStatus, reorderTasks, reopenTask, deleteAtrasada, deleteAtrasadasBulk,
     saveMeet, deleteMeet,
     toggleSubtask, addSubtask, deleteSubtask,
     updateTeamMember,

@@ -224,12 +224,14 @@ export default function App() {
   }
 
   const openNewTask = (date?: string) => {
+    void data.loadPops()
     setEditTaskId(null)
     setTaskModalDate(date)
     setTaskModalOpen(true)
   }
 
   const openEditTask = (id: string) => {
+    void data.loadPops()
     setEditTaskId(id)
     setTaskModalDate(undefined)
     setTaskModalOpen(true)
@@ -361,6 +363,7 @@ export default function App() {
     backups: data.backups,
     pops: data.pops,
     onRefreshPops: data.loadPops,
+    onLinkTaskPop: data.linkTaskPop,
     currentUser,
     isAdmin,
     viewMode,
@@ -511,6 +514,7 @@ export default function App() {
           pops={data.pops}
           defaultDate={taskModalDate}
           onSave={handleSaveTask}
+          onLinkTaskPop={data.linkTaskPop}
           onClose={() => setTaskModalOpen(false)}
           showToast={showToast}
         />

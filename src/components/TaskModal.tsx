@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import type { Task, TeamMember, User, RecurType, Priority, Pop } from '../types'
 import { getTodayStr, RECUR_LABELS } from '../lib/utils'
-import { resolveTaskPopId, linkTaskToPopApi } from '../lib/popsApi'
+import { resolveTaskPopId, linkTaskToPopApi, fetchPopsApi } from '../lib/popsApi'
 import { canViewAllTasks, isUserActive } from '../lib/accessControlApi'
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
   pops?: Pop[]
   defaultDate?: string
   onSave: (data: Partial<Task>) => Promise<boolean | void>
+  onLinkTaskPop?: (taskId: string, popId: string | null) => Promise<boolean>
   onClose: () => void
   showToast: (msg: string, type?: string) => void
 }
@@ -18,7 +19,7 @@ interface Props {
 const DAYS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab']
 const DAY_LABELS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
-export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate, onSave, onClose, showToast }: Props) {
+export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate, onSave, onLinkTaskPop, onClose, showToast }: Props) {
   const canAssignOthers = Boolean(editTask ? isUserActive(currentUser) : (canViewAllTasks(currentUser) || isUserActive(currentUser)))
 
   const availableOperators = useMemo(() => {
@@ -58,11 +59,13 @@ export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate,
   const [recurDays, setRecurDays] = useState<string[]>(editTask?.recur_days || [])
   const [subtasks, setSubtasks] = useState(editTask?.subtasks?.map(s => ({ ...s })) || [])
   const [notes, setNotes] = useState(editTask?.notes || '')
+  const [loadedPops, setLoadedPops] = useState<Pop[]>(pops)
   const [popId, setPopId] = useState<string>(() => {
-    if (editTask?.pop_id) return editTask.pop_id
-    if (editTask?.id) return resolveTaskPopId(editTask.id) || ''
-    return ''
+    if (!editTask) return ''
+    if (editTask.pop_id === null) return ''
+    return resolveTaskPopId(editTask) || ''
   })
+  const [confirmUnlinkOpen, setConfirmUnlinkOpen] = useState(false)
   const [recurOpen, setRecurOpen] = useState(false)
   const [subInput, setSubInput] = useState('')
   const [saving, setSaving] = useState(false)
@@ -70,17 +73,56 @@ export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate,
   const descRef = useRef<HTMLInputElement>(null)
   useEffect(() => { setTimeout(() => descRef.current?.focus(), 100) }, [])
 
+  useEffect(() => {
+    if (pops && pops.length > 0) {
+      setLoadedPops(pops)
+    }
+  }, [pops])
+
+  useEffect(() => {
+    let active = true
+    fetchPopsApi().then(fresh => {
+      if (active) setLoadedPops(fresh)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
+
   const isTransferring = Boolean(
     editTask &&
     resp.trim() &&
     resp.trim().toLowerCase() !== (editTask.resp || '').trim().toLowerCase()
   )
 
+  const handleRequestUnlinkPop = () => {
+    if (!popId) return
+    if (editTask && (editTask.pop_id || resolveTaskPopId(editTask))) {
+      setConfirmUnlinkOpen(true)
+    } else {
+      setPopId('')
+      setConfirmUnlinkOpen(false)
+    }
+  }
+
+  const handleConfirmUnlinkPop = async () => {
+    setPopId('')
+    setConfirmUnlinkOpen(false)
+    if (editTask?.id) {
+      if (onLinkTaskPop) {
+        await onLinkTaskPop(editTask.id, null)
+      } else {
+        await linkTaskToPopApi(editTask.id, null)
+      }
+      showToast('🔓 POP desvinculado da tarefa!', 'info')
+    }
+  }
+
   const handleSave = async () => {
     if (!desc.trim()) { showToast('⚠ Preencha a descrição', 'warn'); return }
     setSaving(true)
     const recurStart = editTask?.recur_start || (recur !== 'none' ? date : undefined)
-    const selectedPopId = popId || undefined
+    const normalizedPopId: string | null = popId && popId.trim() ? popId.trim() : null
     const saved = await onSave({
       descricao: desc.trim(),
       resp: resp.trim() || currentUser.name.trim(),
@@ -98,10 +140,14 @@ export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate,
       subtasks,
       notes: notes.trim() || undefined,
       is_meeting: editTask?.is_meeting || false,
-      pop_id: selectedPopId,
+      pop_id: normalizedPopId,
     })
     if (saved !== false && editTask?.id) {
-      await linkTaskToPopApi(editTask.id, selectedPopId || null)
+      if (onLinkTaskPop) {
+        await onLinkTaskPop(editTask.id, normalizedPopId)
+      } else {
+        await linkTaskToPopApi(editTask.id, normalizedPopId)
+      }
     }
     setSaving(false)
   }
@@ -236,27 +282,105 @@ export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate,
           </div>
 
           <div className="field">
-            <label className="label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <label className="label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <span>Procedimento Padrão (POP)</span>
               {popId ? (
-                <span style={{ fontSize: 11, color: 'var(--accent, #2563eb)', fontWeight: 600 }}>● Vinculado</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 11, color: 'var(--accent, #2563eb)', fontWeight: 600 }}>● Vinculado</span>
+                  <button
+                    type="button"
+                    data-testid="taskmodal-unlink-pop-btn"
+                    onClick={handleRequestUnlinkPop}
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      padding: '2px 8px',
+                      borderRadius: 5,
+                      border: '1px solid #d64545',
+                      background: 'rgba(214, 69, 69, 0.14)',
+                      color: '#ff7a8a',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    🔓 Desvincular POP
+                  </button>
+                </div>
               ) : (
-                <span style={{ fontSize: 11, color: 'var(--text3)' }}>Opcional</span>
+                <span style={{ fontSize: 11, color: 'var(--text3)' }}>Opcional (sem POP automático)</span>
               )}
             </label>
             <select
               className="inp"
+              data-testid="taskmodal-pop-select"
               value={popId}
-              onChange={e => setPopId(e.target.value)}
+              onChange={e => {
+                setPopId(e.target.value)
+                setConfirmUnlinkOpen(false)
+              }}
               style={{ cursor: 'pointer' }}
             >
               <option value="">Nenhum POP associado (execução livre)</option>
-              {pops.map(p => (
+              {loadedPops.map(p => (
                 <option key={p.id} value={p.id} disabled={!p.active && p.id !== popId}>
                   📘 {p.title} {!p.active ? '(Inativo)' : ''}
                 </option>
               ))}
             </select>
+            {confirmUnlinkOpen && (
+              <div
+                data-testid="taskmodal-confirm-unlink-banner"
+                style={{
+                  marginTop: 8,
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  border: '1px solid #d64545',
+                  background: 'rgba(42, 20, 28, 0.92)',
+                  color: '#ffd6dc',
+                  fontSize: 12,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8
+                }}
+              >
+                <div>
+                  Deseja desvincular o POP desta tarefa? O procedimento e seus anexos continuarão salvos no sistema.
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmUnlinkOpen(false)}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 6,
+                      border: '1px solid #6b3b47',
+                      background: 'transparent',
+                      color: '#f1d6da',
+                      fontSize: 11.5,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="taskmodal-confirm-unlink-btn"
+                    onClick={handleConfirmUnlinkPop}
+                    style={{
+                      padding: '4px 12px',
+                      borderRadius: 6,
+                      border: 'none',
+                      background: '#d64545',
+                      color: '#fff',
+                      fontWeight: 700,
+                      fontSize: 11.5,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Confirmar desvinculação
+                  </button>
+                </div>
+              </div>
+            )}
             <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
               Vincula instruções passo a passo para orientar quem for executar ou substituir esta tarefa.
             </div>

@@ -159,7 +159,7 @@ export interface Task {
   moved_at?: string
   created_at?: string
   isVirtual?: boolean       // true = gerada no front-end, não existe no banco ainda
-  pop_id?: string           // ID do POP associado à tarefa
+  pop_id?: string | null    // ID do POP associado à tarefa (ou null quando desvinculado)
 }
 
 export interface Meeting {

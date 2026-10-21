@@ -2,8 +2,8 @@ import { sb } from './supabase'
 import { genId } from './utils'
 import type { Pop, PopStep, PopStepMedia, Task } from '../types'
 
-const POPS_LOCAL_STORAGE_KEY = 'pulse_pops_cache_v4'
-const TASK_POP_LINKS_KEY = 'pulse_task_pop_links_v1'
+const POPS_LOCAL_STORAGE_KEY = 'pulse_pops_cache_v5'
+const TASK_POP_LINKS_KEY = 'pulse_task_pop_links_v2'
 
 export const POP_STORAGE_BUCKET = 'pop-media'
 export const POP_MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024 // 50 MB (limite real configurado no bucket pop-media)
@@ -947,57 +947,36 @@ function sanitizePopStepsForPersistence(steps: PopStep[]): PopStep[] {
 }
 
 function hydrateBuiltInPops(list: Pop[]): Pop[] {
-  const result = [...list]
-  for (const defPop of DEFAULT_POPS) {
-    const idx = result.findIndex(p => p.id === defPop.id)
-    if (idx === -1) {
-      result.push(defPop)
-    } else {
-      const cur = result[idx]
-      const hasValidSteps =
-        Array.isArray(cur.steps) &&
-        cur.steps.length > 0 &&
-        cur.steps.some(s => Boolean(s?.title?.trim() || s?.instruction?.trim()))
-      if ((cur.version || 1) <= 1 && !hasValidSteps) {
-        result[idx] = {
-          ...defPop,
-          ...cur,
-          estimated_time: cur.estimated_time || defPop.estimated_time || '30 min',
-          steps: defPop.steps
-        }
-      } else {
-        result[idx] = {
-          ...cur,
-          estimated_time: cur.estimated_time || defPop.estimated_time || '30 min'
-        }
-      }
-    }
-  }
-  return result
+  if (!Array.isArray(list)) return []
+  return list.map(p => ({
+    ...p,
+    estimated_time: p.estimated_time || '30 min',
+    steps: Array.isArray(p.steps) ? p.steps : []
+  }))
 }
 
-// Carrega POPs do cache local
+// Carrega POPs do cache local (sem injetar DEFAULT_POPS)
 export function getLocalPops(): Pop[] {
   try {
-    // Limpa caches legados desatualizados para garantir carregamento do layout novo
+    // Limpa caches legados desatualizados que continham DEFAULT_POPS ou vínculos implícitos
     localStorage.removeItem('pulse_pops_cache_v1')
     localStorage.removeItem('pulse_pops_cache_v2')
     localStorage.removeItem('pulse_pops_cache_v3')
+    localStorage.removeItem('pulse_pops_cache_v4')
+    localStorage.removeItem('pulse_task_pop_links_v1')
     const raw = localStorage.getItem(POPS_LOCAL_STORAGE_KEY)
     if (!raw) {
-      localStorage.setItem(POPS_LOCAL_STORAGE_KEY, JSON.stringify(DEFAULT_POPS))
-      return DEFAULT_POPS
+      return []
     }
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed) || parsed.length === 0) {
-      localStorage.setItem(POPS_LOCAL_STORAGE_KEY, JSON.stringify(DEFAULT_POPS))
-      return DEFAULT_POPS
+      return []
     }
     const hydrated = hydrateBuiltInPops(parsed)
     localStorage.setItem(POPS_LOCAL_STORAGE_KEY, JSON.stringify(hydrated))
     return hydrated
   } catch {
-    return DEFAULT_POPS
+    return []
   }
 }
 
@@ -1035,6 +1014,7 @@ function setLocalPops(pops: Pop[]): void {
 // Mapa de vínculos Tarefa <-> POP (fallback quando a coluna ainda não existe no Supabase)
 export function getLocalTaskPopLinks(): Record<string, string> {
   try {
+    localStorage.removeItem('pulse_task_pop_links_v1')
     const raw = localStorage.getItem(TASK_POP_LINKS_KEY)
     return raw ? JSON.parse(raw) : {}
   } catch {
@@ -1045,10 +1025,10 @@ export function getLocalTaskPopLinks(): Record<string, string> {
 export function setLocalTaskPopLink(taskId: string, popId: string | null): void {
   try {
     const links = getLocalTaskPopLinks()
-    if (!popId) {
+    if (!popId || !popId.trim()) {
       delete links[taskId]
     } else {
-      links[taskId] = popId
+      links[taskId] = popId.trim()
     }
     localStorage.setItem(TASK_POP_LINKS_KEY, JSON.stringify(links))
   } catch (e) {
@@ -1062,58 +1042,26 @@ export function setLocalTaskPopLink(taskId: string, popId: string | null): void 
 
 export async function fetchPopsApi(): Promise<Pop[]> {
   try {
-    const { data, error } = await sb.from('pops').select('*').order('title', { ascending: true })
+    const { data, error } = await sb
+      .from('pops')
+      .select('*')
+      .order('created_at', { ascending: false })
     if (error) {
       return getLocalPops()
     }
     if (!data || data.length === 0) {
-      const initialList = getLocalPops()
-      // Sincroniza POPs iniciais para a tabela public.pops em background quando estiver vazia
-      void (async () => {
-        try {
-          const payloads = initialList.map(p => ({
-            id: p.id,
-            title: p.title,
-            objective: p.objective,
-            when_to_use: p.when_to_use,
-            prerequisites: p.prerequisites,
-            steps: sanitizePopStepsForPersistence(p.steps || []),
-            cautions: p.cautions,
-            expected_result: p.expected_result,
-            contact_notes: p.contact_notes || '',
-            responsible: p.responsible || '',
-            estimated_time: p.estimated_time || '30 min',
-            active: p.active !== undefined ? p.active : true,
-            version: p.version || 1,
-            created_at: p.created_at || new Date().toISOString(),
-            updated_at: p.updated_at || new Date().toISOString()
-          }))
-          await sb.from('pops').upsert(payloads, { onConflict: 'id' })
-        } catch {
-          // Ignora falha silenciosa de seed inicial
-        }
-      })()
-      return initialList
+      setLocalPops([])
+      return []
     }
-    const localSnapshot = getLocalPops()
     const remoteFormatted = data.map((p: any) => {
-      const localMatch = localSnapshot.find(lp => lp.id === p.id)
-      const parsedSteps = typeof p.steps === 'string' ? JSON.parse(p.steps) : (p.steps || [])
-      if (localMatch && (localMatch.version || 1) > (p.version || 1)) {
-        return localMatch
-      }
+      const parsedSteps =
+        typeof p.steps === 'string' ? JSON.parse(p.steps) : Array.isArray(p.steps) ? p.steps : []
       return {
         ...p,
-        estimated_time: p.estimated_time || localMatch?.estimated_time || '30 min',
+        estimated_time: p.estimated_time || '30 min',
         steps: parsedSteps
       }
     }) as Pop[]
-    // Preserva POPs locais que ainda não tenham sido sincronizados no banco
-    for (const lp of localSnapshot) {
-      if (!remoteFormatted.some(rp => rp.id === lp.id)) {
-        remoteFormatted.push(lp)
-      }
-    }
     const formatted = hydrateBuiltInPops(remoteFormatted)
     setLocalPops(formatted)
     return formatted
@@ -1246,36 +1194,41 @@ export async function deletePopApi(id: string): Promise<boolean> {
   return true
 }
 
-// Vincula POP a uma tarefa
-export async function linkTaskToPopApi(taskId: string, popId: string | null): Promise<void> {
-  // Salva no mapa local para persistência garantida
-  setLocalTaskPopLink(taskId, popId)
+// Vincula ou desvincula POP de uma tarefa no Supabase e no cache local
+export async function linkTaskToPopApi(taskId: string, popId: string | null): Promise<boolean> {
+  const normalized = popId && popId.trim() ? popId.trim() : null
+  setLocalTaskPopLink(taskId, normalized)
 
-  // Se a tarefa não for virtual, tenta atualizar no Supabase
   if (!taskId.startsWith('virtual_')) {
     try {
-      await sb.from('tasks').update({ pop_id: popId }).eq('id', taskId)
+      const { error } = await sb.from('tasks').update({ pop_id: normalized }).eq('id', taskId)
+      return !error
     } catch {
-      // Coluna pop_id pode ainda não ter sido adicionada pelo admin no Supabase
+      return false
     }
   }
+  return true
 }
 
-// Resolve o pop_id de uma tarefa (objeto ou mapa local)
-export function resolveTaskPopId(taskOrId: Task | string | undefined | null, localLinks?: Record<string, string>): string | undefined {
+// Resolve o pop_id de uma tarefa (Zero fallback automático — apenas vínculo explícito)
+export function resolveTaskPopId(
+  taskOrId: Task | string | undefined | null,
+  localLinks?: Record<string, string>
+): string | undefined {
   if (!taskOrId) return undefined
   const links = localLinks || getLocalTaskPopLinks()
   if (typeof taskOrId === 'object') {
-    if (taskOrId.pop_id) return taskOrId.pop_id
-    if (links[taskOrId.id]) return links[taskOrId.id]
-    if (taskOrId.descricao && links[taskOrId.descricao.trim()]) return links[taskOrId.descricao.trim()]
-
-    const desc = (taskOrId.descricao || '').toLowerCase()
-    if (desc.includes('pagamento') || desc.includes('pix') || desc.includes('ted') || desc.includes('boleto') || desc.includes('agendamento')) {
-      return 'pop_agendamento_pix_ted'
+    if (taskOrId.pop_id === null) return undefined
+    if (typeof taskOrId.pop_id === 'string' && taskOrId.pop_id.trim()) {
+      return taskOrId.pop_id.trim()
     }
-    return 'pop_fechamento_caixa'
+    if (taskOrId.id && links[taskOrId.id]) {
+      return links[taskOrId.id]
+    }
+    return undefined
   }
-  if (links[taskOrId]) return links[taskOrId]
-  return 'pop_fechamento_caixa'
+  if (typeof taskOrId === 'string' && links[taskOrId]) {
+    return links[taskOrId]
+  }
+  return undefined
 }

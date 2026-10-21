@@ -16,6 +16,7 @@ interface Props {
   memberFilter: string
   pops?: Pop[]
   onRefreshPops?: () => Promise<void>
+  onLinkTaskPop?: (taskId: string, popId: string | null) => Promise<boolean>
   setViewMode: (v: ViewMode) => void
   setFilterMode: (f: FilterMode) => void
   setSearchQ: (q: string) => void
@@ -1012,7 +1013,7 @@ export function TasksPage(props: Props) {
       {/* POP RUNNER MODAL (COMO EXECUTAR) */}
       {activePopTask && (
         <PopRunnerModal
-          task={activePopTask}
+          task={tasks.find(t => t.id === activePopTask.id) || activePopTask}
           pops={props.pops || []}
           currentUser={currentUser}
           isAdmin={isAdmin}
@@ -1022,6 +1023,12 @@ export function TasksPage(props: Props) {
             props.setPage('pops')
           }}
           onRefreshPops={props.onRefreshPops}
+          onLinkTaskPop={props.onLinkTaskPop}
+          onPopLinked={(taskId, newPopId) => {
+            setActivePopTask(prev =>
+              prev && prev.id === taskId ? { ...prev, pop_id: newPopId || null } : prev
+            )
+          }}
           showToast={props.showToast}
         />
       )}

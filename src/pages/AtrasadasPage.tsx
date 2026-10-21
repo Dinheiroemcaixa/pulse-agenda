@@ -17,6 +17,7 @@ interface Props {
   isAdmin: boolean
   pops?: Pop[]
   onRefreshPops?: () => Promise<void>
+  onLinkTaskPop?: (taskId: string, popId: string | null) => Promise<boolean>
   setPage?: (p: Page) => void
   onComplete: (id: string, fromAtrasadas: boolean) => Promise<boolean>
   onBulkCompleteAtrasadas?: (
@@ -349,6 +350,7 @@ export function AtrasadasPage({
   isAdmin,
   pops,
   onRefreshPops,
+  onLinkTaskPop,
   setPage,
   onComplete,
   onBulkCompleteAtrasadas,
@@ -919,7 +921,7 @@ export function AtrasadasPage({
 
       {activePopTask && (
         <PopRunnerModal
-          task={activePopTask}
+          task={atrasadas.find(t => t.id === activePopTask.id) || activePopTask}
           pops={pops || []}
           currentUser={currentUser}
           isAdmin={isAdmin}
@@ -929,6 +931,12 @@ export function AtrasadasPage({
             setPage?.('pops')
           }}
           onRefreshPops={onRefreshPops}
+          onLinkTaskPop={onLinkTaskPop}
+          onPopLinked={(taskId, newPopId) => {
+            setActivePopTask(prev =>
+              prev && prev.id === taskId ? { ...prev, pop_id: newPopId || null } : prev
+            )
+          }}
           showToast={showToast}
         />
       )}
