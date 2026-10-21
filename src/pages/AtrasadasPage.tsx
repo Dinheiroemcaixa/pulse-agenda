@@ -921,6 +921,7 @@ export function AtrasadasPage({
         <PopRunnerModal
           task={activePopTask}
           pops={pops || []}
+          currentUser={currentUser}
           isAdmin={isAdmin}
           onClose={() => setActivePopTask(null)}
           onOpenLibrary={() => {

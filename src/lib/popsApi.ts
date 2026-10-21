@@ -129,17 +129,21 @@ function hydrateBuiltInPops(list: Pop[]): Pop[] {
       result.push(defPop)
     } else {
       const cur = result[idx]
-      const hasMedia = Array.isArray(cur.steps) && cur.steps.some(s => Array.isArray(s.media) && s.media.length > 0)
-      const normalizedTitle = cur.title === 'Fechamento Diário de Caixa e Conciliação' ? defPop.title : (cur.title || defPop.title)
-      if (!hasMedia || cur.title === 'Fechamento Diário de Caixa e Conciliação') {
+      const hasValidSteps =
+        Array.isArray(cur.steps) &&
+        cur.steps.length > 0 &&
+        cur.steps.some(s => Boolean(s?.title?.trim() || s?.instruction?.trim()))
+      if ((cur.version || 1) <= 1 && !hasValidSteps) {
         result[idx] = {
           ...defPop,
           ...cur,
-          title: normalizedTitle,
-          prerequisites: defPop.prerequisites,
-          contact_notes: defPop.contact_notes,
-          estimated_time: cur.estimated_time || defPop.estimated_time,
-          steps: hasMedia ? cur.steps : defPop.steps
+          estimated_time: cur.estimated_time || defPop.estimated_time || '30 min',
+          steps: defPop.steps
+        }
+      } else {
+        result[idx] = {
+          ...cur,
+          estimated_time: cur.estimated_time || defPop.estimated_time || '30 min'
         }
       }
     }
@@ -172,12 +176,30 @@ export function getLocalPops(): Pop[] {
   }
 }
 
-// Salva POPs no cache local
+// Salva POPs no cache local com proteção contra estouro de quota (Data URLs grandes)
 function setLocalPops(pops: Pop[]): void {
   try {
     localStorage.setItem(POPS_LOCAL_STORAGE_KEY, JSON.stringify(pops))
   } catch (e) {
-    console.error('Erro ao salvar no localStorage:', e)
+    console.warn('Limite de localStorage atingido para POPs; salvando versão compacta sem Data URLs pesadas:', e)
+    try {
+      const compactPops = pops.map(p => ({
+        ...p,
+        steps: (p.steps || []).map(s => ({
+          ...s,
+          media: (s.media || []).map(m => ({
+            ...m,
+            url:
+              m.url && m.url.startsWith('data:') && m.url.length > 131072
+                ? undefined
+                : m.url
+          }))
+        }))
+      }))
+      localStorage.setItem(POPS_LOCAL_STORAGE_KEY, JSON.stringify(compactPops))
+    } catch (innerErr) {
+      console.error('Erro ao salvar POPs no localStorage:', innerErr)
+    }
   }
 }
 
@@ -216,12 +238,26 @@ export async function fetchPopsApi(): Promise<Pop[]> {
       // Tabela ainda não existe ou está vazia no Supabase — fallback suave para local hidratado
       return getLocalPops()
     }
-    const formatted = hydrateBuiltInPops(
-      data.map((p: any) => ({
+    const localSnapshot = getLocalPops()
+    const remoteFormatted = data.map((p: any) => {
+      const localMatch = localSnapshot.find(lp => lp.id === p.id)
+      const parsedSteps = typeof p.steps === 'string' ? JSON.parse(p.steps) : (p.steps || [])
+      if (localMatch && (localMatch.version || 1) > (p.version || 1)) {
+        return localMatch
+      }
+      return {
         ...p,
-        steps: typeof p.steps === 'string' ? JSON.parse(p.steps) : (p.steps || [])
-      })) as Pop[]
-    )
+        estimated_time: p.estimated_time || localMatch?.estimated_time || '30 min',
+        steps: parsedSteps
+      }
+    }) as Pop[]
+    // Preserva POPs locais que ainda não tenham sido sincronizados no banco
+    for (const lp of localSnapshot) {
+      if (!remoteFormatted.some(rp => rp.id === lp.id)) {
+        remoteFormatted.push(lp)
+      }
+    }
+    const formatted = hydrateBuiltInPops(remoteFormatted)
     setLocalPops(formatted)
     return formatted
   } catch {
@@ -241,7 +277,9 @@ export async function savePopApi(popData: Partial<Pop>, editId?: string): Promis
       ...existing,
       ...popData,
       id: editId,
+      estimated_time: (popData.estimated_time || existing?.estimated_time || '30 min').trim(),
       version: (existing?.version || 1) + 1,
+      created_at: existing?.created_at || now,
       updated_at: now
     } as Pop
   } else {
@@ -256,6 +294,7 @@ export async function savePopApi(popData: Partial<Pop>, editId?: string): Promis
       expected_result: (popData.expected_result || '').trim(),
       contact_notes: (popData.contact_notes || '').trim(),
       responsible: (popData.responsible || '').trim(),
+      estimated_time: (popData.estimated_time || '30 min').trim(),
       active: popData.active !== undefined ? popData.active : true,
       version: 1,
       created_at: now,
@@ -263,23 +302,39 @@ export async function savePopApi(popData: Partial<Pop>, editId?: string): Promis
     }
   }
 
-  // Tenta persistir no Supabase
+  // Tenta persistir no Supabase (compatível com as colunas da tabela pops e JSONB de steps)
   try {
+    const sanitizedSteps = (finalPop.steps || []).map(s => ({
+      ...s,
+      media: (s.media || []).map(m => ({
+        ...m,
+        url: m.url && m.url.startsWith('blob:') ? undefined : m.url
+      }))
+    }))
     const payload = {
-      ...finalPop,
-      steps: finalPop.steps
+      id: finalPop.id,
+      title: finalPop.title,
+      objective: finalPop.objective,
+      when_to_use: finalPop.when_to_use,
+      prerequisites: finalPop.prerequisites,
+      steps: sanitizedSteps,
+      cautions: finalPop.cautions,
+      expected_result: finalPop.expected_result,
+      contact_notes: finalPop.contact_notes || '',
+      responsible: finalPop.responsible || '',
+      active: finalPop.active,
+      version: finalPop.version,
+      created_at: finalPop.created_at,
+      updated_at: finalPop.updated_at
     }
-    if (editId) {
-      await sb.from('pops').update(payload).eq('id', editId)
-    } else {
-      await sb.from('pops').insert(payload)
-    }
+    await sb.from('pops').upsert(payload, { onConflict: 'id' })
   } catch (err) {
     console.warn('Persistindo POP localmente (aguardando migração do banco):', err)
   }
 
   // Salva no cache local
-  const updatedList = editId
+  const existsInLocal = editId && localList.some(p => p.id === editId)
+  const updatedList = existsInLocal
     ? localList.map(p => p.id === editId ? finalPop : p)
     : [finalPop, ...localList]
   setLocalPops(updatedList)

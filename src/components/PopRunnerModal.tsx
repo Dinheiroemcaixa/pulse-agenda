@@ -1,6 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
-import type { Pop, PopStepMedia, Task, User } from '../types'
-import { DEFAULT_POPS, getLocalPops, resolveTaskPopId } from '../lib/popsApi'
+import type { Pop, PopStep, PopStepMedia, Task, User } from '../types'
+import {
+  DEFAULT_POPS,
+  getLocalPops,
+  resolveTaskPopId,
+  savePopApi,
+  linkTaskToPopApi
+} from '../lib/popsApi'
+import { genId } from '../lib/utils'
 
 interface Props {
   pop?: Pop
@@ -9,7 +16,10 @@ interface Props {
   pops?: Pop[]
   currentUser?: User
   isAdmin?: boolean
+  initialMode?: 'view' | 'edit'
+  createNew?: boolean
   onClose: () => void
+  onSaved?: (savedPop: Pop) => void
   onOpenPopLibrary?: () => void
   onOpenLibrary?: () => void
   onOpenPopEdit?: (pop: Pop) => void
@@ -18,66 +28,244 @@ interface Props {
   showToast: (msg: string, type?: string) => void
 }
 
+function readFileToMediaItem(f: File): Promise<PopStepMedia> {
+  return new Promise(resolve => {
+    const isVid = f.type.startsWith('video') || /\.(mp4|webm|mov|avi|mkv)$/i.test(f.name)
+    const isImg = f.type.startsWith('image') || /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(f.name)
+    const sizeStr =
+      f.size > 1048576
+        ? (f.size / 1048576).toFixed(1) + ' MB'
+        : Math.max(1, Math.round(f.size / 1024)) + ' KB'
+    const ext = (f.name.split('.').pop() || 'ARQ').slice(0, 4).toUpperCase()
+    const baseItem: PopStepMedia = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      name: f.name,
+      type: isVid ? 'video' : isImg ? 'image' : 'doc',
+      size: sizeStr,
+      extension: ext
+    }
+
+    // Até 1.5 MB converte para Data URL para persistir em localStorage/Supabase após recarregar
+    if (f.size <= 1572864) {
+      const reader = new FileReader()
+      reader.onload = () => {
+        resolve({
+          ...baseItem,
+          url: typeof reader.result === 'string' ? reader.result : URL.createObjectURL(f)
+        })
+      }
+      reader.onerror = () => {
+        resolve({
+          ...baseItem,
+          url: URL.createObjectURL(f)
+        })
+      }
+      reader.readAsDataURL(f)
+    } else {
+      resolve({
+        ...baseItem,
+        url: URL.createObjectURL(f)
+      })
+    }
+  })
+}
+
 export function PopRunnerModal(props: Props) {
   const {
     pop: explicitPop,
     task,
     allPops: propAllPops,
     pops: propPops,
+    currentUser,
+    isAdmin,
+    initialMode = 'view',
+    createNew = false,
     onClose,
-    onOpenPopLibrary,
-    onOpenLibrary,
-    onOpenPopEdit,
+    onSaved,
+    onPopLinked,
+    onRefreshPops,
     showToast
   } = props
 
-  const basePops = (propAllPops && propAllPops.length > 0)
-    ? propAllPops
-    : ((propPops && propPops.length > 0) ? propPops : getLocalPops())
+  const canEdit = Boolean(isAdmin)
+
+  const basePops =
+    propAllPops && propAllPops.length > 0
+      ? propAllPops
+      : propPops && propPops.length > 0
+        ? propPops
+        : getLocalPops()
   const allPops = basePops.length > 0 ? basePops : DEFAULT_POPS
 
-  const resolvedPopId = task ? (task.pop_id || resolveTaskPopId(task)) : undefined
-  const rawPop = explicitPop || allPops.find(p => p.id === resolvedPopId) || allPops[0] || DEFAULT_POPS[0]
+  const initialLinkedPopId = task ? task.pop_id || resolveTaskPopId(task) : explicitPop?.id
+  const [selectedTaskPopId, setSelectedTaskPopId] = useState<string | undefined>(initialLinkedPopId)
+  const [currentPopOverride, setCurrentPopOverride] = useState<Pop | null>(null)
 
-  // Garante hidratação completa de mídias, dicas e pré-requisitos da referência visual
-  const defaultMatch = DEFAULT_POPS.find(d => d.id === rawPop?.id) || DEFAULT_POPS[0]
-  const hasRichMedia = Array.isArray(rawPop?.steps) && rawPop.steps.some(s => Array.isArray(s.media) && s.media.length > 0)
-  const pop: Pop = rawPop
-    ? {
-        ...defaultMatch,
-        ...rawPop,
-        title: rawPop.title === 'Fechamento Diário de Caixa e Conciliação' ? defaultMatch.title : (rawPop.title || defaultMatch.title),
-        prerequisites: (!rawPop.prerequisites || rawPop.prerequisites.includes('sistema ERP e extrato'))
-          ? defaultMatch.prerequisites
-          : rawPop.prerequisites,
-        contact_notes: (!rawPop.contact_notes || rawPop.contact_notes.startsWith('Dúvidas falar com'))
-          ? defaultMatch.contact_notes
-          : rawPop.contact_notes,
-        estimated_time: rawPop.estimated_time || defaultMatch.estimated_time || '30 min',
-        steps: hasRichMedia ? rawPop.steps : defaultMatch.steps
+  const emptyPopTemplate: Pop = {
+    id: '',
+    title: '',
+    objective: '',
+    when_to_use: '',
+    prerequisites: '',
+    steps: [
+      {
+        id: genId(),
+        order: 1,
+        title: '',
+        instruction: '',
+        media: [],
+        tip: '',
+        tipType: 'info'
       }
-    : DEFAULT_POPS[0]
+    ],
+    cautions: '',
+    expected_result: '',
+    contact_notes: '',
+    responsible: currentUser?.name || 'Raffaela Lima',
+    estimated_time: '30 min',
+    active: true,
+    version: 1,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }
 
-  const openLib = onOpenPopLibrary || onOpenLibrary || (() => {})
+  // Resolução unificada: busca sempre a versão mais atualizada em allPops
+  const resolvedPopId = task
+    ? selectedTaskPopId || task.pop_id || resolveTaskPopId(task)
+    : explicitPop?.id
 
-  // Estado idêntico ao POP Tarefa.dc.html: Etapa 1 (índice 0 / id 's1') iniciada como marcada (1/4 passos)
-  // Nota: marcar etapas aqui é apenas guia de execução local e NÃO altera o status da tarefa.
+  const rawPop: Pop | undefined =
+    createNew && !currentPopOverride
+      ? emptyPopTemplate
+      : currentPopOverride
+        ? allPops.find(p => p.id === currentPopOverride.id) || currentPopOverride
+        : explicitPop
+          ? allPops.find(p => p.id === explicitPop.id) || explicitPop
+          : allPops.find(p => p.id === resolvedPopId) || allPops[0] || DEFAULT_POPS[0]
+
+  // Hidratação segura: só usa defaultMatch se o ID realmente pertencer a DEFAULT_POPS
+  // e nunca sobrescreve steps quando rawPop já possui etapas válidas.
+  const defaultMatch = DEFAULT_POPS.find(d => d.id === rawPop?.id)
+  const hasRawSteps = Array.isArray(rawPop?.steps) && rawPop.steps.length > 0
+
+  const pop: Pop =
+    createNew && !currentPopOverride
+      ? emptyPopTemplate
+      : rawPop
+        ? {
+            ...(defaultMatch || {}),
+            ...rawPop,
+            title: rawPop.title || defaultMatch?.title || '',
+            prerequisites:
+              rawPop.prerequisites !== undefined && rawPop.prerequisites !== ''
+                ? rawPop.prerequisites
+                : defaultMatch?.prerequisites || '',
+            contact_notes:
+              rawPop.contact_notes !== undefined && rawPop.contact_notes !== ''
+                ? rawPop.contact_notes
+                : defaultMatch?.contact_notes || '',
+            estimated_time: rawPop.estimated_time || defaultMatch?.estimated_time || '30 min',
+            steps: hasRawSteps ? rawPop.steps : defaultMatch?.steps || []
+          }
+        : DEFAULT_POPS[0]
+
+  // Modo de visualização vs edição interna unificada
+  const [isEditing, setIsEditing] = useState<boolean>(
+    Boolean((createNew || initialMode === 'edit') && canEdit)
+  )
+  const [isSaving, setIsSaving] = useState(false)
+
+  // Estados do formulário de edição completa no PopRunnerModal
+  const [fTitle, setFTitle] = useState(pop.title || '')
+  const [fResponsible, setFResponsible] = useState(
+    pop.responsible || currentUser?.name || 'Raffaela Lima'
+  )
+  const [fContactNotes, setFContactNotes] = useState(
+    pop.contact_notes || 'Gestora Financeira Raffaela Lima'
+  )
+  const [fEstimatedTime, setFEstimatedTime] = useState(pop.estimated_time || '30 min')
+  const [fObjective, setFObjective] = useState(pop.objective || '')
+  const [fWhenToUse, setFWhenToUse] = useState(pop.when_to_use || '')
+  const [fPrerequisites, setFPrerequisites] = useState(pop.prerequisites || '')
+  const [fCautions, setFCautions] = useState(pop.cautions || '')
+  const [fExpectedResult, setFExpectedResult] = useState(pop.expected_result || '')
+  const [fSteps, setFSteps] = useState<PopStep[]>(() =>
+    pop.steps && pop.steps.length > 0
+      ? pop.steps.map((s, i) => ({
+          ...s,
+          order: i + 1,
+          media: [...(s.media || [])],
+          tip: s.tip || '',
+          tipType: s.tipType || 'info'
+        }))
+      : [
+          {
+            id: genId(),
+            order: 1,
+            title: '',
+            instruction: '',
+            media: [],
+            tip: '',
+            tipType: 'info'
+          }
+        ]
+  )
+
+  // Mini-painel inline para adicionar vídeo/planilha/documento/imagem rapidamente em uma etapa
+  const [quickMediaStepIdx, setQuickMediaStepIdx] = useState<number | null>(null)
+  const [qmKind, setQmKind] = useState<'video' | 'xlsx' | 'pdf' | 'image'>('video')
+  const [qmName, setQmName] = useState('')
+  const [qmUrl, setQmUrl] = useState('')
+
+  const populateForm = (source: Pop) => {
+    setFTitle(source.title || '')
+    setFResponsible(source.responsible || currentUser?.name || 'Raffaela Lima')
+    setFContactNotes(source.contact_notes || '')
+    setFEstimatedTime(source.estimated_time || '30 min')
+    setFObjective(source.objective || '')
+    setFWhenToUse(source.when_to_use || '')
+    setFPrerequisites(source.prerequisites || '')
+    setFCautions(source.cautions || '')
+    setFExpectedResult(source.expected_result || '')
+    setFSteps(
+      source.steps && source.steps.length > 0
+        ? source.steps.map((s, i) => ({
+            ...s,
+            order: i + 1,
+            media: [...(s.media || [])],
+            tip: s.tip || '',
+            tipType: s.tipType || 'info'
+          }))
+        : [
+            {
+              id: genId(),
+              order: 1,
+              title: '',
+              instruction: '',
+              media: [],
+              tip: '',
+              tipType: 'info'
+            }
+          ]
+    )
+  }
+
+  // Estado de execução de etapas no modo visualização
   const [doneStepIndices, setDoneStepIndices] = useState<number[]>([0])
-  const [extraMedia, setExtraMedia] = useState<Record<number, PopStepMedia[]>>({})
-  const [removedMedia, setRemovedMedia] = useState<Record<string, boolean>>({})
   const stepRefs = useRef<Record<number, HTMLDivElement | null>>({})
 
   useEffect(() => {
     setDoneStepIndices([0])
   }, [pop?.id])
 
-  const steps = pop?.steps || []
+  const steps = isEditing ? fSteps : pop?.steps || []
   const totalSteps = steps.length
   const doneCount = doneStepIndices.filter(i => i >= 0 && i < totalSteps).length
   const progressPercent = totalSteps > 0 ? (doneCount / totalSteps) * 100 : 0
   const isAllDone = totalSteps > 0 && doneCount === totalSteps
 
   const toggleStepIndex = (idx: number) => {
+    if (isEditing) return
     setDoneStepIndices(prev =>
       prev.includes(idx) ? prev.filter(x => x !== idx) : [...prev, idx]
     )
@@ -98,36 +286,240 @@ export function PopRunnerModal(props: Props) {
     }
   }
 
-  const handleAddFiles = (stepIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
-    if (files.length === 0) return
-    const added: PopStepMedia[] = files.map(f => {
-      const isVid = f.type.startsWith('video')
-      const isImg = f.type.startsWith('image')
-      const sizeStr = f.size > 1048576
-        ? (f.size / 1048576).toFixed(1) + ' MB'
-        : Math.max(1, Math.round(f.size / 1024)) + ' KB'
-      return {
-        id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-        name: f.name,
-        type: isVid ? 'video' : isImg ? 'image' : 'doc',
-        url: URL.createObjectURL(f),
-        size: sizeStr,
-        extension: (f.name.split('.').pop() || 'ARQ').slice(0, 4).toUpperCase()
-      }
-    })
-    e.target.value = ''
-    setExtraMedia(prev => ({
-      ...prev,
-      [stepIdx]: [...(prev[stepIdx] || []), ...added]
-    }))
+  // Persistência real de mídias no modo visualização
+  const persistViewModeSteps = async (updatedSteps: PopStep[], toastMsg?: string) => {
+    if (!pop.id) return
+    const saved = await savePopApi(
+      {
+        ...pop,
+        steps: updatedSteps.map((s, i) => ({ ...s, order: i + 1 }))
+      },
+      pop.id
+    )
+    setCurrentPopOverride(saved)
+    await onRefreshPops?.()
+    if (toastMsg) showToast(toastMsg, 'success')
   }
 
-  const handleRemoveMedia = (stepIdx: number, mediaIdx: number) => {
-    setRemovedMedia(prev => ({
+  const handleAddFiles = async (stepIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    if (files.length === 0) return
+
+    const hasOversized = files.some(f => f.size > 1572864)
+    const added = await Promise.all(files.map(readFileToMediaItem))
+
+    if (isEditing) {
+      setFSteps(prev =>
+        prev.map((s, idx) =>
+          idx === stepIdx ? { ...s, media: [...(s.media || []), ...added] } : s
+        )
+      )
+      if (hasOversized) {
+        showToast(
+          '⚠️ Arquivo acima de 1,5 MB: referência incluída na etapa. Para vídeos/arquivos grandes permanentes, informe o link em "+ Vídeo / Planilha".',
+          'info'
+        )
+      } else {
+        showToast('📎 Arquivo(s) incluído(s) na etapa!', 'info')
+      }
+    } else {
+      const updatedSteps = (pop.steps || []).map((s, idx) =>
+        idx === stepIdx ? { ...s, media: [...(s.media || []), ...added] } : s
+      )
+      await persistViewModeSteps(
+        updatedSteps,
+        hasOversized
+          ? '⚠️ Arquivo > 1,5 MB: referência salva. Para arquivos grandes, use "+ Vídeo / Planilha" com link.'
+          : '📎 Anexo salvo no POP!'
+      )
+    }
+  }
+
+  const handleRemoveMedia = async (stepIdx: number, mediaIdx: number) => {
+    if (isEditing) {
+      setFSteps(prev =>
+        prev.map((s, idx) =>
+          idx === stepIdx
+            ? { ...s, media: (s.media || []).filter((_, mIdx) => mIdx !== mediaIdx) }
+            : s
+        )
+      )
+    } else {
+      const updatedSteps = (pop.steps || []).map((s, idx) =>
+        idx === stepIdx
+          ? { ...s, media: (s.media || []).filter((_, mIdx) => mIdx !== mediaIdx) }
+          : s
+      )
+      await persistViewModeSteps(updatedSteps, '🗑 Anexo removido do POP.')
+    }
+  }
+
+  const handleConfirmQuickMedia = async (stepIdx: number) => {
+    const trimmedName = qmName.trim()
+    const defaultNameByKind: Record<'video' | 'xlsx' | 'pdf' | 'image', string> = {
+      video: 'video-tutorial-etapa.mp4',
+      xlsx: 'planilha-apoio-etapa.xlsx',
+      pdf: 'manual-referencia.pdf',
+      image: 'captura-tela-etapa.png'
+    }
+    const finalName = trimmedName || defaultNameByKind[qmKind]
+    const extFromName = finalName.includes('.')
+      ? (finalName.split('.').pop() || '').slice(0, 4).toUpperCase()
+      : ''
+    const extByKind: Record<'video' | 'xlsx' | 'pdf' | 'image', string> = {
+      video: 'MP4',
+      xlsx: 'XLSX',
+      pdf: 'PDF',
+      image: 'PNG'
+    }
+    const newMedia: PopStepMedia = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      name: finalName,
+      type: qmKind === 'video' ? 'video' : qmKind === 'image' ? 'image' : 'doc',
+      url: qmUrl.trim() || undefined,
+      extension: extFromName || extByKind[qmKind],
+      size: qmKind === 'video' ? 'Vídeo' : qmKind === 'xlsx' ? 'Planilha' : qmKind === 'pdf' ? 'Documento' : 'Imagem'
+    }
+
+    setQuickMediaStepIdx(null)
+    setQmName('')
+    setQmUrl('')
+
+    if (isEditing) {
+      setFSteps(prev =>
+        prev.map((s, idx) =>
+          idx === stepIdx ? { ...s, media: [...(s.media || []), newMedia] } : s
+        )
+      )
+      showToast('📎 Item adicionado à etapa!', 'info')
+    } else {
+      const updatedSteps = (pop.steps || []).map((s, idx) =>
+        idx === stepIdx ? { ...s, media: [...(s.media || []), newMedia] } : s
+      )
+      await persistViewModeSteps(updatedSteps, '📎 Item salvo no POP!')
+    }
+  }
+
+  // Manipulação de etapas no modo de edição
+  const addStep = () => {
+    setFSteps(prev => [
       ...prev,
-      [`${stepIdx}-${mediaIdx}`]: true
-    }))
+      {
+        id: genId(),
+        order: prev.length + 1,
+        title: '',
+        instruction: '',
+        media: [],
+        tip: '',
+        tipType: 'info'
+      }
+    ])
+  }
+
+  const updateStepField = <K extends keyof PopStep>(idx: number, field: K, val: PopStep[K]) => {
+    setFSteps(prev => {
+      const copy = [...prev]
+      copy[idx] = { ...copy[idx], [field]: val }
+      return copy
+    })
+  }
+
+  const removeStep = (idx: number) => {
+    setFSteps(prev => {
+      if (prev.length <= 1) return prev
+      const filtered = prev.filter((_, i) => i !== idx)
+      return filtered.map((s, i) => ({ ...s, order: i + 1 }))
+    })
+  }
+
+  const moveStep = (idx: number, dir: -1 | 1) => {
+    const targetIdx = idx + dir
+    if (targetIdx < 0 || targetIdx >= fSteps.length) return
+    setFSteps(prev => {
+      const copy = [...prev]
+      const [item] = copy.splice(idx, 1)
+      copy.splice(targetIdx, 0, item)
+      return copy.map((s, i) => ({ ...s, order: i + 1 }))
+    })
+  }
+
+  const handleSavePop = async () => {
+    if (!fTitle.trim()) {
+      showToast('⚠ Preencha o título do POP', 'warn')
+      return
+    }
+    if (!fObjective.trim()) {
+      showToast('⚠ Preencha o objetivo do procedimento', 'warn')
+      return
+    }
+    if (!fWhenToUse.trim()) {
+      showToast('⚠ Informe quando utilizar este procedimento', 'warn')
+      return
+    }
+
+    const validSteps = fSteps.filter(
+      s => s.title.trim() || s.instruction.trim() || (s.media && s.media.length > 0)
+    )
+    if (validSteps.length === 0) {
+      showToast('⚠ Adicione ao menos 1 etapa preenchida ao procedimento', 'warn')
+      return
+    }
+
+    setIsSaving(true)
+    try {
+      const editTargetId = createNew && !currentPopOverride ? undefined : pop.id || undefined
+      const payload: Partial<Pop> = {
+        title: fTitle.trim(),
+        objective: fObjective.trim(),
+        when_to_use: fWhenToUse.trim(),
+        prerequisites: fPrerequisites.trim(),
+        cautions: fCautions.trim(),
+        expected_result: fExpectedResult.trim(),
+        contact_notes: fContactNotes.trim(),
+        responsible: fResponsible.trim() || currentUser?.name || 'Raffaela Lima',
+        estimated_time: fEstimatedTime.trim() || '30 min',
+        steps: validSteps.map((s, i) => ({
+          ...s,
+          id: s.id || genId(),
+          order: i + 1,
+          title: s.title.trim() || `Etapa ${i + 1}`,
+          instruction: s.instruction.trim(),
+          media: s.media || [],
+          tip: s.tip?.trim() || undefined,
+          tipType: s.tip?.trim() ? s.tipType || 'info' : undefined
+        })),
+        active: pop.active !== undefined ? pop.active : true
+      }
+
+      const saved = await savePopApi(payload, editTargetId)
+      setCurrentPopOverride(saved)
+      await onRefreshPops?.()
+      onSaved?.(saved)
+      setIsEditing(false)
+      showToast('✅ POP salvo com sucesso!', 'success')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleCancelEdit = () => {
+    if ((createNew && !currentPopOverride) || initialMode === 'edit') {
+      onClose()
+      return
+    }
+    setIsEditing(false)
+    setQuickMediaStepIdx(null)
+  }
+
+  const handleChangeTaskPop = async (newPopId: string) => {
+    setSelectedTaskPopId(newPopId)
+    setCurrentPopOverride(null)
+    if (task) {
+      await linkTaskToPopApi(task.id, newPopId)
+      onPopLinked?.(task.id, newPopId)
+      showToast('🔗 Procedimento (POP) vinculado à tarefa!', 'info')
+    }
   }
 
   function parsePrerequisites(raw?: string): string[] {
@@ -139,10 +531,21 @@ export function PopRunnerModal(props: Props) {
       ]
     }
     if (raw.includes('\n')) {
-      return raw.split('\n').map(s => s.trim().replace(/^[-•*]\s*/, '')).filter(Boolean)
+      return raw
+        .split('\n')
+        .map(s => s.trim().replace(/^[-•*]\s*/, ''))
+        .filter(Boolean)
     }
     if (raw.includes(';') || raw.includes(',')) {
-      return raw.split(/[;,]/).map(s => s.trim().replace(/^[-•*]\s*/, '').replace(/\.$/, '')).filter(Boolean)
+      return raw
+        .split(/[;,]/)
+        .map(s =>
+          s
+            .trim()
+            .replace(/^[-•*]\s*/, '')
+            .replace(/\.$/, '')
+        )
+        .filter(Boolean)
     }
     return [raw.trim()]
   }
@@ -217,16 +620,18 @@ export function PopRunnerModal(props: Props) {
             </div>
           </div>
           <div style="font-size: 10px; color: #5b6688; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 10px;">ETAPAS NUMERADAS (${steps.length})</div>
-          ${steps.map((s, idx) => {
-            const num = s.order || idx + 1
-            const displayTitle = s.title.startsWith('Etapa ') ? s.title : `Etapa ${num}: ${s.title}`
-            return `
+          ${steps
+            .map((s, idx) => {
+              const num = s.order || idx + 1
+              const displayTitle = s.title.startsWith('Etapa ') ? s.title : `Etapa ${num}: ${s.title}`
+              return `
               <div class="step-card">
                 <div class="step-title">${displayTitle}</div>
                 <div class="step-inst">${s.instruction}</div>
               </div>
             `
-          }).join('')}
+            })
+            .join('')}
           <div class="grid-2" style="margin-top: 14px;">
             <div class="cautions-box"><strong>Cuidados e Atenção</strong><br>${pop.cautions}</div>
             <div class="expected-box"><strong>Resultado Esperado</strong><br>${pop.expected_result}</div>
@@ -239,16 +644,26 @@ export function PopRunnerModal(props: Props) {
   }
 
   const handleEditPop = () => {
-    onClose()
-    if (onOpenPopEdit) {
-      onOpenPopEdit(pop)
-    } else {
-      openLib()
-      showToast('Abra o procedimento na biblioteca para editar suas instruções.', 'info')
+    if (!canEdit) {
+      showToast('Apenas administradores podem editar procedimentos (POP).', 'warn')
+      return
     }
+    populateForm(pop)
+    setIsEditing(true)
   }
 
   const responsibleFirstName = (pop.responsible || 'Raffaela Lima').split(' ')[0]
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    background: '#0d1324',
+    border: '1px solid #2a3558',
+    borderRadius: 7,
+    padding: '8px 11px',
+    color: '#e6e9f2',
+    font: "400 13px 'IBM Plex Sans', sans-serif",
+    outline: 'none'
+  }
 
   return (
     <div
@@ -272,6 +687,7 @@ export function PopRunnerModal(props: Props) {
         }
         .pop-dc-attach-label:hover {
           background: #18214a !important;
+          border-color: #4f6bff !important;
         }
         @media (max-width: 680px) {
           .pop-dc-modal {
@@ -285,7 +701,7 @@ export function PopRunnerModal(props: Props) {
         }
       `}</style>
 
-      {/* Backdrop idêntico a POP Tarefa.dc.html (linha 49) */}
+      {/* Backdrop */}
       <div
         onClick={onClose}
         style={{
@@ -295,17 +711,17 @@ export function PopRunnerModal(props: Props) {
         }}
       />
 
-      {/* Janela Principal idêntica a POP Tarefa.dc.html (linha 50) e POP-preview.png */}
+      {/* Janela Principal */}
       <section
         className="pop-dc-modal"
         data-testid="pop-runner-modal"
         style={{
           position: 'absolute',
-          top: 32,
-          bottom: 32,
+          top: 28,
+          bottom: 28,
           left: '50%',
           transform: 'translateX(-50%)',
-          width: 'min(820px, calc(100% - 32px))',
+          width: 'min(840px, calc(100% - 32px))',
           background: '#10162a',
           border: '1px solid #26304f',
           borderRadius: 14,
@@ -317,18 +733,18 @@ export function PopRunnerModal(props: Props) {
           color: '#e6e9f2'
         }}
       >
-        {/* CABEÇALHO — linhas 51-69 de POP Tarefa.dc.html */}
+        {/* CABEÇALHO */}
         <header
           style={{
-            padding: '22px 28px 18px',
+            padding: '20px 28px 16px',
             borderBottom: '1px solid #1f2740',
             display: 'flex',
             flexDirection: 'column',
-            gap: 14,
+            gap: 12,
             flexShrink: 0
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <span
               style={{
                 font: "500 11px 'IBM Plex Mono', monospace",
@@ -338,41 +754,82 @@ export function PopRunnerModal(props: Props) {
                 borderRadius: 5
               }}
             >
-              POP · v{pop.version || 1}
+              {isEditing
+                ? createNew && !currentPopOverride
+                  ? 'NOVO POP · MODO EDIÇÃO'
+                  : `EDITANDO POP · v${pop.version || 1}`
+                : `POP · v${pop.version || 1}`}
             </span>
+
+            {/* Seletor rápido de POP vinculado quando aberto por uma Tarefa */}
+            {!isEditing && task && allPops.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, color: '#8b94b3' }}>Procedimento da tarefa:</span>
+                <select
+                  aria-label="Trocar POP da tarefa"
+                  value={pop.id}
+                  onChange={e => handleChangeTaskPop(e.target.value)}
+                  style={{
+                    background: '#141b31',
+                    border: '1px solid #2a3454',
+                    borderRadius: 6,
+                    color: '#c6cce0',
+                    fontSize: 11.5,
+                    padding: '4px 8px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {allPops
+                    .filter(p => p.active || p.id === pop.id)
+                    .map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.title}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
+
             <span style={{ flex: 1 }} />
-            <button
-              type="button"
-              onClick={handlePrint}
-              style={{
-                height: 32,
-                padding: '0 12px',
-                borderRadius: 7,
-                border: '1px solid #2a3454',
-                background: 'transparent',
-                color: '#c6cce0',
-                font: "500 12px 'IBM Plex Sans', sans-serif",
-                cursor: 'pointer'
-              }}
-            >
-              Imprimir
-            </button>
-            <button
-              type="button"
-              onClick={handleEditPop}
-              style={{
-                height: 32,
-                padding: '0 12px',
-                borderRadius: 7,
-                border: '1px solid #2a3454',
-                background: 'transparent',
-                color: '#c6cce0',
-                font: "500 12px 'IBM Plex Sans', sans-serif",
-                cursor: 'pointer'
-              }}
-            >
-              Editar POP
-            </button>
+
+            {!isEditing && (
+              <button
+                type="button"
+                onClick={handlePrint}
+                style={{
+                  height: 32,
+                  padding: '0 12px',
+                  borderRadius: 7,
+                  border: '1px solid #2a3454',
+                  background: 'transparent',
+                  color: '#c6cce0',
+                  font: "500 12px 'IBM Plex Sans', sans-serif",
+                  cursor: 'pointer'
+                }}
+              >
+                Imprimir
+              </button>
+            )}
+
+            {!isEditing && canEdit && (
+              <button
+                type="button"
+                onClick={handleEditPop}
+                style={{
+                  height: 32,
+                  padding: '0 12px',
+                  borderRadius: 7,
+                  border: '1px solid #3c5299',
+                  background: '#182346',
+                  color: '#a9b8ff',
+                  font: "600 12px 'IBM Plex Sans', sans-serif",
+                  cursor: 'pointer'
+                }}
+              >
+                ✎ Editar POP
+              </button>
+            )}
+
             <button
               type="button"
               onClick={onClose}
@@ -392,79 +849,141 @@ export function PopRunnerModal(props: Props) {
             </button>
           </div>
 
-          <h1
-            style={{
-              margin: 0,
-              fontSize: 21,
-              fontWeight: 700,
-              lineHeight: 1.25,
-              color: '#e6e9f2'
-            }}
-          >
-            {pop.title}
-          </h1>
+          {isEditing ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div>
+                <div style={{ fontSize: 10, letterSpacing: '.08em', color: '#7d93ff', marginBottom: 4 }}>
+                  TÍTULO DO PROCEDIMENTO (POP) *
+                </div>
+                <input
+                  value={fTitle}
+                  onChange={e => setFTitle(e.target.value)}
+                  placeholder="Ex: Fechamento Diário de Caixa e Conciliação Bancária"
+                  style={{
+                    ...inputStyle,
+                    fontSize: 16,
+                    fontWeight: 700,
+                    padding: '9px 12px'
+                  }}
+                />
+              </div>
 
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 22,
-              fontSize: 12,
-              color: '#8b94b3'
-            }}
-          >
-            <span>
-              Responsável{' '}
-              <b style={{ color: '#e6e9f2', fontWeight: 600 }}>
-                {pop.responsible || 'Raffaela Lima'}
-              </b>
-            </span>
-            <span>
-              Dúvidas{' '}
-              <b style={{ color: '#e6e9f2', fontWeight: 600 }}>
-                {pop.contact_notes || 'Gestora Financeira Raffaela Lima'}
-              </b>
-            </span>
-            <span>
-              Tempo estimado{' '}
-              <b style={{ color: '#e6e9f2', fontWeight: 600 }}>
-                {pop.estimated_time || '30 min'}
-              </b>
-            </span>
-          </div>
+              <div
+                className="pop-dc-grid2"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1.3fr 140px',
+                  gap: 10
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: 10, color: '#8b94b3', marginBottom: 3 }}>RESPONSÁVEL</div>
+                  <input
+                    value={fResponsible}
+                    onChange={e => setFResponsible(e.target.value)}
+                    placeholder="Ex: Raffaela Lima"
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: '#8b94b3', marginBottom: 3 }}>
+                    DÚVIDAS / CONTATO DE APOIO
+                  </div>
+                  <input
+                    value={fContactNotes}
+                    onChange={e => setFContactNotes(e.target.value)}
+                    placeholder="Ex: Gestora Financeira Raffaela Lima"
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: '#8b94b3', marginBottom: 3 }}>TEMPO ESTIMADO</div>
+                  <input
+                    value={fEstimatedTime}
+                    onChange={e => setFEstimatedTime(e.target.value)}
+                    placeholder="Ex: 30 min"
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <h1
+                style={{
+                  margin: 0,
+                  fontSize: 21,
+                  fontWeight: 700,
+                  lineHeight: 1.25,
+                  color: '#e6e9f2'
+                }}
+              >
+                {pop.title}
+              </h1>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div
-              style={{
-                flex: 1,
-                height: 6,
-                background: '#1f2740',
-                borderRadius: 4,
-                overflow: 'hidden'
-              }}
-            >
               <div
                 style={{
-                  height: '100%',
-                  width: `${progressPercent}%`,
-                  background: '#4f6bff',
-                  borderRadius: 4,
-                  transition: 'width .3s'
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: 22,
+                  fontSize: 12,
+                  color: '#8b94b3'
                 }}
-              />
-            </div>
-            <span
-              style={{
-                font: "500 12px 'IBM Plex Mono', monospace",
-                color: '#a9b8ff'
-              }}
-            >
-              {doneCount}/{totalSteps} passos
-            </span>
-          </div>
+              >
+                <span>
+                  Responsável{' '}
+                  <b style={{ color: '#e6e9f2', fontWeight: 600 }}>
+                    {pop.responsible || 'Raffaela Lima'}
+                  </b>
+                </span>
+                <span>
+                  Dúvidas{' '}
+                  <b style={{ color: '#e6e9f2', fontWeight: 600 }}>
+                    {pop.contact_notes || 'Gestora Financeira Raffaela Lima'}
+                  </b>
+                </span>
+                <span>
+                  Tempo estimado{' '}
+                  <b style={{ color: '#e6e9f2', fontWeight: 600 }}>
+                    {pop.estimated_time || '30 min'}
+                  </b>
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div
+                  style={{
+                    flex: 1,
+                    height: 6,
+                    background: '#1f2740',
+                    borderRadius: 4,
+                    overflow: 'hidden'
+                  }}
+                >
+                  <div
+                    style={{
+                      height: '100%',
+                      width: `${progressPercent}%`,
+                      background: '#4f6bff',
+                      borderRadius: 4,
+                      transition: 'width .3s'
+                    }}
+                  />
+                </div>
+                <span
+                  style={{
+                    font: "500 12px 'IBM Plex Mono', monospace",
+                    color: '#a9b8ff'
+                  }}
+                >
+                  {doneCount}/{totalSteps} passos
+                </span>
+              </div>
+            </>
+          )}
         </header>
 
-        {/* CORPO COM ROLAGEM INTERNA — linhas 71-143 de POP Tarefa.dc.html */}
+        {/* CORPO COM ROLAGEM INTERNA */}
         <div
           style={{
             flex: 1,
@@ -497,11 +1016,21 @@ export function PopRunnerModal(props: Props) {
               }}
             >
               <div style={{ fontSize: 10, letterSpacing: '.1em', color: '#5b6688' }}>
-                OBJETIVO
+                {isEditing ? 'OBJETIVO *' : 'OBJETIVO'}
               </div>
-              <div style={{ fontSize: 13, lineHeight: 1.5, color: '#c6cce0' }}>
-                {pop.objective}
-              </div>
+              {isEditing ? (
+                <textarea
+                  rows={3}
+                  value={fObjective}
+                  onChange={e => setFObjective(e.target.value)}
+                  placeholder="Qual o propósito e a finalidade deste procedimento?"
+                  style={{ ...inputStyle, resize: 'vertical' }}
+                />
+              ) : (
+                <div style={{ fontSize: 13, lineHeight: 1.5, color: '#c6cce0' }}>
+                  {pop.objective}
+                </div>
+              )}
             </div>
 
             <div
@@ -516,11 +1045,21 @@ export function PopRunnerModal(props: Props) {
               }}
             >
               <div style={{ fontSize: 10, letterSpacing: '.1em', color: '#5b6688' }}>
-                QUANDO UTILIZAR
+                {isEditing ? 'QUANDO UTILIZAR *' : 'QUANDO UTILIZAR'}
               </div>
-              <div style={{ fontSize: 13, lineHeight: 1.5, color: '#c6cce0' }}>
-                {pop.when_to_use}
-              </div>
+              {isEditing ? (
+                <textarea
+                  rows={3}
+                  value={fWhenToUse}
+                  onChange={e => setFWhenToUse(e.target.value)}
+                  placeholder="Ex: Diariamente até às 09h30 ou ao iniciar o expediente financeiro"
+                  style={{ ...inputStyle, resize: 'vertical' }}
+                />
+              ) : (
+                <div style={{ fontSize: 13, lineHeight: 1.5, color: '#c6cce0' }}>
+                  {pop.when_to_use}
+                </div>
+              )}
             </div>
           </div>
 
@@ -539,50 +1078,80 @@ export function PopRunnerModal(props: Props) {
             <div style={{ fontSize: 10, letterSpacing: '.1em', color: '#5b6688' }}>
               PRÉ-REQUISITOS &amp; MATERIAIS
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {prereqList.map((item, idx) => (
-                <span
-                  key={idx}
-                  style={{
-                    fontSize: 12,
-                    padding: '4px 9px',
-                    borderRadius: 5,
-                    background: '#1a2138',
-                    color: '#c6cce0'
-                  }}
-                >
-                  {item}
-                </span>
-              ))}
-            </div>
+            {isEditing ? (
+              <input
+                value={fPrerequisites}
+                onChange={e => setFPrerequisites(e.target.value)}
+                placeholder="Separe por ponto e vírgula (;). Ex: Acesso ao internet banking; Sistema ERP; Extrato OFX/PDF"
+                style={inputStyle}
+              />
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {prereqList.map((item, idx) => (
+                  <span
+                    key={idx}
+                    style={{
+                      fontSize: 12,
+                      padding: '4px 9px',
+                      borderRadius: 5,
+                      background: '#1a2138',
+                      color: '#c6cce0'
+                    }}
+                  >
+                    {item}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* ETAPAS NUMERADAS */}
+          {/* CABEÇALHO DE ETAPAS NUMERADAS */}
           <div
             style={{
-              fontSize: 10,
-              letterSpacing: '.1em',
-              color: '#5b6688',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
               paddingTop: 4
             }}
           >
-            ETAPAS NUMERADAS ({totalSteps})
+            <div
+              style={{
+                fontSize: 10,
+                letterSpacing: '.1em',
+                color: '#5b6688'
+              }}
+            >
+              ETAPAS NUMERADAS ({totalSteps})
+            </div>
+
+            {isEditing && (
+              <button
+                type="button"
+                onClick={addStep}
+                style={{
+                  height: 30,
+                  padding: '0 12px',
+                  borderRadius: 7,
+                  border: '1px solid #4f6bff',
+                  background: '#1b2854',
+                  color: '#a9b8ff',
+                  font: "600 12px 'IBM Plex Sans', sans-serif",
+                  cursor: 'pointer'
+                }}
+              >
+                + Adicionar Etapa
+              </button>
+            )}
           </div>
 
           {steps.map((step, idx) => {
-            const isOk = doneStepIndices.includes(idx)
-            const stepNum = step.order || idx + 1
-            const displayTitle = step.title.startsWith('Etapa ')
+            const isOk = !isEditing && doneStepIndices.includes(idx)
+            const stepNum = idx + 1
+            const displayTitle = step.title?.startsWith('Etapa ')
               ? step.title
               : `Etapa ${stepNum}: ${step.title}`
 
-            const combinedMedia = [
-              ...(step.media || []),
-              ...(extraMedia[idx] || [])
-            ]
-              .map((m, j) => ({ ...m, j }))
-              .filter(m => !removedMedia[`${idx}-${m.j}`])
-
+            const stepMedia = step.media || []
             const isWarnTip = step.tipType === 'warn'
 
             return (
@@ -612,7 +1181,7 @@ export function PopRunnerModal(props: Props) {
                     background: isOk ? '#1d4a36' : 'transparent',
                     color: isOk ? '#5ed39a' : '#a9b8ff',
                     font: "600 12px 'IBM Plex Mono', monospace",
-                    cursor: 'pointer',
+                    cursor: isEditing ? 'default' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -630,31 +1199,133 @@ export function PopRunnerModal(props: Props) {
                     minWidth: 0
                   }}
                 >
-                  <div
-                    onClick={() => toggleStepIndex(idx)}
-                    style={{
-                      fontSize: 14.5,
-                      fontWeight: 600,
-                      lineHeight: 1.35,
-                      color: '#e6e9f2',
-                      opacity: isOk ? 0.6 : 1,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {displayTitle}
-                  </div>
+                  {isEditing ? (
+                    <>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <input
+                          value={step.title}
+                          onChange={e => updateStepField(idx, 'title', e.target.value)}
+                          placeholder={`Título da Etapa ${stepNum} (ex: Conferência de saldos bancários)`}
+                          style={{ ...inputStyle, fontWeight: 600, flex: 1 }}
+                        />
+                        <button
+                          type="button"
+                          disabled={idx === 0}
+                          onClick={() => moveStep(idx, -1)}
+                          title="Subir etapa"
+                          style={{
+                            width: 30,
+                            height: 32,
+                            borderRadius: 6,
+                            border: '1px solid #2a3454',
+                            background: '#0d1324',
+                            color: '#c6cce0',
+                            cursor: idx === 0 ? 'not-allowed' : 'pointer',
+                            opacity: idx === 0 ? 0.4 : 1
+                          }}
+                        >
+                          ▲
+                        </button>
+                        <button
+                          type="button"
+                          disabled={idx === steps.length - 1}
+                          onClick={() => moveStep(idx, 1)}
+                          title="Descer etapa"
+                          style={{
+                            width: 30,
+                            height: 32,
+                            borderRadius: 6,
+                            border: '1px solid #2a3454',
+                            background: '#0d1324',
+                            color: '#c6cce0',
+                            cursor: idx === steps.length - 1 ? 'not-allowed' : 'pointer',
+                            opacity: idx === steps.length - 1 ? 0.4 : 1
+                          }}
+                        >
+                          ▼
+                        </button>
+                        {steps.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeStep(idx)}
+                            title="Remover etapa"
+                            style={{
+                              width: 30,
+                              height: 32,
+                              borderRadius: 6,
+                              border: '1px solid #7a2e3a',
+                              background: '#2a1720',
+                              color: '#ff7a8a',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
 
-                  <div
-                    style={{
-                      fontSize: 13,
-                      lineHeight: 1.6,
-                      color: '#aab2cc'
-                    }}
-                  >
-                    {step.instruction}
-                  </div>
+                      <textarea
+                        rows={3}
+                        value={step.instruction}
+                        onChange={e => updateStepField(idx, 'instruction', e.target.value)}
+                        placeholder="Descreva passo a passo o que deve ser executado nesta etapa..."
+                        style={{ ...inputStyle, resize: 'vertical' }}
+                      />
 
-                  {/* Grade de Mídias + Botão Anexar Arquivo (linhas 98-126 de POP Tarefa.dc.html) */}
+                      {/* Dica ou Alerta da Etapa */}
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <select
+                          value={step.tipType || 'info'}
+                          onChange={e =>
+                            updateStepField(idx, 'tipType', e.target.value as 'info' | 'warn')
+                          }
+                          style={{
+                            ...inputStyle,
+                            width: 130,
+                            flexShrink: 0,
+                            color: step.tipType === 'warn' ? '#ffb48a' : '#a9b8ff'
+                          }}
+                        >
+                          <option value="info">💡 Dica</option>
+                          <option value="warn">⚠️ Atenção</option>
+                        </select>
+                        <input
+                          value={step.tip || ''}
+                          onChange={e => updateStepField(idx, 'tip', e.target.value)}
+                          placeholder="Dica prática ou alerta importante para esta etapa (opcional)..."
+                          style={{ ...inputStyle, flex: 1 }}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div
+                        onClick={() => toggleStepIndex(idx)}
+                        style={{
+                          fontSize: 14.5,
+                          fontWeight: 600,
+                          lineHeight: 1.35,
+                          color: '#e6e9f2',
+                          opacity: isOk ? 0.6 : 1,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {displayTitle}
+                      </div>
+
+                      <div
+                        style={{
+                          fontSize: 13,
+                          lineHeight: 1.6,
+                          color: '#aab2cc'
+                        }}
+                      >
+                        {step.instruction}
+                      </div>
+                    </>
+                  )}
+
+                  {/* Grade de Mídias + Botões de Anexo (Vídeos, Planilhas, PDFs, Imagens) */}
                   <div
                     style={{
                       display: 'grid',
@@ -662,7 +1333,7 @@ export function PopRunnerModal(props: Props) {
                       gap: 8
                     }}
                   >
-                    {combinedMedia.map(m => {
+                    {stepMedia.map((m, mediaIdx) => {
                       const ext = (
                         m.extension ||
                         (m.name.split('.').pop() || 'ARQ')
@@ -690,7 +1361,7 @@ export function PopRunnerModal(props: Props) {
 
                       return (
                         <div
-                          key={`${idx}-${m.j}`}
+                          key={m.id || `${idx}-${mediaIdx}`}
                           style={{
                             position: 'relative',
                             aspectRatio: '4/3',
@@ -737,8 +1408,13 @@ export function PopRunnerModal(props: Props) {
                             <a
                               href={m.url || '#'}
                               download={m.url ? m.name : undefined}
+                              target={m.url && m.url.startsWith('http') ? '_blank' : undefined}
+                              rel="noreferrer"
                               onClick={e => {
-                                if (!m.url) e.preventDefault()
+                                if (!m.url) {
+                                  e.preventDefault()
+                                  showToast(`Arquivo de referência: ${m.name}`, 'info')
+                                }
                               }}
                               style={{
                                 position: 'absolute',
@@ -820,8 +1496,8 @@ export function PopRunnerModal(props: Props) {
 
                           <button
                             type="button"
-                            onClick={() => handleRemoveMedia(idx, m.j)}
-                            title="Remover"
+                            onClick={() => handleRemoveMedia(idx, mediaIdx)}
+                            title="Remover anexo"
                             style={{
                               position: 'absolute',
                               top: 6,
@@ -842,6 +1518,7 @@ export function PopRunnerModal(props: Props) {
                       )
                     })}
 
+                    {/* Upload direto de arquivo do computador */}
                     <label
                       className="pop-dc-attach-label"
                       style={{
@@ -879,9 +1556,133 @@ export function PopRunnerModal(props: Props) {
                         style={{ display: 'none' }}
                       />
                     </label>
+
+                    {/* Botão para cadastrar vídeo / planilha / anexo nomeado */}
+                    <button
+                      type="button"
+                      className="pop-dc-attach-label"
+                      onClick={() => {
+                        setQuickMediaStepIdx(quickMediaStepIdx === idx ? null : idx)
+                        setQmKind('video')
+                        setQmName('')
+                        setQmUrl('')
+                      }}
+                      style={{
+                        aspectRatio: '4/3',
+                        borderRadius: 8,
+                        border: '1.5px dashed #2d4d5c',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 4,
+                        cursor: 'pointer',
+                        color: '#7dd3fc',
+                        background: '#101d2e',
+                        padding: 6
+                      }}
+                    >
+                      <span style={{ fontSize: 18, lineHeight: 1 }}>🎬 📊</span>
+                      <span style={{ fontSize: 11.5, fontWeight: 600, textAlign: 'center' }}>
+                        + Vídeo / Planilha
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          color: '#6c8a9c',
+                          textAlign: 'center'
+                        }}
+                      >
+                        Incluir tutorial, XLSX ou link
+                      </span>
+                    </button>
                   </div>
 
-                  {step.tip && (
+                  {/* Painel rápido inline para incluir Vídeo, Planilha XLSX, PDF ou Imagem */}
+                  {quickMediaStepIdx === idx && (
+                    <div
+                      style={{
+                        background: '#0d1324',
+                        border: '1px solid #34407a',
+                        borderRadius: 8,
+                        padding: 12,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8
+                      }}
+                    >
+                      <div style={{ fontSize: 11, fontWeight: 600, color: '#a9b8ff' }}>
+                        Incluir Vídeo, Planilha ou Documento na Etapa {stepNum}
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr 1fr', gap: 8 }} className="pop-dc-grid2">
+                        <select
+                          value={qmKind}
+                          onChange={e => setQmKind(e.target.value as 'video' | 'xlsx' | 'pdf' | 'image')}
+                          style={inputStyle}
+                        >
+                          <option value="video">🎬 Vídeo (MP4)</option>
+                          <option value="xlsx">📊 Planilha (XLSX)</option>
+                          <option value="pdf">📄 Documento (PDF)</option>
+                          <option value="image">🖼 Imagem (PNG)</option>
+                        </select>
+                        <input
+                          value={qmName}
+                          onChange={e => setQmName(e.target.value)}
+                          placeholder={
+                            qmKind === 'video'
+                              ? 'Ex: video-tutorial-erp.mp4'
+                              : qmKind === 'xlsx'
+                                ? 'Ex: planilha-conciliacao.xlsx'
+                                : 'Nome do arquivo...'
+                          }
+                          style={inputStyle}
+                        />
+                        <input
+                          value={qmUrl}
+                          onChange={e => setQmUrl(e.target.value)}
+                          placeholder="URL ou link opcional (https://...)"
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                        <button
+                          type="button"
+                          onClick={() => setQuickMediaStepIdx(null)}
+                          style={{
+                            height: 28,
+                            padding: '0 10px',
+                            borderRadius: 6,
+                            border: '1px solid #2a3454',
+                            background: 'transparent',
+                            color: '#8b94b3',
+                            fontSize: 11.5,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmQuickMedia(idx)}
+                          style={{
+                            height: 28,
+                            padding: '0 12px',
+                            borderRadius: 6,
+                            border: 'none',
+                            background: '#4f6bff',
+                            color: '#fff',
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Incluir na etapa
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isEditing && step.tip && (
                     <div
                       style={{
                         fontSize: 12.5,
@@ -900,7 +1701,7 @@ export function PopRunnerModal(props: Props) {
             )
           })}
 
-          {/* CUIDADOS E ATENÇÃO & RESULTADO ESPERADO — linhas 133-142 de POP Tarefa.dc.html */}
+          {/* CUIDADOS E ATENÇÃO & RESULTADO ESPERADO */}
           <div
             className="pop-dc-grid2"
             style={{
@@ -924,9 +1725,25 @@ export function PopRunnerModal(props: Props) {
               <div style={{ fontSize: 13, fontWeight: 700, color: '#ff7a8a' }}>
                 Cuidados e Atenção
               </div>
-              <div style={{ fontSize: 13, lineHeight: 1.5, color: '#f1d6da' }}>
-                {pop.cautions}
-              </div>
+              {isEditing ? (
+                <textarea
+                  rows={3}
+                  value={fCautions}
+                  onChange={e => setFCautions(e.target.value)}
+                  placeholder="O que não pode ser esquecido? Quais erros evitar?"
+                  style={{
+                    ...inputStyle,
+                    background: '#1c0f16',
+                    borderColor: '#7a2e3a',
+                    color: '#f1d6da',
+                    resize: 'vertical'
+                  }}
+                />
+              ) : (
+                <div style={{ fontSize: 13, lineHeight: 1.5, color: '#f1d6da' }}>
+                  {pop.cautions}
+                </div>
+              )}
             </div>
 
             <div
@@ -943,14 +1760,30 @@ export function PopRunnerModal(props: Props) {
               <div style={{ fontSize: 13, fontWeight: 700, color: '#5ed39a' }}>
                 Resultado Esperado
               </div>
-              <div style={{ fontSize: 13, lineHeight: 1.5, color: '#d3efe2' }}>
-                {pop.expected_result}
-              </div>
+              {isEditing ? (
+                <textarea
+                  rows={3}
+                  value={fExpectedResult}
+                  onChange={e => setFExpectedResult(e.target.value)}
+                  placeholder="Como saber que a tarefa foi concluída com qualidade?"
+                  style={{
+                    ...inputStyle,
+                    background: '#0d1b16',
+                    borderColor: '#2a6b4d',
+                    color: '#d3efe2',
+                    resize: 'vertical'
+                  }}
+                />
+              ) : (
+                <div style={{ fontSize: 13, lineHeight: 1.5, color: '#d3efe2' }}>
+                  {pop.expected_result}
+                </div>
+              )}
             </div>
           </div>
         </div>
 
-        {/* RODAPÉ — linhas 145-149 de POP Tarefa.dc.html */}
+        {/* RODAPÉ */}
         <footer
           style={{
             padding: '16px 28px',
@@ -962,61 +1795,105 @@ export function PopRunnerModal(props: Props) {
             flexShrink: 0
           }}
         >
-          <span style={{ fontSize: 12, color: '#8b94b3', flex: 1 }}>
-            Dúvida na execução?{' '}
-            <a
-              href="#"
-              onClick={e => {
-                e.preventDefault()
-                showToast(
-                  `Contato: ${pop.contact_notes || pop.responsible || 'Raffaela Lima'}`,
-                  'info'
-                )
-              }}
-              style={{ color: '#7d93ff', textDecoration: 'none' }}
-            >
-              Falar com {responsibleFirstName}
-            </a>
-          </span>
+          {isEditing ? (
+            <>
+              <span style={{ fontSize: 12, color: '#8b94b3', flex: 1 }}>
+                Todos os vídeos, planilhas e alterações ficam salvos na versão atualizada do POP.
+              </span>
+              <button
+                type="button"
+                onClick={handleCancelEdit}
+                style={{
+                  height: 38,
+                  padding: '0 16px',
+                  borderRadius: 8,
+                  border: '1px solid #2a3454',
+                  background: 'transparent',
+                  color: '#c6cce0',
+                  font: "500 13px 'IBM Plex Sans', sans-serif",
+                  cursor: 'pointer'
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={handleSavePop}
+                style={{
+                  height: 38,
+                  padding: '0 20px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: '#22a06b',
+                  color: '#fff',
+                  font: "600 13px 'IBM Plex Sans', sans-serif",
+                  cursor: isSaving ? 'wait' : 'pointer'
+                }}
+              >
+                {isSaving ? 'Salvando...' : 'Salvar POP'}
+              </button>
+            </>
+          ) : (
+            <>
+              <span style={{ fontSize: 12, color: '#8b94b3', flex: 1 }}>
+                Dúvida na execução?{' '}
+                <a
+                  href="#"
+                  onClick={e => {
+                    e.preventDefault()
+                    showToast(
+                      `Contato: ${pop.contact_notes || pop.responsible || 'Raffaela Lima'}`,
+                      'info'
+                    )
+                  }}
+                  style={{ color: '#7d93ff', textDecoration: 'none' }}
+                >
+                  Falar com {responsibleFirstName}
+                </a>
+              </span>
 
-          <button
-            type="button"
-            onClick={() =>
-              showToast('Problema reportado à coordenação com sucesso.', 'info')
-            }
-            style={{
-              height: 38,
-              padding: '0 16px',
-              borderRadius: 8,
-              border: '1px solid #2a3454',
-              background: 'transparent',
-              color: '#c6cce0',
-              font: "500 13px 'IBM Plex Sans', sans-serif",
-              cursor: 'pointer'
-            }}
-          >
-            Reportar problema
-          </button>
+              <button
+                type="button"
+                onClick={() =>
+                  showToast('Problema reportado à coordenação com sucesso.', 'info')
+                }
+                style={{
+                  height: 38,
+                  padding: '0 16px',
+                  borderRadius: 8,
+                  border: '1px solid #2a3454',
+                  background: 'transparent',
+                  color: '#c6cce0',
+                  font: "500 13px 'IBM Plex Sans', sans-serif",
+                  cursor: 'pointer'
+                }}
+              >
+                Reportar problema
+              </button>
 
-          <button
-            type="button"
-            onClick={handleNextStep}
-            style={{
-              height: 38,
-              padding: '0 18px',
-              borderRadius: 8,
-              border: 'none',
-              background: isAllDone ? '#22a06b' : '#4f6bff',
-              color: '#fff',
-              font: "600 13px 'IBM Plex Sans', sans-serif",
-              cursor: 'pointer'
-            }}
-          >
-            {isAllDone ? 'Concluir tarefa' : 'Executar próximo passo'}
-          </button>
+              <button
+                type="button"
+                onClick={handleNextStep}
+                style={{
+                  height: 38,
+                  padding: '0 18px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: isAllDone ? '#22a06b' : '#4f6bff',
+                  color: '#fff',
+                  font: "600 13px 'IBM Plex Sans', sans-serif",
+                  cursor: 'pointer'
+                }}
+              >
+                {isAllDone ? 'Concluir tarefa' : 'Executar próximo passo'}
+              </button>
+            </>
+          )}
         </footer>
       </section>
     </div>
   )
 }
+
 

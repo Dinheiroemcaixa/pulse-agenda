@@ -1014,6 +1014,7 @@ export function TasksPage(props: Props) {
         <PopRunnerModal
           task={activePopTask}
           pops={props.pops || []}
+          currentUser={currentUser}
           isAdmin={isAdmin}
           onClose={() => setActivePopTask(null)}
           onOpenLibrary={() => {
