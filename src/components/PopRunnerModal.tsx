@@ -10,7 +10,10 @@ import {
   validatePopAttachmentFile,
   uploadPopMediaFile,
   resolvePopMediaAccess,
+  openPopMediaFile,
   downloadPopMediaFile,
+  getPopMediaFormatCategory,
+  getNormalizedMediaExtension,
   cleanupUnreferencedPopStorageFiles,
   type ResolvedPopMediaAccess
 } from '../lib/popsApi'
@@ -485,19 +488,49 @@ export function PopRunnerModal(props: Props) {
     stepTitle: string,
     forceRefresh = false
   ) => {
+    const userIdentifier =
+      currentUser?.email || currentUser?.name || 'usuario.autenticado@pulse.local'
+    const category = getPopMediaFormatCategory(media)
+
+    if (category === 'external' && !forceRefresh) {
+      const res = await openPopMediaFile(media, userIdentifier)
+      if (!res.ok) {
+        showToast(`⚠️ ${res.error || 'Não foi possível abrir o link.'}`, 'warn')
+        return
+      }
+      showToast(`↗ Link "${media.name}" aberto em nova aba.`, 'info')
+      return
+    }
+
     setActiveViewerMedia({ media, stepNum, stepTitle })
     setViewerLoading(true)
     setViewerLoadFailed(false)
     if (!forceRefresh) setViewerZoom(100)
     try {
-      const userIdentifier =
-        currentUser?.email || currentUser?.name || 'usuario.autenticado@pulse.local'
       const access = await resolvePopMediaAccess(media, userIdentifier, forceRefresh)
       setViewerAccess(access)
+      if (!access.ok) {
+        showToast(`⚠️ ${access.error || 'Não foi possível abrir o arquivo.'}`, 'warn')
+        return
+      }
+
+      if (!forceRefresh) {
+        if (category === 'pdf' && access.url) {
+          window.open(access.url, '_blank', 'noopener,noreferrer')
+          showToast(`📄 PDF "${media.name}" aberto para leitura!`, 'info')
+        } else if (category === 'excel' || category === 'word') {
+          const appName = category === 'excel' ? 'Microsoft Excel' : 'Microsoft Word'
+          await openPopMediaFile(media, userIdentifier)
+          showToast(
+            `📂 Abrindo "${media.name}" para leitura no ${appName} / aplicativo associado...`,
+            'info'
+          )
+        }
+      }
     } catch (err: any) {
       setViewerAccess({
         ok: false,
-        error: err?.message || 'Erro ao carregar visualização do anexo.'
+        error: err?.message || 'Erro ao abrir o arquivo anexado.'
       })
     } finally {
       setViewerLoading(false)
@@ -510,7 +543,7 @@ export function PopRunnerModal(props: Props) {
       currentUser?.email || currentUser?.name || 'usuario.autenticado@pulse.local'
     const res = await downloadPopMediaFile(media, userIdentifier)
     if (!res.ok) {
-      showToast(`⚠️ ${res.error || 'Não foi possível baixar o anexo.'}`, 'warn')
+      showToast(`⚠️ ${res.error || 'Não foi possível baixar o arquivo.'}`, 'warn')
       return
     }
     if (res.openedExternal) {
@@ -2016,7 +2049,7 @@ export function PopRunnerModal(props: Props) {
                   <div
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fill, minmax(175px, 1fr))',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(205px, 1fr))',
                       gap: 10
                     }}
                   >
@@ -2062,7 +2095,7 @@ export function PopRunnerModal(props: Props) {
                           key={m.id || `${idx}-${mediaIdx}`}
                           data-testid={`media-card-${idx}-${mediaIdx}`}
                           onClick={() => handleOpenMediaViewer(m, stepNum, displayTitle)}
-                          title={`Clique para visualizar ou reproduzir: ${m.name}`}
+                          title={`Clique para abrir o arquivo: ${m.name}`}
                           style={{
                             position: 'relative',
                             borderRadius: 9,
@@ -2290,7 +2323,7 @@ export function PopRunnerModal(props: Props) {
                               {m.name}
                             </div>
 
-                            {/* Barra de ações diretas: Visualizar e Baixar */}
+                            {/* Barra de ações diretas: Abrir arquivo e Baixar arquivo */}
                             <div style={{ display: 'flex', gap: 5 }}>
                               <button
                                 type="button"
@@ -2301,7 +2334,8 @@ export function PopRunnerModal(props: Props) {
                                 }}
                                 style={{
                                   flex: 1,
-                                  height: 25,
+                                  height: 26,
+                                  padding: '0 6px',
                                   borderRadius: 5,
                                   border: '1px solid #354780',
                                   background: '#182346',
@@ -2311,18 +2345,19 @@ export function PopRunnerModal(props: Props) {
                                   display: 'flex',
                                   alignItems: 'center',
                                   justifyContent: 'center',
-                                  gap: 4
+                                  gap: 4,
+                                  whiteSpace: 'nowrap'
                                 }}
                               >
-                                👁 {isVideo ? 'Assistir' : 'Visualizar'}
+                                📂 Abrir arquivo
                               </button>
                               <button
                                 type="button"
                                 data-testid={`download-media-btn-${idx}-${mediaIdx}`}
                                 onClick={e => handleDownloadMedia(m, e)}
-                                title={isExternal ? 'Abrir link externo' : `Baixar ${m.name}`}
+                                title={isExternal ? 'Abrir link externo' : `Baixar arquivo ${m.name}`}
                                 style={{
-                                  height: 25,
+                                  height: 26,
                                   padding: '0 8px',
                                   borderRadius: 5,
                                   border: '1px solid #264d3b',
@@ -2333,10 +2368,11 @@ export function PopRunnerModal(props: Props) {
                                   display: 'flex',
                                   alignItems: 'center',
                                   justifyContent: 'center',
-                                  gap: 3
+                                  gap: 3,
+                                  whiteSpace: 'nowrap'
                                 }}
                               >
-                                {isExternal ? '↗ Abrir' : '⬇ Baixar'}
+                                {isExternal ? '↗ Abrir link' : '⬇ Baixar arquivo'}
                               </button>
                             </div>
                           </div>
@@ -2834,7 +2870,7 @@ export function PopRunnerModal(props: Props) {
               color: '#e6e9f2'
             }}
           >
-            {/* Header do Visualizador */}
+            {/* Header do Modal de Arquivo Aberto */}
             <div
               style={{
                 padding: '14px 20px',
@@ -2847,27 +2883,51 @@ export function PopRunnerModal(props: Props) {
                 flexWrap: 'wrap'
               }}
             >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                <div style={{ fontSize: 11, color: '#7d93ff', fontWeight: 600 }}>
-                  {activeViewerMedia.stepTitle} • Visualizador de Anexo do POP
-                </div>
-                <div
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  data-testid="back-to-pop-btn"
+                  onClick={() => setActiveViewerMedia(null)}
                   style={{
-                    fontSize: 15,
-                    fontWeight: 700,
-                    color: '#fff',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis'
+                    height: 32,
+                    padding: '0 12px',
+                    borderRadius: 7,
+                    border: '1px solid #354780',
+                    background: '#182346',
+                    color: '#a9b8ff',
+                    font: "600 12px 'IBM Plex Sans', sans-serif",
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    flexShrink: 0
                   }}
                 >
-                  {activeViewerMedia.media.name}
+                  ← Voltar para {task ? 'a Tarefa / POP' : 'o POP'}
+                </button>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, color: '#7d93ff', fontWeight: 600 }}>
+                    Arquivo Aberto • {activeViewerMedia.stepTitle}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 15,
+                      fontWeight: 700,
+                      color: '#fff',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    }}
+                  >
+                    {activeViewerMedia.media.name}
+                  </div>
                 </div>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 {activeViewerMedia.media.type === 'image' && viewerAccess?.ok && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginRight: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginRight: 4 }}>
                     <button
                       type="button"
                       onClick={() => setViewerZoom(z => Math.max(50, z - 25))}
@@ -2917,6 +2977,33 @@ export function PopRunnerModal(props: Props) {
                   </div>
                 )}
 
+                {viewerAccess?.ok && viewerAccess?.url && (
+                  <button
+                    type="button"
+                    data-testid="viewer-open-tab-btn"
+                    onClick={() => {
+                      if (viewerAccess.url) {
+                        window.open(viewerAccess.url, '_blank', 'noopener,noreferrer')
+                      }
+                    }}
+                    style={{
+                      height: 32,
+                      padding: '0 12px',
+                      borderRadius: 7,
+                      border: '1px solid #354780',
+                      background: '#182346',
+                      color: '#a9b8ff',
+                      font: "600 12px 'IBM Plex Sans', sans-serif",
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 5
+                    }}
+                  >
+                    ↗ Abrir em nova aba
+                  </button>
+                )}
+
                 <button
                   type="button"
                   data-testid="viewer-download-btn"
@@ -2935,13 +3022,7 @@ export function PopRunnerModal(props: Props) {
                     gap: 6
                   }}
                 >
-                  {viewerAccess?.isExternalLink
-                    ? '↗ Abrir Link Externo'
-                    : activeViewerMedia.media.type === 'video'
-                      ? '⬇ Baixar Vídeo Original'
-                      : activeViewerMedia.media.type === 'image'
-                        ? '⬇ Baixar Imagem Original'
-                        : `⬇ Baixar Arquivo Original (${(activeViewerMedia.media.extension || 'ARQ').toUpperCase()})`}
+                  {viewerAccess?.isExternalLink ? '↗ Abrir link externo' : '⬇ Baixar arquivo'}
                 </button>
 
                 <button
@@ -2964,7 +3045,7 @@ export function PopRunnerModal(props: Props) {
               </div>
             </div>
 
-            {/* Corpo do Visualizador */}
+            {/* Corpo do Arquivo Aberto */}
             <div
               style={{
                 padding: 20,
@@ -2979,7 +3060,7 @@ export function PopRunnerModal(props: Props) {
             >
               {viewerLoading ? (
                 <div style={{ color: '#a9b8ff', fontSize: 13.5 }}>
-                  Carregando acesso seguro ao anexo...
+                  Abrindo arquivo com acesso seguro...
                 </div>
               ) : !viewerAccess?.ok ? (
                 <div
@@ -3215,190 +3296,426 @@ export function PopRunnerModal(props: Props) {
                     </div>
                   )}
 
-                  {/* 3. Visualizador de Documentos (PDF, Planilhas XLSX/CSV, Word DOCX, Links Externos) */}
-                  {activeViewerMedia.media.type === 'doc' && (
-                    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 14 }}>
-                      {viewerAccess.isExternalLink && viewerAccess.url ? (
+                  {/* 3. Abertura de Documentos (PDF, Planilhas XLSX/CSV, Word DOCX, OFX, TXT, Links Externos) */}
+                  {activeViewerMedia.media.type === 'doc' &&
+                    (() => {
+                      const activeCategory =
+                        viewerAccess.formatCategory ||
+                        getPopMediaFormatCategory(activeViewerMedia.media)
+                      const activeExt = getNormalizedMediaExtension(activeViewerMedia.media)
+                      const isOfficeFile = activeCategory === 'excel' || activeCategory === 'word'
+                      const officeAppName =
+                        activeCategory === 'excel' ? 'Microsoft Excel' : 'Microsoft Word'
+                      const userIdentifier =
+                        currentUser?.email ||
+                        currentUser?.name ||
+                        'usuario.autenticado@pulse.local'
+
+                      return (
                         <div
                           style={{
-                            background: '#141d36',
-                            border: '1px solid #304072',
-                            borderRadius: 10,
-                            padding: 24,
-                            textAlign: 'center',
+                            width: '100%',
                             display: 'flex',
                             flexDirection: 'column',
-                            alignItems: 'center',
-                            gap: 12
+                            gap: 14
                           }}
                         >
-                          <div style={{ fontSize: 15, fontWeight: 700, color: '#a9b8ff' }}>
-                            🔗 Link Externo Vinculado à Etapa
-                          </div>
-                          <div style={{ fontSize: 12.5, color: '#8b94b3', wordBreak: 'break-all' }}>
-                            {viewerAccess.url}
-                          </div>
-                          <a
-                            href={viewerAccess.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{
-                              padding: '9px 18px',
-                              borderRadius: 7,
-                              background: '#4f6bff',
-                              color: '#fff',
-                              textDecoration: 'none',
-                              fontWeight: 600,
-                              fontSize: 13
-                            }}
-                          >
-                            ↗ Abrir Link Externo em Nova Guia
-                          </a>
-                        </div>
-                      ) : (activeViewerMedia.media.extension || '').toUpperCase() === 'PDF' ||
-                        activeViewerMedia.media.name.toLowerCase().endsWith('.pdf') ? (
-                        <iframe
-                          data-testid="pop-viewer-pdf-iframe"
-                          src={viewerAccess.url}
-                          title={activeViewerMedia.media.name}
-                          style={{
-                            width: '100%',
-                            height: '65vh',
-                            border: 'none',
-                            borderRadius: 8,
-                            background: '#fff'
-                          }}
-                        />
-                      ) : viewerAccess.previewRows && viewerAccess.previewRows.length > 0 ? (
-                        <div
-                          style={{
-                            width: '100%',
-                            background: '#131b31',
-                            border: '1px solid #28365e',
-                            borderRadius: 10,
-                            overflow: 'hidden'
-                          }}
-                        >
-                          <div
-                            style={{
-                              padding: '10px 14px',
-                              background: '#182342',
-                              borderBottom: '1px solid #28365e',
-                              fontSize: 12,
-                              fontWeight: 600,
-                              color: '#5ed39a',
-                              display: 'flex',
-                              justifyContent: 'space-between'
-                            }}
-                          >
-                            <span>📊 Pré-visualização da Planilha ({activeViewerMedia.media.name})</span>
-                            <span>Compatível com Microsoft Excel / CSV</span>
-                          </div>
-                          <div style={{ overflowX: 'auto' }}>
-                            <table
+                          {viewerAccess.isExternalLink && viewerAccess.url ? (
+                            <div
                               style={{
-                                width: '100%',
-                                borderCollapse: 'collapse',
-                                fontSize: 12,
-                                textAlign: 'left'
+                                background: '#141d36',
+                                border: '1px solid #304072',
+                                borderRadius: 10,
+                                padding: 24,
+                                textAlign: 'center',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                gap: 12
                               }}
                             >
-                              <thead>
-                                <tr style={{ background: '#0e1529', color: '#a9b8ff' }}>
-                                  {viewerAccess.previewRows[0].map((col, cIdx) => (
-                                    <th
-                                      key={cIdx}
+                              <div style={{ fontSize: 15, fontWeight: 700, color: '#a9b8ff' }}>
+                                🔗 Link Externo Vinculado à Etapa
+                              </div>
+                              <div
+                                style={{
+                                  fontSize: 12.5,
+                                  color: '#8b94b3',
+                                  wordBreak: 'break-all'
+                                }}
+                              >
+                                {viewerAccess.url}
+                              </div>
+                              <a
+                                href={viewerAccess.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  padding: '9px 18px',
+                                  borderRadius: 7,
+                                  background: '#4f6bff',
+                                  color: '#fff',
+                                  textDecoration: 'none',
+                                  fontWeight: 600,
+                                  fontSize: 13
+                                }}
+                              >
+                                ↗ Abrir Link Externo em Nova Guia
+                              </a>
+                            </div>
+                          ) : activeCategory === 'pdf' ? (
+                            <div
+                              style={{
+                                width: '100%',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 10
+                              }}
+                            >
+                              <div
+                                style={{
+                                  padding: '10px 14px',
+                                  borderRadius: 8,
+                                  background: '#141e3c',
+                                  border: '1px solid #2d3f75',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  gap: 10,
+                                  flexWrap: 'wrap'
+                                }}
+                              >
+                                <span style={{ fontSize: 12, color: '#c6d2ff' }}>
+                                  📄 <b>PDF aberto para leitura</b> — O documento foi aberto em uma nova guia do navegador e também pode ser lido abaixo.
+                                </span>
+                                <button
+                                  type="button"
+                                  data-testid="pdf-open-new-tab-btn"
+                                  onClick={() => {
+                                    if (viewerAccess.url) {
+                                      window.open(viewerAccess.url, '_blank', 'noopener,noreferrer')
+                                    }
+                                  }}
+                                  style={{
+                                    height: 28,
+                                    padding: '0 12px',
+                                    borderRadius: 6,
+                                    border: 'none',
+                                    background: '#4f6bff',
+                                    color: '#fff',
+                                    fontSize: 11.5,
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  ↗ Abrir PDF em nova aba
+                                </button>
+                              </div>
+                              <iframe
+                                data-testid="pop-viewer-pdf-iframe"
+                                src={viewerAccess.url}
+                                title={activeViewerMedia.media.name}
+                                style={{
+                                  width: '100%',
+                                  height: '64vh',
+                                  border: 'none',
+                                  borderRadius: 8,
+                                  background: '#fff'
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <>
+                              {isOfficeFile && (
+                                <div
+                                  data-testid="office-open-banner"
+                                  style={{
+                                    background: '#13243a',
+                                    border: '1px solid #2b507a',
+                                    borderRadius: 10,
+                                    padding: '18px 20px',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: 12
+                                  }}
+                                >
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <div style={{ fontSize: 14.5, fontWeight: 700, color: '#5ed39a' }}>
+                                      ✅ Arquivo "{activeViewerMedia.media.name}" entregue para abertura no {officeAppName}
+                                    </div>
+                                    <div style={{ fontSize: 12.5, color: '#b4c2e0', lineHeight: 1.5 }}>
+                                      O arquivo original ({activeExt}) foi disponibilizado para abertura imediata no{' '}
+                                      <b>{officeAppName}</b> ou no aplicativo associado do seu sistema. Você também pode acioná-lo diretamente pelos botões abaixo:
+                                    </div>
+                                  </div>
+                                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                                    {viewerAccess.officeProtocolUrl && (
+                                      <button
+                                        type="button"
+                                        data-testid="open-office-desktop-btn"
+                                        onClick={() => {
+                                          void openPopMediaFile(
+                                            activeViewerMedia.media,
+                                            userIdentifier,
+                                            { preferOfficeProtocol: true }
+                                          )
+                                          showToast(
+                                            `🚀 Solicitando abertura direta no ${officeAppName}...`,
+                                            'info'
+                                          )
+                                        }}
+                                        style={{
+                                          height: 36,
+                                          padding: '0 16px',
+                                          borderRadius: 8,
+                                          border: 'none',
+                                          background: '#4f6bff',
+                                          color: '#fff',
+                                          fontWeight: 700,
+                                          fontSize: 12.5,
+                                          cursor: 'pointer'
+                                        }}
+                                      >
+                                        🚀 Abrir diretamente no {officeAppName} (App Desktop)
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      data-testid="reopen-office-file-btn"
+                                      onClick={() => {
+                                        void openPopMediaFile(
+                                          activeViewerMedia.media,
+                                          userIdentifier
+                                        )
+                                        showToast(
+                                          `📂 Entregando "${activeViewerMedia.media.name}" para abertura...`,
+                                          'info'
+                                        )
+                                      }}
                                       style={{
-                                        padding: '9px 12px',
-                                        borderBottom: '1px solid #263359',
-                                        whiteSpace: 'nowrap'
+                                        height: 36,
+                                        padding: '0 16px',
+                                        borderRadius: 8,
+                                        border: '1px solid #354780',
+                                        background: '#182346',
+                                        color: '#a9b8ff',
+                                        fontWeight: 600,
+                                        fontSize: 12.5,
+                                        cursor: 'pointer'
                                       }}
                                     >
-                                      {col}
-                                    </th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {viewerAccess.previewRows.slice(1).map((row, rIdx) => (
-                                  <tr
-                                    key={rIdx}
+                                      📂 Abrir arquivo novamente
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={e =>
+                                        handleDownloadMedia(activeViewerMedia.media, e)
+                                      }
+                                      style={{
+                                        height: 36,
+                                        padding: '0 16px',
+                                        borderRadius: 8,
+                                        border: 'none',
+                                        background: '#22a06b',
+                                        color: '#fff',
+                                        fontWeight: 600,
+                                        fontSize: 12.5,
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      ⬇ Baixar arquivo ({activeExt})
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {viewerAccess.previewRows && viewerAccess.previewRows.length > 0 && (
+                                <div
+                                  style={{
+                                    width: '100%',
+                                    background: '#131b31',
+                                    border: '1px solid #28365e',
+                                    borderRadius: 10,
+                                    overflow: 'hidden'
+                                  }}
+                                >
+                                  <div
                                     style={{
-                                      borderBottom: '1px solid #1d2746',
-                                      color: '#dbe1f5'
+                                      padding: '10px 14px',
+                                      background: '#182342',
+                                      borderBottom: '1px solid #28365e',
+                                      fontSize: 12,
+                                      fontWeight: 600,
+                                      color: '#5ed39a',
+                                      display: 'flex',
+                                      justifyContent: 'space-between',
+                                      flexWrap: 'wrap',
+                                      gap: 8
                                     }}
                                   >
-                                    {row.map((cell, cIdx) => (
-                                      <td key={cIdx} style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
-                                        {cell}
-                                      </td>
-                                    ))}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
+                                    <span>
+                                      {activeExt === 'OFX'
+                                        ? `🏦 Lançamentos do Extrato OFX (${activeViewerMedia.media.name})`
+                                        : `📊 Conteúdo Estruturado da Planilha / CSV (${activeViewerMedia.media.name})`}
+                                    </span>
+                                    <span>
+                                      {activeExt === 'OFX'
+                                        ? 'Extrato Financeiro OFX'
+                                        : 'Compatível com Microsoft Excel / CSV'}
+                                    </span>
+                                  </div>
+                                  <div style={{ overflowX: 'auto' }}>
+                                    <table
+                                      style={{
+                                        width: '100%',
+                                        borderCollapse: 'collapse',
+                                        fontSize: 12,
+                                        textAlign: 'left'
+                                      }}
+                                    >
+                                      <thead>
+                                        <tr style={{ background: '#0e1529', color: '#a9b8ff' }}>
+                                          {viewerAccess.previewRows[0].map((col, cIdx) => (
+                                            <th
+                                              key={cIdx}
+                                              style={{
+                                                padding: '9px 12px',
+                                                borderBottom: '1px solid #263359',
+                                                whiteSpace: 'nowrap'
+                                              }}
+                                            >
+                                              {col}
+                                            </th>
+                                          ))}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {viewerAccess.previewRows.slice(1).map((row, rIdx) => (
+                                          <tr
+                                            key={rIdx}
+                                            style={{
+                                              borderBottom: '1px solid #1d2746',
+                                              color: '#dbe1f5'
+                                            }}
+                                          >
+                                            {row.map((cell, cIdx) => (
+                                              <td
+                                                key={cIdx}
+                                                style={{
+                                                  padding: '8px 12px',
+                                                  whiteSpace: 'nowrap'
+                                                }}
+                                              >
+                                                {cell}
+                                              </td>
+                                            ))}
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              )}
+
+                              {viewerAccess.previewText &&
+                                (!viewerAccess.previewRows || activeExt === 'OFX' || activeExt === 'TXT') && (
+                                  <pre
+                                    style={{
+                                      width: '100%',
+                                      margin: 0,
+                                      padding: 16,
+                                      background: '#0d1324',
+                                      border: '1px solid #28365e',
+                                      borderRadius: 8,
+                                      color: '#dbe1f5',
+                                      font: "12.5px/1.6 'IBM Plex Mono', monospace",
+                                      whiteSpace: 'pre-wrap',
+                                      maxHeight: '55vh',
+                                      overflowY: 'auto'
+                                    }}
+                                  >
+                                    {viewerAccess.previewText}
+                                  </pre>
+                                )}
+
+                              {!isOfficeFile &&
+                                (!viewerAccess.previewRows ||
+                                  viewerAccess.previewRows.length === 0) &&
+                                !viewerAccess.previewText && (
+                                  <div
+                                    style={{
+                                      background: '#141d36',
+                                      border: '1px solid #304072',
+                                      borderRadius: 10,
+                                      padding: 24,
+                                      textAlign: 'center',
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      alignItems: 'center',
+                                      gap: 12
+                                    }}
+                                  >
+                                    <div style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>
+                                      📄 {activeViewerMedia.media.name}
+                                    </div>
+                                    <div style={{ fontSize: 12.5, color: '#9aa4c7' }}>
+                                      Formato: {activeExt} • Tamanho:{' '}
+                                      {activeViewerMedia.media.size ||
+                                        'Armazenado no Supabase Storage (pop-media)'}
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                                      {viewerAccess.url && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            window.open(
+                                              viewerAccess.url,
+                                              '_blank',
+                                              'noopener,noreferrer'
+                                            )
+                                          }
+                                          style={{
+                                            height: 38,
+                                            padding: '0 20px',
+                                            borderRadius: 8,
+                                            border: 'none',
+                                            background: '#4f6bff',
+                                            color: '#fff',
+                                            fontWeight: 700,
+                                            fontSize: 13,
+                                            cursor: 'pointer'
+                                          }}
+                                        >
+                                          📂 Abrir em nova aba
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={e =>
+                                          handleDownloadMedia(activeViewerMedia.media, e)
+                                        }
+                                        style={{
+                                          height: 38,
+                                          padding: '0 20px',
+                                          borderRadius: 8,
+                                          border: 'none',
+                                          background: '#22a06b',
+                                          color: '#fff',
+                                          fontWeight: 700,
+                                          fontSize: 13,
+                                          cursor: 'pointer'
+                                        }}
+                                      >
+                                        ⬇ Baixar arquivo ({activeExt})
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                            </>
+                          )}
                         </div>
-                      ) : viewerAccess.previewText ? (
-                        <pre
-                          style={{
-                            width: '100%',
-                            margin: 0,
-                            padding: 16,
-                            background: '#0d1324',
-                            border: '1px solid #28365e',
-                            borderRadius: 8,
-                            color: '#dbe1f5',
-                            font: "12.5px/1.6 'IBM Plex Mono', monospace",
-                            whiteSpace: 'pre-wrap',
-                            maxHeight: '60vh',
-                            overflowY: 'auto'
-                          }}
-                        >
-                          {viewerAccess.previewText}
-                        </pre>
-                      ) : (
-                        <div
-                          style={{
-                            background: '#141d36',
-                            border: '1px solid #304072',
-                            borderRadius: 10,
-                            padding: 24,
-                            textAlign: 'center',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            gap: 12
-                          }}
-                        >
-                          <div style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>
-                            📄 {activeViewerMedia.media.name}
-                          </div>
-                          <div style={{ fontSize: 12.5, color: '#9aa4c7' }}>
-                            Formato: {(activeViewerMedia.media.extension || 'DOC').toUpperCase()} • Tamanho:{' '}
-                            {activeViewerMedia.media.size || 'Armazenado no Supabase Storage (pop-media)'}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={e => handleDownloadMedia(activeViewerMedia.media, e)}
-                            style={{
-                              height: 38,
-                              padding: '0 20px',
-                              borderRadius: 8,
-                              border: 'none',
-                              background: '#22a06b',
-                              color: '#fff',
-                              fontWeight: 700,
-                              fontSize: 13,
-                              cursor: 'pointer'
-                            }}
-                          >
-                            ⬇ Baixar Arquivo Original ({(activeViewerMedia.media.extension || 'ARQ').toUpperCase()})
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                      )
+                    })()}
                 </>
               )}
             </div>

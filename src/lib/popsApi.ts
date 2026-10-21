@@ -215,8 +215,150 @@ export async function uploadPopMediaFile(
   }
 }
 
-// Cache em memória de URLs assinadas (TTL de 45 min para URLs assinadas de 3600s)
-const signedUrlCache = new Map<string, { url: string; expiresAt: number }>()
+export type PopMediaFormatCategory =
+  | 'pdf'
+  | 'excel'
+  | 'word'
+  | 'structured_text'
+  | 'video'
+  | 'image'
+  | 'external'
+  | 'other'
+
+export function getNormalizedMediaExtension(media: PopStepMedia): string {
+  const rawExt = (
+    media.extension ||
+    (media.name && media.name.includes('.') ? media.name.split('.').pop() || '' : '')
+  )
+    .trim()
+    .replace(/^\.+/, '')
+    .toUpperCase()
+  if (rawExt) return rawExt
+  const mime = (media.mime_type || '').toLowerCase()
+  if (mime.includes('pdf')) return 'PDF'
+  if (mime.includes('spreadsheetml') || mime.includes('ms-excel')) return 'XLSX'
+  if (mime.includes('wordprocessingml') || mime.includes('msword')) return 'DOCX'
+  if (mime.includes('csv')) return 'CSV'
+  if (mime.includes('ofx')) return 'OFX'
+  if (mime.startsWith('text/')) return 'TXT'
+  if (media.type === 'video') return 'MP4'
+  if (media.type === 'image') return 'PNG'
+  return 'ARQ'
+}
+
+export function getPopMediaFormatCategory(media: PopStepMedia): PopMediaFormatCategory {
+  const rawExternal = (media.external_url || media.url || '').trim()
+  if (
+    !media.storage_path &&
+    (rawExternal.startsWith('http://') || rawExternal.startsWith('https://')) &&
+    !rawExternal.includes('/storage/v1/object/')
+  ) {
+    return 'external'
+  }
+
+  const ext = getNormalizedMediaExtension(media)
+  const mime = (media.mime_type || '').toLowerCase()
+
+  if (ext === 'PDF' || mime === 'application/pdf') return 'pdf'
+  if (
+    ext === 'XLSX' ||
+    ext === 'XLS' ||
+    mime.includes('spreadsheetml') ||
+    mime.includes('ms-excel')
+  ) {
+    return 'excel'
+  }
+  if (
+    ext === 'DOCX' ||
+    ext === 'DOC' ||
+    mime.includes('wordprocessingml') ||
+    mime.includes('msword')
+  ) {
+    return 'word'
+  }
+  if (ext === 'CSV' || ext === 'TXT' || ext === 'OFX') {
+    return 'structured_text'
+  }
+  if (
+    media.type === 'video' ||
+    ['MP4', 'WEBM', 'MOV', 'AVI', 'OGG', 'MKV'].includes(ext) ||
+    mime.startsWith('video/')
+  ) {
+    return 'video'
+  }
+  if (
+    media.type === 'image' ||
+    ['PNG', 'JPG', 'JPEG', 'WEBP', 'GIF', 'SVG'].includes(ext) ||
+    mime.startsWith('image/')
+  ) {
+    return 'image'
+  }
+  return 'other'
+}
+
+function parseCsvPreview(text: string): string[][] {
+  const clean = text.replace(/^\uFEFF/, '')
+  const lines = clean
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(l => l.length > 0)
+    .slice(0, 100)
+  if (lines.length === 0) return []
+  const delimiter = lines[0].includes(';') ? ';' : ','
+  return lines.map(line =>
+    line
+      .split(delimiter)
+      .map(cell => cell.trim().replace(/^"(.*)"$/, '$1').replace(/""/g, '"'))
+  )
+}
+
+function parseOfxPreview(text: string): string[][] | undefined {
+  const trnMatches = text.match(/<STMTTRN>[\s\S]*?(?:<\/STMTTRN>|(?=<STMTTRN>|<\/BANKTRANLIST>|$))/gi)
+  if (!trnMatches || trnMatches.length === 0) return undefined
+
+  const extractTag = (block: string, tag: string): string => {
+    const regex = new RegExp(`<${tag}>([^<\\r\\n]+)`, 'i')
+    const m = block.match(regex)
+    return m && m[1] ? m[1].trim() : ''
+  }
+
+  const formatOfxDate = (raw: string): string => {
+    const digits = raw.replace(/\D/g, '')
+    if (digits.length >= 8) {
+      return `${digits.slice(6, 8)}/${digits.slice(4, 6)}/${digits.slice(0, 4)}`
+    }
+    return raw || '-'
+  }
+
+  const rows: string[][] = [
+    ['Data', 'Tipo', 'Identificador (FITID)', 'Valor (R$)', 'Histórico / Memo']
+  ]
+
+  for (const block of trnMatches.slice(0, 80)) {
+    const dt = formatOfxDate(extractTag(block, 'DTPOSTED'))
+    const trnType = extractTag(block, 'TRNTYPE') || 'LANÇAMENTO'
+    const fitId = extractTag(block, 'FITID') || '-'
+    const trnAmt = extractTag(block, 'TRNAMT') || '0.00'
+    const memo = extractTag(block, 'MEMO') || extractTag(block, 'NAME') || '-'
+    rows.push([dt, trnType, fitId, trnAmt, memo])
+  }
+
+  return rows.length > 1 ? rows : undefined
+}
+
+// Cache em memória de URLs assinadas e acessos resolvidos (TTL de 45 min para URLs assinadas de 3600s)
+const signedUrlCache = new Map<
+  string,
+  {
+    url: string
+    signedUrl?: string
+    officeProtocolUrl?: string
+    previewRows?: string[][]
+    previewText?: string
+    mimeType?: string
+    expiresAt: number
+  }
+>()
 const referenceBlobCache = new Map<
   string,
   {
@@ -232,6 +374,9 @@ export interface ResolvedPopMediaAccess {
   ok: boolean
   error?: string
   url?: string
+  signedUrl?: string
+  officeProtocolUrl?: string
+  formatCategory?: PopMediaFormatCategory
   source?: 'storage' | 'external' | 'data' | 'reference'
   isExternalLink?: boolean
   mimeType?: string
@@ -540,7 +685,67 @@ export async function buildReferenceMediaBlob(media: PopStepMedia): Promise<{
     return entry
   }
 
-  // DOCX, DOC, OFX, TXT e demais documentos
+  // OFX (Extrato bancário estruturado)
+  if (ext === 'OFX') {
+    const todayCompact = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    const ofxText = [
+      'OFXHEADER:100',
+      'DATA:OFXSGML',
+      'VERSION:102',
+      'SECURITY:NONE',
+      'ENCODING:UTF-8',
+      '<OFX>',
+      '  <BANKMSGSRSV1>',
+      '    <STMTTRNRS>',
+      '      <STMTRS>',
+      '        <CURDEF>BRL',
+      '        <BANKACCTFROM>',
+      '          <BANKID>0341',
+      '          <ACCTID>99812-4',
+      '          <ACCTTYPE>CHECKING',
+      '        </BANKACCTFROM>',
+      '        <BANKTRANLIST>',
+      '          <STMTTRN>',
+      '            <TRNTYPE>CREDIT',
+      `            <DTPOSTED>${todayCompact}100000`,
+      '            <TRNAMT>48920.50',
+      '            <FITID>20261021001',
+      '            <MEMO>RECEBIMENTO PIX CLIENTE GRUPO ALFA',
+      '          </STMTTRN>',
+      '          <STMTTRN>',
+      '            <TRNTYPE>DEBIT',
+      `            <DTPOSTED>${todayCompact}113000`,
+      '            <TRNAMT>-12450.00',
+      '            <FITID>20261021002',
+      '            <MEMO>PAGAMENTO FORNECEDOR LOTE 04',
+      '          </STMTTRN>',
+      '          <STMTTRN>',
+      '            <TRNTYPE>DEBIT',
+      `            <DTPOSTED>${todayCompact}141500`,
+      '            <TRNAMT>-38.90',
+      '            <FITID>20261021003',
+      '            <MEMO>TARIFA BANCARIA TED/PIX EMPRESAS',
+      '          </STMTTRN>',
+      '        </BANKTRANLIST>',
+      '      </STMTRS>',
+      '    </STMTTRNRS>',
+      '  </BANKMSGSRSV1>',
+      '</OFX>'
+    ].join('\r\n')
+    const blob = new Blob([ofxText], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const entry = {
+      url,
+      blob,
+      mimeType: 'application/x-ofx;charset=utf-8',
+      previewRows: parseOfxPreview(ofxText),
+      previewText: ofxText
+    }
+    referenceBlobCache.set(cacheKey, entry)
+    return entry
+  }
+
+  // DOCX, DOC, TXT e demais documentos
   const docText = [
     `DOCUMENTO OPERACIONAL DE REFERÊNCIA — PULSE AGENDA`,
     `Arquivo: ${media.name}`,
@@ -578,9 +783,12 @@ export async function resolvePopMediaAccess(
     return {
       ok: false,
       error:
-        'Acesso restrito: faça login com um usuário autorizado para visualizar ou baixar este anexo.'
+        'Acesso restrito: faça login com um usuário autorizado para abrir ou baixar este arquivo.'
     }
   }
+
+  const formatCategory = getPopMediaFormatCategory(media)
+  const extUpper = getNormalizedMediaExtension(media)
 
   // Caso 1: Arquivo armazenado no Supabase Storage (media.storage_path)
   if (media.storage_path) {
@@ -593,9 +801,14 @@ export async function resolvePopMediaAccess(
         return {
           ok: true,
           url: cached.url,
+          signedUrl: cached.signedUrl,
+          officeProtocolUrl: cached.officeProtocolUrl,
+          formatCategory,
           source: 'storage',
           isExternalLink: false,
-          mimeType: media.mime_type
+          mimeType: cached.mimeType || media.mime_type,
+          previewRows: cached.previewRows,
+          previewText: cached.previewText
         }
       }
     }
@@ -611,43 +824,89 @@ export async function resolvePopMediaAccess(
       }
     }
 
-    signedUrlCache.set(cacheKey, {
-      url: data.signedUrl,
-      expiresAt: now + 45 * 60 * 1000 // 45 minutos
-    })
-
+    let finalUrl = data.signedUrl
+    let resolvedMime = media.mime_type
+    let officeProtocolUrl: string | undefined
     let previewRows: string[][] | undefined
     let previewText: string | undefined
-    const extUpper = (media.extension || '').toUpperCase()
-    if (
-      (!media.file_size_bytes || media.file_size_bytes <= 512 * 1024) &&
-      (extUpper === 'CSV' || extUpper === 'TXT' || extUpper === 'OFX')
-    ) {
+
+    if (formatCategory === 'excel') {
+      officeProtocolUrl = `ms-excel:ofe|u|${data.signedUrl}`
+    } else if (formatCategory === 'word') {
+      officeProtocolUrl = `ms-word:ofe|u|${data.signedUrl}`
+    }
+
+    // Para PDF no Storage, gera um Blob URL com MIME application/pdf para abrir direto no leitor nativo do navegador
+    if (formatCategory === 'pdf') {
+      resolvedMime = 'application/pdf'
       try {
-        const res = await fetch(data.signedUrl)
-        if (res.ok) {
-          const text = (await res.text()).replace(/^\uFEFF/, '')
-          if (extUpper === 'CSV') {
-            previewRows = text
-              .split(/\r?\n/)
-              .filter(line => line.trim().length > 0)
-              .slice(0, 30)
-              .map(line => line.split(/[;,]/).map(cell => cell.trim()))
-          } else {
-            previewText = text.slice(0, 4000)
-          }
+        const { data: blobData, error: dlErr } = await sb.storage
+          .from(bucket)
+          .download(media.storage_path)
+        if (!dlErr && blobData) {
+          const pdfBlob = new Blob([blobData], { type: 'application/pdf' })
+          finalUrl = URL.createObjectURL(pdfBlob)
         }
       } catch {
-        // Ignora erro de pré-visualização textual opcional
+        // Fallback seguro para signedUrl caso o download direto oscile
       }
     }
 
+    // Para CSV, TXT e OFX, lê o conteúdo completo (até 5 MB) e gera visualização estruturada
+    if (
+      formatCategory === 'structured_text' &&
+      (!media.file_size_bytes || media.file_size_bytes <= 5 * 1024 * 1024)
+    ) {
+      try {
+        let rawText: string | null = null
+        const { data: blobData, error: dlErr } = await sb.storage
+          .from(bucket)
+          .download(media.storage_path)
+        if (!dlErr && blobData) {
+          rawText = await blobData.text()
+        } else {
+          const res = await fetch(data.signedUrl)
+          if (res.ok) rawText = await res.text()
+        }
+
+        if (rawText !== null) {
+          const text = rawText.replace(/^\uFEFF/, '')
+          if (extUpper === 'CSV') {
+            previewRows = parseCsvPreview(text)
+            previewText = text.slice(0, 25000)
+          } else if (extUpper === 'OFX') {
+            previewRows = parseOfxPreview(text)
+            previewText = text.slice(0, 25000)
+          } else {
+            previewText = text.slice(0, 35000)
+          }
+          const textBlob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+          finalUrl = URL.createObjectURL(textBlob)
+        }
+      } catch {
+        // Mantém signedUrl caso ocorra erro na extração textual
+      }
+    }
+
+    signedUrlCache.set(cacheKey, {
+      url: finalUrl,
+      signedUrl: data.signedUrl,
+      officeProtocolUrl,
+      previewRows,
+      previewText,
+      mimeType: resolvedMime,
+      expiresAt: now + 45 * 60 * 1000 // 45 minutos
+    })
+
     return {
       ok: true,
-      url: data.signedUrl,
+      url: finalUrl,
+      signedUrl: data.signedUrl,
+      officeProtocolUrl,
+      formatCategory,
       source: 'storage',
       isExternalLink: false,
-      mimeType: media.mime_type,
+      mimeType: resolvedMime,
       previewRows,
       previewText
     }
@@ -660,6 +919,8 @@ export async function resolvePopMediaAccess(
     return {
       ok: true,
       url: rawExternal,
+      signedUrl: isStorageSignedUrl ? rawExternal : undefined,
+      formatCategory: isStorageSignedUrl ? formatCategory : 'external',
       source: 'external',
       isExternalLink: !isStorageSignedUrl,
       mimeType: media.mime_type
@@ -671,23 +932,42 @@ export async function resolvePopMediaAccess(
     return {
       ok: true,
       url: media.url,
+      formatCategory,
       source: 'data',
       isExternalLink: false,
       mimeType: media.mime_type
     }
   }
 
-  // Caso 4: Anexos pré-existentes dos POPs padrão (DEFAULT_POPS) sem storage_path/url ou blob legado
+  // Caso 4: Anexos de referência sem storage_path/url ou blob legado
   const refData = await buildReferenceMediaBlob(media)
   return {
     ok: true,
     url: refData.url,
+    formatCategory,
     source: 'reference',
     isExternalLink: false,
     mimeType: refData.mimeType,
     previewRows: refData.previewRows,
     previewText: refData.previewText
   }
+}
+
+function getPreferredOfficeMimeType(media: PopStepMedia): string | undefined {
+  const ext = getNormalizedMediaExtension(media)
+  if (ext === 'XLSX') {
+    return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  }
+  if (ext === 'XLS') {
+    return 'application/vnd.ms-excel'
+  }
+  if (ext === 'DOCX') {
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  }
+  if (ext === 'DOC') {
+    return 'application/msword'
+  }
+  return media.mime_type
 }
 
 function ensureDownloadFileName(media: PopStepMedia, mimeType?: string): string {
@@ -699,11 +979,15 @@ function ensureDownloadFileName(media: PopStepMedia, mimeType?: string): string 
     }
     return rawName
   }
-  const ext = (media.extension || '').toLowerCase()
+  const ext = getNormalizedMediaExtension(media).toLowerCase()
   if (ext === 'pdf') return `${rawName}.pdf`
   if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
     return media.storage_path ? `${rawName}.${ext}` : `${rawName}.csv`
   }
+  if (ext === 'docx' || ext === 'doc') {
+    return media.storage_path ? `${rawName}.${ext}` : `${rawName}.txt`
+  }
+  if (ext === 'ofx') return `${rawName}.ofx`
   if (media.type === 'video') {
     return mimeType?.includes('mp4') ? `${rawName}.mp4` : `${rawName}.webm`
   }
@@ -725,6 +1009,72 @@ function triggerBrowserBlobDownload(blob: Blob, fileName: string): void {
   setTimeout(() => URL.revokeObjectURL(blobUrl), 5000)
 }
 
+export async function openPopMediaFile(
+  media: PopStepMedia,
+  currentUserEmail?: string | null,
+  options?: { preferOfficeProtocol?: boolean }
+): Promise<{
+  ok: boolean
+  error?: string
+  mode?: 'external_tab' | 'pdf_tab' | 'native_app' | 'modal_viewer'
+  resolved?: ResolvedPopMediaAccess
+}> {
+  const resolved = await resolvePopMediaAccess(media, currentUserEmail)
+  if (!resolved.ok) {
+    return { ok: false, error: resolved.error, resolved }
+  }
+
+  const category = resolved.formatCategory || getPopMediaFormatCategory(media)
+
+  if (resolved.isExternalLink || category === 'external') {
+    if (resolved.url) {
+      window.open(resolved.url, '_blank', 'noopener,noreferrer')
+    }
+    return { ok: true, mode: 'external_tab', resolved }
+  }
+
+  if (category === 'pdf') {
+    if (resolved.url) {
+      window.open(resolved.url, '_blank', 'noopener,noreferrer')
+    }
+    return { ok: true, mode: 'pdf_tab', resolved }
+  }
+
+  if (category === 'excel' || category === 'word') {
+    if (options?.preferOfficeProtocol && resolved.officeProtocolUrl) {
+      const protocolLink = document.createElement('a')
+      protocolLink.href = resolved.officeProtocolUrl
+      protocolLink.style.display = 'none'
+      document.body.appendChild(protocolLink)
+      protocolLink.click()
+      document.body.removeChild(protocolLink)
+      return { ok: true, mode: 'native_app', resolved }
+    }
+
+    if (media.storage_path) {
+      const bucket = media.storage_bucket || POP_STORAGE_BUCKET
+      const { data, error } = await sb.storage.from(bucket).download(media.storage_path)
+      if (error || !data) {
+        return {
+          ok: false,
+          error: `Falha ao abrir "${media.name}" a partir do Supabase Storage: ${error?.message || 'Arquivo não encontrado'}`,
+          resolved
+        }
+      }
+      const targetMime = getPreferredOfficeMimeType(media) || data.type || 'application/octet-stream'
+      const finalBlob = data.type !== targetMime ? new Blob([data], { type: targetMime }) : data
+      triggerBrowserBlobDownload(finalBlob, ensureDownloadFileName(media, targetMime))
+      return { ok: true, mode: 'native_app', resolved }
+    }
+
+    const refData = await buildReferenceMediaBlob(media)
+    triggerBrowserBlobDownload(refData.blob, ensureDownloadFileName(media, refData.mimeType))
+    return { ok: true, mode: 'native_app', resolved }
+  }
+
+  return { ok: true, mode: 'modal_viewer', resolved }
+}
+
 export async function downloadPopMediaFile(
   media: PopStepMedia,
   currentUserEmail?: string | null
@@ -733,7 +1083,7 @@ export async function downloadPopMediaFile(
     return {
       ok: false,
       error:
-        'Acesso restrito: faça login com um usuário autorizado para baixar este anexo.'
+        'Acesso restrito: faça login com um usuário autorizado para baixar este arquivo.'
     }
   }
 
@@ -747,13 +1097,14 @@ export async function downloadPopMediaFile(
         error: `Falha ao baixar "${media.name}" do Supabase Storage: ${error?.message || 'Arquivo não encontrado'}`
       }
     }
+    const targetMime = getPreferredOfficeMimeType(media) || media.mime_type || data.type
     const finalBlob =
-      media.mime_type && data.type !== media.mime_type
-        ? new Blob([data], { type: media.mime_type })
+      targetMime && data.type !== targetMime
+        ? new Blob([data], { type: targetMime })
         : data
     triggerBrowserBlobDownload(
       finalBlob,
-      ensureDownloadFileName(media, media.mime_type || data.type)
+      ensureDownloadFileName(media, targetMime)
     )
     return { ok: true }
   }
@@ -766,7 +1117,7 @@ export async function downloadPopMediaFile(
       triggerBrowserBlobDownload(blob, ensureDownloadFileName(media, blob.type))
       return { ok: true }
     } catch {
-      return { ok: false, error: `Não foi possível converter o anexo "${media.name}" para download.` }
+      return { ok: false, error: `Não foi possível converter o arquivo "${media.name}" para download.` }
     }
   }
 
