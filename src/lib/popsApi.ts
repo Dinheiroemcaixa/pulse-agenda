@@ -1307,26 +1307,41 @@ function hydrateBuiltInPops(list: Pop[]): Pop[] {
 }
 
 // Carrega POPs do cache local (sem injetar DEFAULT_POPS)
+let memoryPopsCache: Pop[] | null = null
+let memoryTaskPopLinksCache: Record<string, string> | null = null
+let legacyCacheCleaned = false
+let inFlightFetchPops: Promise<Pop[]> | null = null
+let lastFetchPopsTime = 0
+const FETCH_POPS_TTL_MS = 5000
+
 export function getLocalPops(): Pop[] {
+  if (memoryPopsCache !== null) {
+    return memoryPopsCache
+  }
   try {
-    // Limpa caches legados desatualizados que continham DEFAULT_POPS ou vínculos implícitos
-    localStorage.removeItem('pulse_pops_cache_v1')
-    localStorage.removeItem('pulse_pops_cache_v2')
-    localStorage.removeItem('pulse_pops_cache_v3')
-    localStorage.removeItem('pulse_pops_cache_v4')
-    localStorage.removeItem('pulse_task_pop_links_v1')
+    if (!legacyCacheCleaned) {
+      localStorage.removeItem('pulse_pops_cache_v1')
+      localStorage.removeItem('pulse_pops_cache_v2')
+      localStorage.removeItem('pulse_pops_cache_v3')
+      localStorage.removeItem('pulse_pops_cache_v4')
+      localStorage.removeItem('pulse_task_pop_links_v1')
+      legacyCacheCleaned = true
+    }
     const raw = localStorage.getItem(POPS_LOCAL_STORAGE_KEY)
     if (!raw) {
+      memoryPopsCache = []
       return []
     }
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed) || parsed.length === 0) {
+      memoryPopsCache = []
       return []
     }
     const hydrated = hydrateBuiltInPops(parsed)
-    localStorage.setItem(POPS_LOCAL_STORAGE_KEY, JSON.stringify(hydrated))
+    memoryPopsCache = hydrated
     return hydrated
   } catch {
+    memoryPopsCache = []
     return []
   }
 }
@@ -1337,6 +1352,7 @@ function setLocalPops(pops: Pop[]): void {
     ...p,
     steps: sanitizePopStepsForPersistence(p.steps || [])
   }))
+  memoryPopsCache = sanitized
   try {
     localStorage.setItem(POPS_LOCAL_STORAGE_KEY, JSON.stringify(sanitized))
   } catch (e) {
@@ -1364,23 +1380,33 @@ function setLocalPops(pops: Pop[]): void {
 
 // Mapa de vínculos Tarefa <-> POP (fallback quando a coluna ainda não existe no Supabase)
 export function getLocalTaskPopLinks(): Record<string, string> {
+  if (memoryTaskPopLinksCache !== null) {
+    return memoryTaskPopLinksCache
+  }
   try {
-    localStorage.removeItem('pulse_task_pop_links_v1')
+    if (!legacyCacheCleaned) {
+      localStorage.removeItem('pulse_task_pop_links_v1')
+    }
     const raw = localStorage.getItem(TASK_POP_LINKS_KEY)
-    return raw ? JSON.parse(raw) : {}
+    const parsed = raw ? JSON.parse(raw) : {}
+    const resolved: Record<string, string> = parsed && typeof parsed === 'object' ? parsed : {}
+    memoryTaskPopLinksCache = resolved
+    return resolved
   } catch {
+    memoryTaskPopLinksCache = {}
     return {}
   }
 }
 
 export function setLocalTaskPopLink(taskId: string, popId: string | null): void {
   try {
-    const links = getLocalTaskPopLinks()
+    const links = { ...getLocalTaskPopLinks() }
     if (!popId || !popId.trim()) {
       delete links[taskId]
     } else {
       links[taskId] = popId.trim()
     }
+    memoryTaskPopLinksCache = links
     localStorage.setItem(TASK_POP_LINKS_KEY, JSON.stringify(links))
   } catch (e) {
     console.error('Erro ao salvar vínculo de POP:', e)
@@ -1391,34 +1417,79 @@ export function setLocalTaskPopLink(taskId: string, popId: string | null): void 
 // API DE POPS COM GRACEFUL DEGRADATION E SINCRONIZAÇÃO SUPABASE
 // ──────────────────────────────────────────────────────────────
 
-export async function fetchPopsApi(): Promise<Pop[]> {
-  try {
-    const { data, error } = await sb
-      .from('pops')
-      .select('*')
-      .order('created_at', { ascending: false })
-    if (error) {
-      return getLocalPops()
-    }
-    if (!data || data.length === 0) {
-      setLocalPops([])
-      return []
-    }
-    const remoteFormatted = data.map((p: any) => {
-      const parsedSteps =
-        typeof p.steps === 'string' ? JSON.parse(p.steps) : Array.isArray(p.steps) ? p.steps : []
-      return {
-        ...p,
-        estimated_time: p.estimated_time || '30 min',
-        steps: parsedSteps
-      }
-    }) as Pop[]
-    const formatted = hydrateBuiltInPops(remoteFormatted)
-    setLocalPops(formatted)
-    return formatted
-  } catch {
-    return getLocalPops()
+export async function fetchPopsApi(force = false): Promise<Pop[]> {
+  if (!force && memoryPopsCache !== null && Date.now() - lastFetchPopsTime < FETCH_POPS_TTL_MS) {
+    return memoryPopsCache
   }
+  if (!force && inFlightFetchPops) {
+    return inFlightFetchPops
+  }
+
+  const runFetch = async (): Promise<Pop[]> => {
+    try {
+      const { data, error } = await sb
+        .from('pops')
+        .select('*')
+        .order('created_at', { ascending: false })
+      if (error) {
+        return getLocalPops()
+      }
+      if (!data || data.length === 0) {
+        const localExisting = getLocalPops()
+        if (localExisting.length > 0) {
+          void Promise.all(
+            localExisting.map(lp =>
+              sb.from('pops').upsert(
+                {
+                  id: lp.id,
+                  title: lp.title,
+                  objective: lp.objective,
+                  when_to_use: lp.when_to_use,
+                  prerequisites: lp.prerequisites,
+                  steps: sanitizePopStepsForPersistence(lp.steps || []),
+                  cautions: lp.cautions,
+                  expected_result: lp.expected_result,
+                  contact_notes: lp.contact_notes || '',
+                  responsible: lp.responsible || '',
+                  estimated_time: lp.estimated_time || '30 min',
+                  active: lp.active,
+                  version: lp.version,
+                  created_at: lp.created_at,
+                  updated_at: lp.updated_at
+                },
+                { onConflict: 'id' }
+              )
+            )
+          ).catch(() => {})
+          lastFetchPopsTime = Date.now()
+          return localExisting
+        }
+        setLocalPops([])
+        lastFetchPopsTime = Date.now()
+        return []
+      }
+      const remoteFormatted = data.map((p: any) => {
+        const parsedSteps =
+          typeof p.steps === 'string' ? JSON.parse(p.steps) : Array.isArray(p.steps) ? p.steps : []
+        return {
+          ...p,
+          estimated_time: p.estimated_time || '30 min',
+          steps: parsedSteps
+        }
+      }) as Pop[]
+      const formatted = hydrateBuiltInPops(remoteFormatted)
+      setLocalPops(formatted)
+      lastFetchPopsTime = Date.now()
+      return formatted
+    } catch {
+      return getLocalPops()
+    } finally {
+      inFlightFetchPops = null
+    }
+  }
+
+  inFlightFetchPops = runFetch()
+  return inFlightFetchPops
 }
 
 export async function savePopApi(popData: Partial<Pop>, editId?: string): Promise<Pop> {
@@ -1498,6 +1569,7 @@ export async function savePopApi(popData: Partial<Pop>, editId?: string): Promis
     ? localList.map(p => (p.id === targetMatchId ? finalPop : p))
     : [finalPop, ...localList]
   setLocalPops(updatedList)
+  lastFetchPopsTime = Date.now()
 
   return finalPop
 }
@@ -1515,6 +1587,7 @@ export async function togglePopActiveApi(id: string, currentActive: boolean): Pr
 
   const updated = localList.map(p => p.id === id ? { ...p, active: nextActive, updated_at: now } : p)
   setLocalPops(updated)
+  lastFetchPopsTime = Date.now()
   return true
 }
 
@@ -1542,6 +1615,7 @@ export async function deletePopApi(id: string): Promise<boolean> {
   }
 
   setLocalPops(remainingPops)
+  lastFetchPopsTime = Date.now()
   return true
 }
 

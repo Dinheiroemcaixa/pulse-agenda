@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import type { User, TeamMember, Task, Page, OperatorTestSession } from '../types'
 import { getInitials, getTodayStr } from '../lib/utils'
 import { canAccessModule, canViewAllTasks, isProgrammer } from '../lib/accessControlApi'
@@ -51,9 +52,22 @@ export function Sidebar({
 }: Props) {
   const today = getTodayStr()
   const me = currentUser.name
-  const todayOpen = tasks.filter(t => t.status !== 'Concluída' && t.resp === me && t.date === today).length
-  const myAtrasadas = atrasadas.filter(a => a.resp === me).length
-  const doneToday = hist.filter(h => h.resp === me && h.completed_at === today.split('-').reverse().join('/')).length
+  const { todayOpen, myAtrasadas, doneToday } = useMemo(() => {
+    const todayBr = today.split('-').reverse().join('/')
+    let open = 0
+    for (const t of tasks) {
+      if (t.status !== 'Concluída' && t.resp === me && t.date === today) open++
+    }
+    let late = 0
+    for (const a of atrasadas) {
+      if (a.resp === me) late++
+    }
+    let done = 0
+    for (const h of hist) {
+      if (h.resp === me && h.completed_at === todayBr) done++
+    }
+    return { todayOpen: open, myAtrasadas: late, doneToday: done }
+  }, [tasks, atrasadas, hist, me, today])
 
   const nav = (p: Page) => {
     if (!canAccessModule(currentUser, p)) {
@@ -73,9 +87,13 @@ export function Sidebar({
   const showBackup = canAccessModule(currentUser, 'backup')
   const showSettings = isProgrammer(currentUser) && canAccessModule(currentUser, 'settings')
   const canSeeAllTeamMembers = canViewAllTasks(currentUser)
-  const visibleMembers = canSeeAllTeamMembers
-    ? team
-    : team.filter(m => m.name.trim().toLowerCase() === currentUser.name.trim().toLowerCase())
+  const visibleMembers = useMemo(
+    () =>
+      canSeeAllTeamMembers
+        ? team
+        : team.filter(m => m.name.trim().toLowerCase() === currentUser.name.trim().toLowerCase()),
+    [canSeeAllTeamMembers, team, currentUser.name]
+  )
 
   const handleMemberClick = (m: TeamMember) => {
     if (showTasks) nav('tasks')

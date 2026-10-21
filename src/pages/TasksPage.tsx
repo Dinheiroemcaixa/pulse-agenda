@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import type { Task, TeamMember, User, ViewMode, FilterMode, Pop } from '../types'
 import { isLate, dateTimeLabel, dateStatus, getInitials, getTodayStr, priorityClass, RECUR_LABELS, MONTHS_SHORT, MONTHS_LONG } from '../lib/utils'
 import { PopRunnerModal } from '../components/PopRunnerModal'
@@ -127,12 +127,20 @@ export function TasksPage(props: Props) {
   const dragSrc = useRef<string | null>(null)
   const dateInputRef = useRef<HTMLInputElement | null>(null)
 
-  const getMember = (name: string) => team.find(m => m.name === name)
+  const memberByNameMap = useMemo(() => {
+    const map = new Map<string, TeamMember>()
+    for (const m of team) {
+      map.set(m.name, m)
+    }
+    return map
+  }, [team])
+
+  const getMember = (name: string) => memberByNameMap.get(name)
 
   const todayStr = getTodayStr()
 
   // Base filtrada por escopo (minhas/equipe + membro) e busca, com visibilidade inteligente de virtuais
-  const getScopedTasks = () => {
+  const scopedTasks = useMemo(() => {
     let base = tasks.filter(t => t.status !== 'Concluída')
 
     if (!dateFilter) {
@@ -144,9 +152,11 @@ export function TasksPage(props: Props) {
     }
 
     if (!viewingAll) {
-      base = base.filter(t => (t.resp || '').trim().toLowerCase() === (currentUser.name || '').trim().toLowerCase())
+      const currentNameLower = (currentUser.name || '').trim().toLowerCase()
+      base = base.filter(t => (t.resp || '').trim().toLowerCase() === currentNameLower)
     } else if (memberFilter && memberFilter !== 'all') {
-      base = base.filter(t => (t.resp || '').trim().toLowerCase() === memberFilter.trim().toLowerCase())
+      const filterLower = memberFilter.trim().toLowerCase()
+      base = base.filter(t => (t.resp || '').trim().toLowerCase() === filterLower)
     }
 
     if (searchQ) {
@@ -155,33 +165,45 @@ export function TasksPage(props: Props) {
     }
 
     return base
-  }
+  }, [tasks, dateFilter, todayStr, viewingAll, currentUser.name, memberFilter, searchQ])
 
-  const scopedTasks = getScopedTasks()
-  const dateFilteredScopedTasks = dateFilter ? scopedTasks.filter(t => t.date === dateFilter) : scopedTasks
+  const dateFilteredScopedTasks = useMemo(
+    () => (dateFilter ? scopedTasks.filter(t => t.date === dateFilter) : scopedTasks),
+    [scopedTasks, dateFilter]
+  )
 
   // Contadores reais nas abas de status respeitando escopo, busca e data (Atrasadas ignora dateFilter)
-  const countAll = dateFilteredScopedTasks.length
-  const countOpen = dateFilteredScopedTasks.filter(t => !isLate(t) && t.status === 'Em Aberto').length
-  const countLate = scopedTasks.filter(t => isLate(t)).length
+  const { countAll, countOpen, countLate } = useMemo(() => {
+    let open = 0
+    for (const t of dateFilteredScopedTasks) {
+      if (!isLate(t) && t.status === 'Em Aberto') open++
+    }
+    let late = 0
+    for (const t of scopedTasks) {
+      if (isLate(t)) late++
+    }
+    return {
+      countAll: dateFilteredScopedTasks.length,
+      countOpen: open,
+      countLate: late,
+    }
+  }, [dateFilteredScopedTasks, scopedTasks])
 
-  const getFiltered = () => {
-    let list = [...scopedTasks]
+  const list = useMemo(() => {
+    let filtered = [...scopedTasks]
 
-    if (filterMode === 'open') list = list.filter(t => !isLate(t) && t.status === 'Em Aberto')
-    else if (filterMode === 'late') list = list.filter(t => isLate(t))
-    else if (filterMode === 'alta') list = list.filter(t => t.prio === 'Alta')
+    if (filterMode === 'open') filtered = filtered.filter(t => !isLate(t) && t.status === 'Em Aberto')
+    else if (filterMode === 'late') filtered = filtered.filter(t => isLate(t))
+    else if (filterMode === 'alta') filtered = filtered.filter(t => t.prio === 'Alta')
 
     if (dateFilter && filterMode !== 'late') {
-      list = list.filter(t => t.date === dateFilter)
+      filtered = filtered.filter(t => t.date === dateFilter)
     }
 
     // Ordenar pelo sort_order do banco
-    list.sort((a, b) => (a.sort_order ?? 9999) - (b.sort_order ?? 9999))
-    return list
-  }
-
-  const list = getFiltered()
+    filtered.sort((a, b) => (a.sort_order ?? 9999) - (b.sort_order ?? 9999))
+    return filtered
+  }, [scopedTasks, filterMode, dateFilter])
 
   const moveTaskInList = async (srcId: string, targetIndex: number) => {
     if (list.length <= 1) return
@@ -199,8 +221,8 @@ export function TasksPage(props: Props) {
     const rawSlots = affectedOriginal.map((t, i) => t.sort_order ?? (minIdx + i))
     const isStrictlyIncreasing = rawSlots.every((v, i) => i === 0 || v > rawSlots[i - 1])
 
-    // Se a tarefa movida pertencer a uma s?rie recorrente (recur_group_id),
-    // garante que a ocorr?ncia movida prevale?a ao persistir o sort_order do mestre
+    // Se a tarefa movida pertencer a uma série recorrente (recur_group_id),
+    // garante que a ocorrência movida prevaleça ao persistir o sort_order do mestre
     const dedupSeries = (arr: Task[]) =>
       movedTask.recur_group_id
         ? arr.filter(t => t.id === movedTask.id || t.recur_group_id !== movedTask.recur_group_id)

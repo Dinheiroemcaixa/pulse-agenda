@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, ChangeEvent } from 'react'
+import { useState, useEffect, useRef, useMemo, ChangeEvent } from 'react'
 import type { Task, TeamMember, Meeting, User, Backup } from '../types'
 import { getInitials, genId, getTodayStr, COLORS } from '../lib/utils'
 import { sb } from '../lib/supabase'
@@ -36,6 +36,28 @@ export function TeamPage({ tasks, hist, team, currentUser, isAdmin, setViewingAl
     else showToast('❌ Erro ao salvar', 'error')
   }
 
+  const statsByMemberName = useMemo(() => {
+    const map = new Map<string, { openCount: number; lateCount: number; doneCount: number }>()
+    for (const m of team) {
+      map.set(m.name, { openCount: 0, lateCount: 0, doneCount: 0 })
+    }
+    for (const t of tasks) {
+      if (t.status === 'Concluída') continue
+      const entry = map.get(t.resp)
+      if (entry) {
+        entry.openCount++
+        if (isLate(t)) entry.lateCount++
+      }
+    }
+    for (const h of hist) {
+      const entry = map.get(h.resp)
+      if (entry) {
+        entry.doneCount++
+      }
+    }
+    return map
+  }, [team, tasks, hist])
+
   return (
     <>
       <div className="topbar">
@@ -47,9 +69,7 @@ export function TeamPage({ tasks, hist, team, currentUser, isAdmin, setViewingAl
       <div className="content">
         <div className="team-grid">
           {team.map(m => {
-            const mt = tasks.filter(t => t.resp === m.name && t.status !== 'Concluída')
-            const late = mt.filter(t => isLate(t))
-            const done = hist.filter(h => h.resp === m.name)
+            const st = statsByMemberName.get(m.name) || { openCount: 0, lateCount: 0, doneCount: 0 }
             const isMe = m.name === currentUser.name
             return (
               <div key={m.id} className="member-card">
@@ -61,9 +81,9 @@ export function TeamPage({ tasks, hist, team, currentUser, isAdmin, setViewingAl
                   </div>
                 </div>
                 <div className="mc-stats">
-                  <div className="mcs"><div className="mcs-n" style={{ color: 'var(--accent)' }}>{mt.length}</div><div className="mcs-l">Abertas</div></div>
-                  <div className="mcs"><div className="mcs-n" style={{ color: 'var(--red)' }}>{late.length}</div><div className="mcs-l">Atraso</div></div>
-                  <div className="mcs"><div className="mcs-n" style={{ color: 'var(--green)' }}>{done.length}</div><div className="mcs-l">Feitas</div></div>
+                  <div className="mcs"><div className="mcs-n" style={{ color: 'var(--accent)' }}>{st.openCount}</div><div className="mcs-l">Abertas</div></div>
+                  <div className="mcs"><div className="mcs-n" style={{ color: 'var(--red)' }}>{st.lateCount}</div><div className="mcs-l">Atraso</div></div>
+                  <div className="mcs"><div className="mcs-n" style={{ color: 'var(--green)' }}>{st.doneCount}</div><div className="mcs-l">Feitas</div></div>
                 </div>
                 <div className="mc-actions">
                   <div className="mc-btn" onClick={() => { setViewingAll(true); setMemberFilter(m.name); setPage('tasks') }}>Ver tarefas</div>

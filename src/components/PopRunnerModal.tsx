@@ -85,7 +85,7 @@ export function PopRunnerModal(props: Props) {
   const allPops = basePops
 
   useEffect(() => {
-    if (onRefreshPops) {
+    if (onRefreshPops && allPops.length === 0) {
       void onRefreshPops()
     }
   }, [])
@@ -1006,11 +1006,6 @@ export function PopRunnerModal(props: Props) {
         color: '#e6e9f2'
       }}
     >
-      <link rel="preconnect" href="https://fonts.googleapis.com" />
-      <link
-        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
-        rel="stylesheet"
-      />
       <style>{`
         .pop-dc-modal, .pop-dc-modal * {
           box-sizing: border-box;

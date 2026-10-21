@@ -148,8 +148,9 @@ export default function App() {
   useEffect(() => {
     if (currentUser && isUserActive(currentUser)) {
       if (isTransitioningSessionRef.current) return
-      if (!appReady || loadedUserIdRef.current !== currentUser.id) {
-        loadedUserIdRef.current = currentUser.id
+      const userKey = `${currentUser.id || ''}:${(currentUser.email || '').toLowerCase()}:${currentUser.access_profile || ''}:${currentUser.access_status || ''}`
+      if (loadedUserIdRef.current !== userKey) {
+        loadedUserIdRef.current = userKey
         if (!canViewAllTasks(currentUser)) {
           setViewingAll(false)
           setMemberFilter(currentUser.name)
@@ -163,13 +164,13 @@ export default function App() {
       loadedUserIdRef.current = null
       setAppReady(false)
     }
-  }, [currentUser, appReady])
+  }, [currentUser])
 
   const handleStartOperatorSession = useCallback(async (targetEmailOrId: string) => {
     isTransitioningSessionRef.current = true
     try {
       const operatorUser = await startOperatorSession(targetEmailOrId)
-      loadedUserIdRef.current = operatorUser.id
+      loadedUserIdRef.current = `${operatorUser.id || ''}:${(operatorUser.email || '').toLowerCase()}:${operatorUser.access_profile || ''}:${operatorUser.access_status || ''}`
       if (!canViewAllTasks(operatorUser)) {
         setViewingAll(false)
         setMemberFilter(operatorUser.name)
@@ -186,7 +187,7 @@ export default function App() {
     isTransitioningSessionRef.current = true
     try {
       const restoredAdmin = await endOperatorSession()
-      loadedUserIdRef.current = restoredAdmin.id
+      loadedUserIdRef.current = `${restoredAdmin.id || ''}:${(restoredAdmin.email || '').toLowerCase()}:${restoredAdmin.access_profile || ''}:${restoredAdmin.access_status || ''}`
       await data.loadAll(restoredAdmin)
       setPageState('settings')
       showToast(`🛡️ Sessão de teste encerrada. Retornado para Desenvolvedor (${restoredAdmin.name}).`, 'info')
@@ -225,14 +226,14 @@ export default function App() {
   }
 
   const openNewTask = (date?: string) => {
-    void data.loadPops()
+    if (data.pops.length === 0) void data.loadPops()
     setEditTaskId(null)
     setTaskModalDate(date)
     setTaskModalOpen(true)
   }
 
   const openEditTask = (id: string) => {
-    void data.loadPops()
+    if (data.pops.length === 0) void data.loadPops()
     setEditTaskId(id)
     setTaskModalDate(undefined)
     setTaskModalOpen(true)
@@ -358,6 +359,8 @@ export default function App() {
   const pageProps = {
     tasks: data.expandedTasks, // expandedTasks inclui virtuais para exibição
     hist: data.hist,
+    fullHistoryLoaded: data.fullHistoryLoaded,
+    onLoadFullHistory: data.loadFullHistory,
     meets: data.meets,
     team: data.team,
     atrasadas: data.allAtrasadas,

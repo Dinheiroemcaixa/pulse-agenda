@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import type { Task, TeamMember, User } from '../types'
-import { getInitials, fDate } from '../lib/utils'
+import { getInitials } from '../lib/utils'
 
 interface Props {
   hist: Task[]
+  fullHistoryLoaded?: boolean
+  onLoadFullHistory?: () => Promise<void>
   team: TeamMember[]
   currentUser: User
   isAdmin: boolean
@@ -36,50 +38,122 @@ function groupLabel(dateStr?: string): string {
   return dateStr
 }
 
-export function HistoryPage({ hist, team, currentUser, isAdmin, onReopen, showToast }: Props) {
+export function HistoryPage({ hist, fullHistoryLoaded, onLoadFullHistory, team, currentUser, isAdmin, onReopen, showToast }: Props) {
   const [search, setSearch] = useState('')
   const [period, setPeriod] = useState(0)
   const [scope, setScope] = useState<'mine' | 'all'>('mine')
+  const [visibleCount, setVisibleCount] = useState(100)
 
-  const getMember = (name: string) => team.find(m => m.name === name)
+  useEffect(() => {
+    setVisibleCount(100)
+  }, [search, period, scope])
+
+  useEffect(() => {
+    if ((search.trim().length > 0 || scope === 'all') && !fullHistoryLoaded && onLoadFullHistory) {
+      void onLoadFullHistory()
+    }
+  }, [search, scope, fullHistoryLoaded, onLoadFullHistory])
+
+  const memberByNameMap = useMemo(() => {
+    const map = new Map<string, TeamMember>()
+    for (const m of team) {
+      map.set(m.name, m)
+    }
+    return map
+  }, [team])
+
+  const getMember = (name: string) => memberByNameMap.get(name)
   const effectiveScope = isAdmin ? scope : 'mine'
 
-  let list = [...hist]
-  if (effectiveScope === 'mine') list = list.filter(t => t.resp.trim() === currentUser.name.trim())
-  if (search) list = list.filter(t => t.descricao.toLowerCase().includes(search.toLowerCase()))
-  if (period > 0) {
-    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - period); cutoff.setHours(0, 0, 0, 0)
-    list = list.filter(t => { const d = parseBrDate(t.completed_at); return d && d >= cutoff })
-  }
+  const scopedHist = useMemo(() => {
+    if (effectiveScope === 'mine') {
+      const myName = currentUser.name.trim()
+      return hist.filter(t => t.resp.trim() === myName)
+    }
+    return hist
+  }, [hist, effectiveScope, currentUser.name])
+
+  const list = useMemo(() => {
+    let filtered = scopedHist
+    if (search) {
+      const q = search.toLowerCase()
+      filtered = filtered.filter(t => t.descricao.toLowerCase().includes(q))
+    }
+    if (period > 0) {
+      const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - period); cutoff.setHours(0, 0, 0, 0)
+      filtered = filtered.filter(t => { const d = parseBrDate(t.completed_at); return d && d >= cutoff })
+    }
+    return filtered
+  }, [scopedHist, search, period])
 
   // Stats
-  const total = list.length
-  const durs = list.map(t => daysBetween(t.date ? new Date(t.date + 'T00:00:00') : null, parseBrDate(t.completed_at))).filter(d => d !== null && d >= 0) as number[]
-  const avgDays = durs.length ? Math.round(durs.reduce((a, b) => a + b, 0) / durs.length) : 0
-  const onTime = list.filter(t => { if (!t.date || !t.completed_at) return false; const done = parseBrDate(t.completed_at); return done && done <= new Date(t.date + 'T00:00:00') }).length
-  const onTimeRate = total > 0 ? Math.round(onTime / total * 100) : 0
-  const counts: Record<string, number> = {}
-  list.forEach(t => { counts[t.resp] = (counts[t.resp] || 0) + 1 })
-  const topMember = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]
+  const { total, avgDays, onTime, onTimeRate, topMember } = useMemo(() => {
+    const tot = list.length
+    let durSum = 0
+    let durCount = 0
+    let onTimeCount = 0
+    const counts: Record<string, number> = {}
+
+    for (const t of list) {
+      counts[t.resp] = (counts[t.resp] || 0) + 1
+      const done = parseBrDate(t.completed_at)
+      const due = t.date ? new Date(t.date + 'T00:00:00') : null
+      const d = daysBetween(due, done)
+      if (d !== null && d >= 0) {
+        durSum += d
+        durCount++
+      }
+      if (due && done && done <= due) {
+        onTimeCount++
+      }
+    }
+
+    const avg = durCount > 0 ? Math.round(durSum / durCount) : 0
+    const rate = tot > 0 ? Math.round((onTimeCount / tot) * 100) : 0
+    const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]
+
+    return { total: tot, avgDays: avg, onTime: onTimeCount, onTimeRate: rate, topMember: top }
+  }, [list])
 
   // Chart — últimos 14 dias
-  const bars = Array.from({ length: 14 }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() - (13 - i)); d.setHours(0, 0, 0, 0)
-    const label = d.getDate() + '/' + (d.getMonth() + 1)
-    const day = String(d.getDate()).padStart(2, '0')
-    const month = String(d.getMonth() + 1).padStart(2, '0')
-    const year = d.getFullYear()
-    const dStr = `${day}/${month}/${year}`
-    const count = hist.filter(t => t.completed_at === dStr && (effectiveScope !== 'mine' || t.resp.trim() === currentUser.name.trim())).length
-    return { label, count }
-  })
-  const maxBar = Math.max(...bars.map(b => b.count), 1)
+  const { bars, maxBar } = useMemo(() => {
+    const countByDateStr = new Map<string, number>()
+    for (const t of scopedHist) {
+      if (t.completed_at) {
+        countByDateStr.set(t.completed_at, (countByDateStr.get(t.completed_at) || 0) + 1)
+      }
+    }
+    const chartBars = Array.from({ length: 14 }, (_, i) => {
+      const d = new Date(); d.setDate(d.getDate() - (13 - i)); d.setHours(0, 0, 0, 0)
+      const label = d.getDate() + '/' + (d.getMonth() + 1)
+      const day = String(d.getDate()).padStart(2, '0')
+      const month = String(d.getMonth() + 1).padStart(2, '0')
+      const year = d.getFullYear()
+      const dStr = `${day}/${month}/${year}`
+      const count = countByDateStr.get(dStr) || 0
+      return { label, count }
+    })
+    const max = Math.max(...chartBars.map(b => b.count), 1)
+    return { bars: chartBars, maxBar: max }
+  }, [scopedHist])
 
-  // Groups
-  const groups: Record<string, Task[]> = {}
-  list.forEach(t => { const g = groupLabel(t.completed_at); if (!groups[g]) groups[g] = []; groups[g].push(t) })
-  const ORDER = ['Hoje', 'Ontem', 'Essa semana', 'Este mês']
-  const sorted = [...ORDER.filter(g => groups[g]), ...Object.keys(groups).filter(g => !ORDER.includes(g)).sort((a, b) => b.localeCompare(a))]
+  const visibleList = useMemo(() => list.slice(0, visibleCount), [list, visibleCount])
+
+  // Groups (sobre a fatia visível para evitar montar milhares de nós DOM de uma vez)
+  const { groups, sorted } = useMemo(() => {
+    const grp: Record<string, Task[]> = {}
+    for (const t of visibleList) {
+      const g = groupLabel(t.completed_at)
+      if (!grp[g]) grp[g] = []
+      grp[g].push(t)
+    }
+    const ORDER = ['Hoje', 'Ontem', 'Essa semana', 'Este mês']
+    const srt = [
+      ...ORDER.filter(g => grp[g]),
+      ...Object.keys(grp).filter(g => !ORDER.includes(g)).sort((a, b) => b.localeCompare(a)),
+    ]
+    return { groups: grp, sorted: srt }
+  }, [visibleList])
 
   return (
     <>
@@ -132,53 +206,73 @@ export function HistoryPage({ hist, team, currentUser, isAdmin, onReopen, showTo
 
         {list.length === 0 ? (
           <div className="hist-empty"><div style={{ fontSize: 48, opacity: .3, marginBottom: 12 }}>📋</div><div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text2)' }}>Nenhuma tarefa encontrada</div></div>
-        ) : sorted.map(gname => {
-          const items = groups[gname]
-          return (
-            <div key={gname} className="hist-group">
-              <div className="hist-group-title">{gname} <span style={{ color: 'var(--accent)', fontSize: 10 }}>{items.length}</span></div>
-              {items.map(t => {
-                const m = getMember(t.resp)
-                const mc = m?.color || '#4f6ef7'
-                const dur = daysBetween(t.date ? new Date(t.date + 'T00:00:00') : null, parseBrDate(t.completed_at))
-                const durLabel = dur === null ? '' : dur === 0 ? 'No mesmo dia' : `${dur} dia${dur !== 1 ? 's' : ''}`
-                const done = parseBrDate(t.completed_at)
-                const onTimeT = t.date && done ? done <= new Date(t.date + 'T00:00:00') : null
-                return (
-                  <div key={t.id} className="hist-card">
-                    <div className="hist-card-check" title="Reabrir tarefa" onClick={async () => { await onReopen(t.id); showToast('↩ Tarefa reaberta!', 'info') }}>↩</div>
-                    <div className="hist-card-body">
-                      <div className="hist-card-title">{t.descricao}</div>
-                      <div className="hist-card-meta">
-                        <div className="asgn">
-                          <div className="avsm" style={{ background: mc, width: 18, height: 18, fontSize: 8 }}>{getInitials(t.resp)}</div>
-                          <span style={{ fontSize: 11, color: 'var(--text2)' }}>{t.resp.split(' ')[0]}</span>
-                        </div>
-                        {onTimeT === true && <span style={{ fontSize: 10, background: 'var(--greenbg)', color: 'var(--green)', borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>✓ No prazo</span>}
-                        {onTimeT === false && <span style={{ fontSize: 10, background: 'var(--redbg)', color: 'var(--red)', borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>✗ Atrasada</span>}
-                      </div>
-                      {t.notes && <div className="hist-card-notes">📝 {t.notes}</div>}
-                      {t.subtasks?.length ? (
-                        <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                          {t.subtasks.map((s, i) => (
-                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text3)' }}>
-                              <span style={{ color: s.done ? 'var(--green)' : 'var(--text3)' }}>{s.done ? '✓' : '○'}</span>
-                              <span style={{ textDecoration: s.done ? 'line-through' : 'none', opacity: s.done ? .6 : 1 }}>{s.text}</span>
+        ) : (
+          <>
+            {sorted.map(gname => {
+              const items = groups[gname]
+              return (
+                <div key={gname} className="hist-group">
+                  <div className="hist-group-title">{gname} <span style={{ color: 'var(--accent)', fontSize: 10 }}>{items.length}</span></div>
+                  {items.map(t => {
+                    const m = getMember(t.resp)
+                    const mc = m?.color || '#4f6ef7'
+                    const dur = daysBetween(t.date ? new Date(t.date + 'T00:00:00') : null, parseBrDate(t.completed_at))
+                    const durLabel = dur === null ? '' : dur === 0 ? 'No mesmo dia' : `${dur} dia${dur !== 1 ? 's' : ''}`
+                    const done = parseBrDate(t.completed_at)
+                    const onTimeT = t.date && done ? done <= new Date(t.date + 'T00:00:00') : null
+                    return (
+                      <div key={t.id} className="hist-card">
+                        <div className="hist-card-check" title="Reabrir tarefa" onClick={async () => { await onReopen(t.id); showToast('↩ Tarefa reaberta!', 'info') }}>↩</div>
+                        <div className="hist-card-body">
+                          <div className="hist-card-title">{t.descricao}</div>
+                          <div className="hist-card-meta">
+                            <div className="asgn">
+                              <div className="avsm" style={{ background: mc, width: 18, height: 18, fontSize: 8 }}>{getInitials(t.resp)}</div>
+                              <span style={{ fontSize: 11, color: 'var(--text2)' }}>{t.resp.split(' ')[0]}</span>
                             </div>
-                          ))}
+                            {onTimeT === true && <span style={{ fontSize: 10, background: 'var(--greenbg)', color: 'var(--green)', borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>✓ No prazo</span>}
+                            {onTimeT === false && <span style={{ fontSize: 10, background: 'var(--redbg)', color: 'var(--red)', borderRadius: 3, padding: '1px 6px', fontWeight: 700 }}>✗ Atrasada</span>}
+                          </div>
+                          {t.notes && <div className="hist-card-notes">📝 {t.notes}</div>}
+                          {t.subtasks?.length ? (
+                            <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                              {t.subtasks.map((s, i) => (
+                                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text3)' }}>
+                                  <span style={{ color: s.done ? 'var(--green)' : 'var(--text3)' }}>{s.done ? '✓' : '○'}</span>
+                                  <span style={{ textDecoration: s.done ? 'line-through' : 'none', opacity: s.done ? .6 : 1 }}>{s.text}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
-                      ) : null}
-                    </div>
-                    <div className="hist-card-right">
-                      <div className="hist-card-date">✅ {t.completed_at || '—'}</div>
-                      {durLabel && <div className="hist-card-duration">{durLabel}</div>}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )
-        })}
+                        <div className="hist-card-right">
+                          <div className="hist-card-date">✅ {t.completed_at || '—'}</div>
+                          {durLabel && <div className="hist-card-duration">{durLabel}</div>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })}
+            {(list.length > visibleCount || !fullHistoryLoaded) && (
+              <div style={{ display: 'flex', justifyContent: 'center', margin: '18px 0 10px' }}>
+                <button
+                  type="button"
+                  className="btn btn-g"
+                  onClick={() => {
+                    setVisibleCount(c => c + 100)
+                    if (!fullHistoryLoaded && onLoadFullHistory) {
+                      void onLoadFullHistory()
+                    }
+                  }}
+                >
+                  Mostrar mais (+100) · exibindo {Math.min(visibleCount, list.length)} de {list.length}
+                </button>
+              </div>
+            )}
+          </>
+        )}
       </div>
     </>
   )

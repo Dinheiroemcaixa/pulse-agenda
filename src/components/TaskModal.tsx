@@ -76,10 +76,8 @@ export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate,
   useEffect(() => {
     if (pops && pops.length > 0) {
       setLoadedPops(pops)
+      return
     }
-  }, [pops])
-
-  useEffect(() => {
     let active = true
     fetchPopsApi().then(fresh => {
       if (active) setLoadedPops(fresh)
@@ -87,7 +85,7 @@ export function TaskModal({ editTask, team, currentUser, pops = [], defaultDate,
     return () => {
       active = false
     }
-  }, [])
+  }, [pops])
 
   const isTransferring = Boolean(
     editTask &&

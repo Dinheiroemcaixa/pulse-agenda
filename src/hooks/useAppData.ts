@@ -825,13 +825,16 @@ export function useAppData(currentUser?: User | null) {
   const [pops, setPops] = useState<Pop[]>([])
 
   const [loading, setLoading] = useState(false)
+  const [fullHistoryLoaded, setFullHistoryLoaded] = useState(false)
   const loadGenerationRef = useRef(0)
+  const completedRecurKeysRef = useRef<Set<string>>(new Set())
+  const loadingFullHistRef = useRef(false)
 
   // Estado local para subtarefas de tarefas virtuais (não persiste no tasks state)
   // Chave: virtual task ID → array de booleans (done por índice)
   const [vsOverrides, setVsOverrides] = useState<Record<string, boolean[]>>({})
 
-  // ── EXPANDED TASKS (lógica virtual) ──────────────────────
+  // ── EXPANDED TASKS (lógica virtual O(N)) ──────────────────────
   // Gera ocorrências para séries recorrentes desde a data inicial de cada série
   // SEM criar registros antecipados no banco
   const expandedTasks = useMemo(() => {
@@ -841,26 +844,29 @@ export function useAppData(currentUser?: User | null) {
     const rangeEnd = new Date(today)
     rangeEnd.setDate(rangeEnd.getDate() + 90)
 
-    // Unificar fonte de dados: Tarefas atuais
-    const result: Task[] = [...tasks]
+    // Unificar fonte de dados: apenas tarefas ativas (não concluídas)
+    const result: Task[] = tasks.filter(t => t.status !== 'Concluída')
 
     // Lookup de datas já materializadas por série
-    // Garante que ocorrências já gravadas em tasks (físicas) OU concluídas em hist
+    // Garante que ocorrências já gravadas em tasks (físicas), concluídas em completedRecurKeysRef OU concluídas em hist
     // NUNCA sejam geradas novamente como virtuais (deduplicação absoluta).
-    const materializedKeys = new Set<string>()
+    const materializedKeys = new Set<string>(completedRecurKeysRef.current)
     tasks.forEach(t => {
       if (t.recur_group_id && t.date) {
         materializedKeys.add(`${t.recur_group_id}_${t.date}`)
       }
     })
     hist.forEach(h => {
-      if (h.recur_group_id && h.date) {
-        materializedKeys.add(`${h.recur_group_id}_${h.date}`)
+      if (h.recur_group_id) {
+        const hDate = (h as any).completed_for_date || h.date
+        if (hDate) {
+          materializedKeys.add(`${h.recur_group_id}_${String(hDate).substring(0, 10)}`)
+        }
       }
     })
 
-    // Agrupa mestres por série — pega o mais RECENTE não concluído
-    const recurrenceMasters = tasks.filter(t =>
+    // Agrupa mestres por série — pega o mais ANTIGO não concluído para servir de âncora
+    const recurrenceMasters = result.filter(t =>
       t.recur && t.recur !== 'none' &&
       t.recur_group_id &&
       t.status !== 'Concluída'
@@ -869,15 +875,12 @@ export function useAppData(currentUser?: User | null) {
     const groups: Record<string, Task> = {}
     recurrenceMasters.forEach(t => {
       const gid = t.recur_group_id!
-      if (!groups[gid]) {
+      if (!groups[gid] || t.date < groups[gid].date) {
         groups[gid] = t
-      } else {
-        // MESTRE = O mais ANTIGO não concluído para servir de âncora para o gerador
-        if (t.date < groups[gid].date) {
-          groups[gid] = t
-        }
       }
     })
+
+    const dayNames = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab']
 
     // Para cada série, gera ocorrências virtuais desde a data de início da série até rangeEnd
     Object.values(groups).forEach(master => {
@@ -886,6 +889,10 @@ export function useAppData(currentUser?: User | null) {
       if (isNaN(masterDate.getTime())) {
         masterDate = new Date(today)
       }
+
+      const origDay = masterDate.getDay()
+      const origDate = masterDate.getDate()
+      const recurDays = Array.isArray(master.recur_days) ? master.recur_days : []
 
       // Itera dia a dia a partir da data de início da série (sem descartar pendências passadas)
       const current = new Date(masterDate)
@@ -899,9 +906,8 @@ export function useAppData(currentUser?: User | null) {
         const dateStr = `${y}-${mo}-${dy}`
         const key = `${master.recur_group_id}_${dateStr}`
 
-        // Só gera virtual se não existe registro real para esta data/série (nem em tasks nem em hist)
+        // Só gera virtual se não existe registro real para esta data/série
         if (!materializedKeys.has(key)) {
-          const recurDays = Array.isArray(master.recur_days) ? master.recur_days : []
           const dayOfWeek = current.getDay()
           let matches = false
 
@@ -910,13 +916,10 @@ export function useAppData(currentUser?: User | null) {
           } else if (master.recur === 'weekdays') {
             matches = dayOfWeek >= 1 && dayOfWeek <= 5
           } else if (master.recur === 'weekly') {
-            const orig = new Date(recurStart + 'T00:00:00')
-            matches = orig.getDay() === dayOfWeek
+            matches = origDay === dayOfWeek
           } else if (master.recur === 'monthly') {
-            const orig = new Date(recurStart + 'T00:00:00')
-            matches = orig.getDate() === current.getDate()
+            matches = origDate === current.getDate()
           } else if (master.recur === 'custom' && recurDays.length > 0) {
-            const dayNames = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab']
             matches = recurDays.includes(dayNames[dayOfWeek])
           }
 
@@ -928,7 +931,6 @@ export function useAppData(currentUser?: User | null) {
               id: virtualId,
               date: dateStr,
               status: 'Em Aberto',
-              // Usa override local se existir, senão inicia do zero (done: false)
               subtasks: (master.subtasks || []).map((s, i) => ({
                 ...s,
                 done: override ? (override[i] ?? false) : false,
@@ -945,25 +947,24 @@ export function useAppData(currentUser?: User | null) {
       }
     })
 
-    // Desduplicação final: Real > Virtual para mesmo grupo+data
+    // Desduplicação final O(N): Real > Virtual para mesmo grupo+data
     const finalResult: Task[] = []
-    const seenKeys = new Map<string, Task>()
+    const seenIndexByKey = new Map<string, number>()
 
     result.forEach(t => {
       const key = t.recur_group_id
         ? `${t.recur_group_id}_${t.date}`
         : t.id
 
-      if (!seenKeys.has(key)) {
-        seenKeys.set(key, t)
+      const existingIdx = seenIndexByKey.get(key)
+      if (existingIdx === undefined) {
+        seenIndexByKey.set(key, finalResult.length)
         finalResult.push(t)
       } else {
-        const existing = seenKeys.get(key)!
-        const isNewReal = !(t as any).isVirtual && (existing as any).isVirtual
+        const existing = finalResult[existingIdx]
+        const isNewReal = !(t as any).isVirtual && Boolean((existing as any).isVirtual)
         if (isNewReal) {
-          seenKeys.set(key, t)
-          const idx = finalResult.findIndex(x => x === existing)
-          if (idx !== -1) finalResult[idx] = t
+          finalResult[existingIdx] = t
         }
       }
     })
@@ -972,8 +973,6 @@ export function useAppData(currentUser?: User | null) {
   }, [tasks, hist, vsOverrides])
 
   // ── TAREFAS ATRASADAS DA LISTA PRINCIPAL ─────────────────
-  // Captura qualquer tarefa no estado 'tasks' que esteja com data passada
-  // e não concluída. Isso unifica contadores para recorrentes e não-recorrentes.
   const atrasadasDaLista = useMemo(() => {
     const todayStr = getTodayStr()
     return tasks.filter(t =>
@@ -983,24 +982,23 @@ export function useAppData(currentUser?: User | null) {
   }, [tasks])
 
   // ── UNIFICAÇÃO DE ATRASADAS ──────────────────────────────
-  // Agora usamos a lista expandida como fonte única de verdade.
-  // Qualquer instância (real ou virtual) que esteja atrasada será contada.
   const allAtrasadas = useMemo(() => {
     return expandedTasks.filter((t: Task) => isLate(t))
   }, [expandedTasks])
 
-  // ── LOAD ALL ─────────────────────────────────────────────
+  // ── LOAD ALL (OTIMIZADO: < 300 KB / 1 RODADA PARALELA) ───
   const loadAll = useCallback(async (userOverride?: User | null) => {
     const myGen = ++loadGenerationRef.current
     const activeUser = userOverride ?? currentUser
-    // Bloqueia carregamento de dados internos para usuários pendentes, suspensos, recusados ou não autenticados
     if (!activeUser || !isUserActive(activeUser)) {
+      completedRecurKeysRef.current = new Set()
       setTasks([])
       setHist([])
       setMeets([])
       setTeam([])
       setBackups([])
       setPops([])
+      setFullHistoryLoaded(false)
       setLoading(false)
       return
     }
@@ -1010,76 +1008,113 @@ export function useAppData(currentUser?: User | null) {
     const canSeeBackup = canAccessModule(activeUser, 'backup')
     const userRespName = (activeUser.name || '').trim()
 
-    // Auto-paginação para buscar tarefas respeitando escopo de propriedade/atribuição
-    const fetchAllTasks = async () => {
-      let all: any[] = []
-      let from = 0
-      const step = 1000
-      while (true) {
-        if (myGen !== loadGenerationRef.current) break
-        let q = sb.from('tasks').select('*').order('sort_order', { ascending: true })
+    const cutoff60d = new Date()
+    cutoff60d.setDate(cutoff60d.getDate() - 60)
+    const cutoff60dStr = cutoff60d.toISOString().split('T')[0]
+
+    const fetchActiveTasksAndRecurKeys = async () => {
+      const fetchOpenTasks = async () => {
+        let all: any[] = []
+        let from = 0
+        const step = 1000
+        while (true) {
+          if (myGen !== loadGenerationRef.current) break
+          let q = sb
+            .from('tasks')
+            .select('*')
+            .neq('status', 'Concluída')
+            .order('sort_order', { ascending: true })
+            .order('date', { ascending: true })
+          if (!canSeeAll) {
+            q = q.ilike('resp', userRespName)
+          }
+          const { data, error } = await q.range(from, from + step - 1)
+          if (myGen !== loadGenerationRef.current) break
+          if (error || !data || data.length === 0) break
+          all = all.concat(data)
+          if (data.length < step) break
+          from += step
+        }
+        return filterTasksForUser(activeUser, all)
+      }
+
+      const fetchCompletedRecurKeys = async () => {
+        let q = sb
+          .from('tasks')
+          .select('id, recur_group_id, date, status, resp')
+          .eq('status', 'Concluída')
+          .not('recur_group_id', 'is', null)
+          .gte('date', cutoff60dStr)
+          .limit(2000)
         if (!canSeeAll) {
           q = q.ilike('resp', userRespName)
         }
-        const { data, error } = await q.range(from, from + step - 1)
-        if (myGen !== loadGenerationRef.current) break
-        if (error || !data || data.length === 0) break
-        all = all.concat(data)
-        if (data.length < step) break
-        from += step
+        const { data } = await q
+        return filterTasksForUser(activeUser, (data || []) as Task[])
       }
-      return { data: filterTasksForUser(activeUser, all) }
+
+      const [openTasks, completedRecurRows] = await Promise.all([
+        fetchOpenTasks(),
+        fetchCompletedRecurKeys(),
+      ])
+
+      return { openTasks, completedRecurRows }
     }
 
-    // Auto-paginação para buscar histórico respeitando escopo de propriedade/atribuição
-    const fetchAllHist = async () => {
-      let all: any[] = []
-      let from = 0
-      const step = 1000
-      while (true) {
-        if (myGen !== loadGenerationRef.current) break
-        let q = sb.from('hist').select('*').order('created_at', { ascending: false })
-        if (!canSeeAll) {
-          q = q.ilike('resp', userRespName)
-        }
-        const { data, error } = await q.range(from, from + step - 1)
-        if (myGen !== loadGenerationRef.current) break
-        if (error || !data || data.length === 0) break
-        all = all.concat(data)
-        if (data.length < step) break
-        from += step
+    // No boot, busca apenas os 500 registros mais recentes de hist (~120 ms)
+    const fetchRecentHist = async () => {
+      let q = sb.from('hist').select('*').order('created_at', { ascending: false }).limit(500)
+      if (!canSeeAll) {
+        q = q.ilike('resp', userRespName)
       }
-      return { data: filterTasksForUser(activeUser, all) }
+      const { data } = await q
+      const rawCount = data?.length || 0
+      return {
+        data: filterTasksForUser(activeUser, data || []),
+        hasMore: rawCount >= 500,
+      }
     }
 
-    const [tasksRes, histRes, meetsRes, teamRes, usersRes, backupsRes] = await Promise.all([
-      fetchAllTasks(),
-      fetchAllHist(),
+    const [tasksBundle, histRes, meetsRes, teamRes, usersRes, backupsRes, popsData] = await Promise.all([
+      fetchActiveTasksAndRecurKeys(),
+      fetchRecentHist(),
       sb.from('meets').select('*').order('created_at', { ascending: false }),
       sb.from('team').select('*'),
       sb.from('users').select('id,name,email,role,color,is_admin'),
       canSeeBackup
         ? sb.from('backup_tasks').select('id,backup_date,backup_label,created_at').order('created_at', { ascending: false }).limit(30)
         : Promise.resolve({ data: [] as Backup[] }),
+      fetchPopsApi(),
     ])
 
     if (myGen !== loadGenerationRef.current) return
 
-    // Normaliza campos de data (remove parte de hora se houver) para evitar bugs de filtro e recorrência
-    const normalizeDate = (d?: string) => d ? d.substring(0, 10) : d
+    const normalizeDate = (d?: string) => (d ? d.substring(0, 10) : d)
 
-    setHist((histRes.data || []).map(h => ({
-      ...h,
-      date: normalizeDate(h.date),
-      recur_start: normalizeDate(h.recur_start)
-    })))
+    const nextCompletedKeys = new Set<string>()
+    for (const r of tasksBundle.completedRecurRows) {
+      const normDate = normalizeDate(r.date)
+      if (r.recur_group_id && normDate) {
+        nextCompletedKeys.add(`${r.recur_group_id}_${normDate}`)
+      }
+    }
+    completedRecurKeysRef.current = nextCompletedKeys
+
+    setHist(
+      (histRes.data || []).map(h => ({
+        ...h,
+        date: normalizeDate(h.date),
+        recur_start: normalizeDate(h.recur_start),
+      }))
+    )
+    setFullHistoryLoaded(!histRes.hasMore)
     setMeets(meetsRes.data || [])
 
     const mergedTeam: TeamMember[] = [...(teamRes.data || [])]
     const seenTeamNames = new Set(
       mergedTeam.map(m => (m.name || '').trim().toLowerCase()).filter(Boolean)
     )
-    for (const rawUser of (usersRes.data || [])) {
+    for (const rawUser of usersRes.data || []) {
       const hydrated = hydrateUserAccess(rawUser as User)
       const trimmedName = (hydrated.name || '').trim()
       if (!trimmedName || !isUserActive(hydrated)) continue
@@ -1099,19 +1134,63 @@ export function useAppData(currentUser?: User | null) {
     setTeam(mergedTeam)
     setBackups(backupsRes.data || [])
 
-    setTasks((tasksRes.data || []).map(t => ({
-      ...t,
-      date: normalizeDate(t.date),
-      recur_start: normalizeDate(t.recur_start)
-    })))
+    setTasks(
+      (tasksBundle.openTasks || []).map(t => ({
+        ...t,
+        date: normalizeDate(t.date),
+        recur_start: normalizeDate(t.recur_start),
+      }))
+    )
 
-    // Carregar procedimentos operacionais padrão (POP)
-    const popsData = await fetchPopsApi()
-    if (myGen !== loadGenerationRef.current) return
     setPops(popsData)
-
     setLoading(false)
   }, [currentUser])
+
+  const tasksRef = useRef<Task[]>(tasks)
+  tasksRef.current = tasks
+  const histRef = useRef<Task[]>(hist)
+  histRef.current = hist
+  const expandedTasksRef = useRef<Task[]>(expandedTasks)
+  expandedTasksRef.current = expandedTasks
+
+  // Carrega o histórico completo sob demanda quando solicitado na HistoryPage
+  const loadFullHistory = useCallback(async () => {
+    if (!currentUser || !isUserActive(currentUser) || fullHistoryLoaded || loadingFullHistRef.current) {
+      return
+    }
+    loadingFullHistRef.current = true
+    try {
+      const canSeeAll = canViewAllTasks(currentUser)
+      const userRespName = (currentUser.name || '').trim()
+      const normalizeDate = (d?: string) => (d ? d.substring(0, 10) : d)
+
+      let all: any[] = []
+      let from = 0
+      const step = 1000
+      while (true) {
+        let q = sb.from('hist').select('*').order('created_at', { ascending: false })
+        if (!canSeeAll) {
+          q = q.ilike('resp', userRespName)
+        }
+        const { data, error } = await q.range(from, from + step - 1)
+        if (error || !data || data.length === 0) break
+        all = all.concat(data)
+        if (data.length < step) break
+        from += step
+      }
+
+      const filtered = filterTasksForUser(currentUser, all).map(h => ({
+        ...h,
+        date: normalizeDate(h.date),
+        recur_start: normalizeDate(h.recur_start),
+      }))
+      histRef.current = filtered
+      setHist(filtered)
+      setFullHistoryLoaded(true)
+    } finally {
+      loadingFullHistRef.current = false
+    }
+  }, [currentUser, fullHistoryLoaded])
 
   const loadPops = useCallback(async () => {
     if (!currentUser || !isUserActive(currentUser)) return
@@ -1297,8 +1376,7 @@ export function useAppData(currentUser?: User | null) {
     } else {
       // Nova tarefa ou materialização de virtual sem mestre real aberto
       const id = genId()
-      const { data: allTasks } = await sb.from('tasks').select('sort_order').order('sort_order', { ascending: false }).limit(1)
-      const maxOrder = (allTasks && allTasks.length > 0) ? (allTasks[0].sort_order || 0) : 0
+      const maxOrder = tasksRef.current.reduce((max, t) => Math.max(max, t.sort_order || 0), 0)
 
       // Gerar recur_group_id para novas tarefas recorrentes
       const recur_group_id = cleanData.recur && cleanData.recur !== 'none'
@@ -1386,13 +1464,6 @@ export function useAppData(currentUser?: User | null) {
     return true
   }, [currentUser, tasks, expandedTasks])
 
-  const tasksRef = useRef<Task[]>(tasks)
-  tasksRef.current = tasks
-  const histRef = useRef<Task[]>(hist)
-  histRef.current = hist
-  const expandedTasksRef = useRef<Task[]>(expandedTasks)
-  expandedTasksRef.current = expandedTasks
-
   // ── COMPLETE TASK ─────────────────────────────────────────
   const completeTask = useCallback(async (id: string, fromAtrasadas = false): Promise<boolean> => {
     if (!currentUser || !isUserActive(currentUser)) return false
@@ -1418,17 +1489,24 @@ export function useAppData(currentUser?: User | null) {
     const histId = isVirtual || isRecurringMaster ? genId() : t.id
     const histItem = buildHistItemPayload(t, histId, completedAt)
 
-    const { error: histErr } = await sb.from('hist').upsert(histItem, { onConflict: 'id' })
-    if (histErr) { console.error('Erro hist:', histErr); return false }
-
     if (isVirtual) {
-      // Tarefa virtual: materializa como concluída no banco
+      // Tarefa virtual: grava histórico e materializa como concluída no banco em paralelo
       const completedPayload = buildCompletedTaskPayload(t, histItem.id, completedAt)
-      const { error } = await sb.from('tasks').insert(completedPayload)
-      if (error) {
-        console.warn('Aviso: não materializou virtual como concluída:', error)
-        await sb.from('hist').delete().eq('id', histItem.id)
+      const [histRes, taskRes] = await Promise.all([
+        sb.from('hist').upsert(histItem, { onConflict: 'id' }),
+        sb.from('tasks').insert(completedPayload),
+      ])
+      if (histRes.error || taskRes.error) {
+        console.warn('Aviso: erro ao concluir tarefa virtual:', histRes.error || taskRes.error)
+        if (!histRes.error && taskRes.error) {
+          await sb.from('hist').delete().eq('id', histItem.id)
+        } else if (histRes.error && !taskRes.error) {
+          await sb.from('tasks').delete().eq('id', completedPayload.id)
+        }
         return false
+      }
+      if (t.recur_group_id && t.date) {
+        completedRecurKeysRef.current.add(`${t.recur_group_id}_${t.date}`)
       }
       // Atualiza estado local para remover virtual imediatamente das pendências
       const nextTasks = [...tasksRef.current, completedPayload]
@@ -1438,17 +1516,9 @@ export function useAppData(currentUser?: User | null) {
     } else if (isRecurringMaster) {
       // ── TAREFA MESTRE RECORRENTE ────────────────────────────
       // 1. Materializa a data original como concluída (bloqueia re-geração virtual)
-      // 2. Avança o mestre para a próxima ocorrência
+      // 2. Avança o mestre para a próxima ocorrência em paralelo com hist
       const originalDate = t.date
       const completedRecord = buildCompletedTaskPayload(t, histItem.id, completedAt)
-      const { error: insErr } = await sb.from('tasks').insert(completedRecord)
-      if (insErr) {
-        console.error('Erro ao inserir registro concluído recorrente:', insErr)
-        await sb.from('hist').delete().eq('id', histItem.id)
-        return false
-      }
-
-      // Avança o mestre para a próxima ocorrência
       const baseDate = originalDate < getTodayStr() ? getTodayStr() : originalDate
       const anchorStart = t.recur_start || originalDate
       let nextDate = getNextOccurrenceAfter(
@@ -1459,36 +1529,52 @@ export function useAppData(currentUser?: User | null) {
       )
       while (
         nextDate &&
-        tasksRef.current.some(x => x.recur_group_id === t!.recur_group_id && x.date === nextDate && x.status === 'Concluída')
+        (completedRecurKeysRef.current.has(`${t.recur_group_id}_${nextDate}`) ||
+          tasksRef.current.some(x => x.recur_group_id === t!.recur_group_id && x.date === nextDate && x.status === 'Concluída'))
       ) {
         nextDate = getNextOccurrenceAfter(t.recur!, t.recur_days || [], anchorStart, nextDate)
       }
+
+      const [histRes, insRes, masterRes] = await Promise.all([
+        sb.from('hist').upsert(histItem, { onConflict: 'id' }),
+        sb.from('tasks').insert(completedRecord),
+        nextDate
+          ? sb.from('tasks').update({ date: nextDate, recur_start: anchorStart }).eq('id', id)
+          : sb.from('tasks').delete().eq('id', id),
+      ])
+
+      if (histRes.error || insRes.error || masterRes.error) {
+        console.error('Erro ao concluir tarefa mestre recorrente:', histRes.error || insRes.error || masterRes.error)
+        if (!histRes.error) await sb.from('hist').delete().eq('id', histItem.id)
+        if (!insRes.error) await sb.from('tasks').delete().eq('id', completedRecord.id)
+        return false
+      }
+
+      if (t.recur_group_id && originalDate) {
+        completedRecurKeysRef.current.add(`${t.recur_group_id}_${originalDate}`)
+      }
+
       if (nextDate) {
-        const { error: updErr } = await sb.from('tasks').update({ date: nextDate, recur_start: anchorStart }).eq('id', id)
-        if (updErr) {
-          console.error('Erro ao avançar tarefa mestre recorrente:', updErr)
-          return false
-        }
         const nextTasks = [...tasksRef.current, completedRecord].map(x => x.id === id ? { ...x, date: nextDate, recur_start: anchorStart } : x)
         tasksRef.current = nextTasks
         setTasks(nextTasks)
       } else {
-        // Série esgotada — sem mais ocorrências futuras
-        const { error: delErr } = await sb.from('tasks').delete().eq('id', id)
-        if (delErr) {
-          console.error('Erro ao remover mestre de série esgotada:', delErr)
-          return false
-        }
         const nextTasks = [...tasksRef.current, completedRecord].filter(x => x.id !== id)
         tasksRef.current = nextTasks
         setTasks(nextTasks)
       }
 
     } else {
-      // Tarefa não-recorrente comum
-      const { error: delErr } = await sb.from('tasks').delete().eq('id', id)
-      if (delErr) {
-        console.error('Erro ao remover tarefa concluída:', delErr)
+      // Tarefa não-recorrente comum: grava hist e remove de tasks em paralelo
+      const [histRes, delRes] = await Promise.all([
+        sb.from('hist').upsert(histItem, { onConflict: 'id' }),
+        sb.from('tasks').delete().eq('id', id),
+      ])
+      if (histRes.error || delRes.error) {
+        console.error('Erro ao concluir tarefa:', histRes.error || delRes.error)
+        if (!histRes.error && delRes.error) {
+          await sb.from('hist').delete().eq('id', histItem.id)
+        }
         return false
       }
       const nextTasks = tasksRef.current.filter(x => x.id !== id)
@@ -1522,6 +1608,9 @@ export function useAppData(currentUser?: User | null) {
         completed_at: completedAt,
       }
       await sb.from('tasks').insert(deletedRecord)
+      if (t.recur_group_id && t.date) {
+        completedRecurKeysRef.current.add(`${t.recur_group_id}_${t.date}`)
+      }
       setTasks(prev => [...prev, deletedRecord])
       return
     }
@@ -1631,11 +1720,17 @@ export function useAppData(currentUser?: User | null) {
       return next
     })
 
-    const results = await Promise.all(
-      changedEntries.map(item =>
-        sb.from('tasks').update({ sort_order: item.sort_order }).eq('id', item.id)
+    const BATCH_SIZE = 6
+    const results: Array<{ error: any }> = []
+    for (let i = 0; i < changedEntries.length; i += BATCH_SIZE) {
+      const batch = changedEntries.slice(i, i + BATCH_SIZE)
+      const batchResults = await Promise.all(
+        batch.map(item =>
+          sb.from('tasks').update({ sort_order: item.sort_order }).eq('id', item.id)
+        )
       )
-    )
+      results.push(...batchResults)
+    }
 
     const failed = results.find(r => r.error)
     if (failed?.error) {
@@ -1655,8 +1750,7 @@ export function useAppData(currentUser?: User | null) {
     const h = hist.find(x => x.id === histId)
     if (!h || !canAccessTaskRecord(currentUser, h)) return false
     const originalDate = h.date || getTodayStr()
-    const { data: allTasks } = await sb.from('tasks').select('sort_order').order('sort_order', { ascending: false }).limit(1)
-    const maxOrder = allTasks?.[0]?.sort_order ?? -1
+    const maxOrder = tasksRef.current.reduce((max, t) => Math.max(max, t.sort_order || 0), -1)
     const newTask: Task = {
       ...h,
       id: h.id || genId(),
@@ -1669,19 +1763,16 @@ export function useAppData(currentUser?: User | null) {
       completed_at: undefined,
       sort_order: maxOrder + 1,
     } as Task
-    const allCurrent = await sb.from('tasks').select('id,sort_order').order('sort_order', { ascending: true })
-    if (allCurrent.data) {
-      const ups = allCurrent.data.map(t => sb.from('tasks').update({ sort_order: (t.sort_order || 0) + 1 }).eq('id', t.id))
-      await Promise.all(ups)
-      setTasks(prev => prev.map(t => ({ ...t, sort_order: (t.sort_order || 0) + 1 })))
-    }
-    const { error } = await sb.from('tasks').insert(newTask)
+    const { error } = await sb.from('tasks').upsert(newTask, { onConflict: 'id' })
     if (error) {
       console.error('❌ Erro Supabase (reopenTask):', error)
       return false
     }
     await sb.from('hist').delete().eq('id', histId)
-    setTasks(prev => [newTask, ...prev])
+    if (newTask.recur_group_id) {
+      completedRecurKeysRef.current.delete(`${newTask.recur_group_id}_${originalDate}`)
+    }
+    setTasks(prev => [newTask, ...prev.filter(x => x.id !== newTask.id)])
     setHist(prev => prev.filter(x => x.id !== histId))
     return true
   }, [currentUser, hist])
@@ -1713,6 +1804,9 @@ export function useAppData(currentUser?: User | null) {
           console.error('❌ Erro Supabase (deleteAtrasada virtual):', error)
           return false
         }
+        if (vt.recur_group_id && vt.date) {
+          completedRecurKeysRef.current.add(`${vt.recur_group_id}_${vt.date}`)
+        }
         const nextTasks = [...tasksRef.current, skipped]
         tasksRef.current = nextTasks
         setTasks(nextTasks)
@@ -1733,11 +1827,15 @@ export function useAppData(currentUser?: User | null) {
         console.error('❌ Erro Supabase (deleteAtrasada recur insert):', insErr)
         return false
       }
+      if (t.recur_group_id && t.date) {
+        completedRecurKeysRef.current.add(`${t.recur_group_id}_${t.date}`)
+      }
 
       let nextDate = getNextOccurrenceAfter(t.recur!, t.recur_days || [], t.recur_start || t.date, t.date)
       while (
         nextDate &&
-        tasksRef.current.some(x => x.recur_group_id === t.recur_group_id && x.date === nextDate && x.status === 'Concluída')
+        (completedRecurKeysRef.current.has(`${t.recur_group_id}_${nextDate}`) ||
+          tasksRef.current.some(x => x.recur_group_id === t.recur_group_id && x.date === nextDate && x.status === 'Concluída'))
       ) {
         nextDate = getNextOccurrenceAfter(t.recur!, t.recur_days || [], t.recur_start || t.date, nextDate)
       }
@@ -1791,6 +1889,12 @@ export function useAppData(currentUser?: User | null) {
         onProgress,
       })
 
+      for (const ct of res.nextTasks) {
+        if (ct.status === 'Concluída' && ct.recur_group_id && ct.date) {
+          completedRecurKeysRef.current.add(`${ct.recur_group_id}_${ct.date}`)
+        }
+      }
+
       tasksRef.current = res.nextTasks
       histRef.current = res.nextHist
       setTasks(res.nextTasks)
@@ -1816,6 +1920,12 @@ export function useAppData(currentUser?: User | null) {
         sbClient: sb,
         onProgress,
       })
+
+      for (const ct of res.nextTasks) {
+        if (ct.status === 'Concluída' && ct.recur_group_id && ct.date) {
+          completedRecurKeysRef.current.add(`${ct.recur_group_id}_${ct.date}`)
+        }
+      }
 
       tasksRef.current = res.nextTasks
       setTasks(res.nextTasks)
@@ -1945,6 +2055,12 @@ export function useAppData(currentUser?: User | null) {
     const now = new Date()
     const hour = now.getHours()
     const period = hour < 12 ? 'Manhã' : 'Tarde'
+    const periodKey = `${todayStr}_${period}`
+    try {
+      if (localStorage.getItem('pulse_daily_backup_last_date') === periodKey) return
+    } catch {
+      // ignore storage errors
+    }
     const autoLabel = `Auto ${now.toLocaleDateString('pt-BR')} - ${period}`
     
     // Permite até 2 backups automáticos por dia (manhã e tarde)
@@ -1953,11 +2069,17 @@ export function useAppData(currentUser?: User | null) {
       .ilike('backup_label', 'Auto%')
       .eq('backup_date', todayStr)
     
-    if (todayBackups && todayBackups.length >= 2) return // Já tem 2 hoje, não cria mais
+    if (todayBackups && todayBackups.length >= 2) {
+      try { localStorage.setItem('pulse_daily_backup_last_date', periodKey) } catch { /* ignore */ }
+      return // Já tem 2 hoje, não cria mais
+    }
 
     // Verifica se já existe um backup para este período (manhã/tarde)
     const alreadyHasPeriod = todayBackups?.some(b => b.backup_label.includes(period))
-    if (alreadyHasPeriod) return // Já tem backup deste período
+    if (alreadyHasPeriod) {
+      try { localStorage.setItem('pulse_daily_backup_last_date', periodKey) } catch { /* ignore */ }
+      return // Já tem backup deste período
+    }
 
     // Limpa backups automáticos com mais de 7 dias
     const sevenDaysAgo = new Date(now)
@@ -1984,14 +2106,13 @@ export function useAppData(currentUser?: User | null) {
     })
 
     if (!error) {
+      try { localStorage.setItem('pulse_daily_backup_last_date', periodKey) } catch { /* ignore */ }
       // Recarrega lista de backups para refletir o novo + remoção dos antigos
       const { data: refreshed } = await sb.from('backup_tasks')
         .select('id,backup_date,backup_label,created_at')
         .order('created_at', { ascending: false })
         .limit(30)
       setBackups(refreshed || [])
-      // Dispara download para o PC
-      downloadBackupFile(snapshot, `Automatico_${period}`)
     }
   }, [backups, createFullSnapshot])
 
@@ -2077,12 +2198,13 @@ export function useAppData(currentUser?: User | null) {
     tasks,
     expandedTasks,
     hist, meets, team, loading,
+    fullHistoryLoaded,
     atrasadas: allAtrasadas,
     atrasadasDaLista: allAtrasadas, 
     atrasadasRecorrentes: allAtrasadas, 
     allAtrasadas, backups, pops,
     setTasks, setHist, setMeets, setTeam, setPops,
-    loadAll, loadPops,
+    loadAll, loadPops, loadFullHistory,
     saveTask, linkTaskPop, completeTask, completeTasksBulk, deleteTask, cycleStatus, reorderTasks, reopenTask, deleteAtrasada, deleteAtrasadasBulk,
     saveMeet, deleteMeet,
     toggleSubtask, addSubtask, deleteSubtask,

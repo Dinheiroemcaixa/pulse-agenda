@@ -497,43 +497,71 @@ export function getStoredOperatorTestSessionRaw(): OperatorTestSession | null {
   }
 }
 
+let verifiedProgrammerCache: { key: string; user: User; expiresAt: number } | null = null
+let inFlightVerifyProgrammer: Promise<User> | null = null
+const VERIFY_PROGRAMMER_TTL_MS = 10_000
+
 export async function verifyProgrammerActor(actor: User | null | undefined): Promise<User> {
   if (!actor || !isPrimaryProgrammerIdentity(actor)) {
     throw new Error('ACESSO NEGADO: Somente o Programador principal está autorizado a realizar esta operação.')
   }
 
-  // Confirma a existência, identidade e prova criptográfica da conta diretamente no Supabase
-  try {
-    const { data, error } = await sb
-      .from('users')
-      .select('id,name,email,role,color,is_admin,pass_hash')
-      .eq('email', PROGRAMMER_EMAIL)
-      .single()
+  const storedSessionProof = localStorage.getItem(SESSION_PROOF_STORAGE_KEY) || ''
+  const storedAdminEnvelope = getStoredOperatorTestSessionRaw()
+  const cacheKey = `${actor.id}:${actor.email.trim().toLowerCase()}:${storedSessionProof}:${storedAdminEnvelope?.adminProof || ''}`
+  const now = Date.now()
 
-    if (!error && data) {
-      if (data.id !== actor.id && data.email.trim().toLowerCase() !== actor.email.trim().toLowerCase()) {
-        throw new Error('ACESSO NEGADO: Identidade do Programador não confirmada no banco de dados.')
-      }
-
-      if (data.pass_hash) {
-        const expectedProof = computeSessionProof(data.id, data.email, data.pass_hash, 'session_v1')
-        const storedSessionProof = localStorage.getItem(SESSION_PROOF_STORAGE_KEY)
-        const storedAdminEnvelope = getStoredOperatorTestSessionRaw()
-        const validDirectProof = storedSessionProof === expectedProof
-        const validEnvelopeProof = storedAdminEnvelope?.adminProof === expectedProof
-
-        if (!validDirectProof && !validEnvelopeProof) {
-          throw new Error('ACESSO NEGADO: Assinatura criptográfica da sessão do Programador ausente ou inválida.')
-        }
-      }
-
-      return hydrateUserAccess(data as User)
-    }
-  } catch (err: any) {
-    if (err?.message?.startsWith('ACESSO NEGADO')) throw err
+  if (verifiedProgrammerCache && verifiedProgrammerCache.key === cacheKey && now < verifiedProgrammerCache.expiresAt) {
+    return verifiedProgrammerCache.user
   }
 
-  return hydrateUserAccess(actor)
+  if (inFlightVerifyProgrammer) {
+    return inFlightVerifyProgrammer
+  }
+
+  const runVerification = async (): Promise<User> => {
+    try {
+      // Confirma a existência, identidade e prova criptográfica da conta diretamente no Supabase
+      const { data, error } = await sb
+        .from('users')
+        .select('id,name,email,role,color,is_admin,pass_hash')
+        .eq('email', PROGRAMMER_EMAIL)
+        .single()
+
+      if (!error && data) {
+        if (data.id !== actor.id && data.email.trim().toLowerCase() !== actor.email.trim().toLowerCase()) {
+          throw new Error('ACESSO NEGADO: Identidade do Programador não confirmada no banco de dados.')
+        }
+
+        if (data.pass_hash) {
+          const expectedProof = computeSessionProof(data.id, data.email, data.pass_hash, 'session_v1')
+          const currentSessionProof = localStorage.getItem(SESSION_PROOF_STORAGE_KEY)
+          const currentAdminEnvelope = getStoredOperatorTestSessionRaw()
+          const validDirectProof = currentSessionProof === expectedProof
+          const validEnvelopeProof = currentAdminEnvelope?.adminProof === expectedProof
+
+          if (!validDirectProof && !validEnvelopeProof) {
+            throw new Error('ACESSO NEGADO: Assinatura criptográfica da sessão do Programador ausente ou inválida.')
+          }
+        }
+
+        const hydrated = hydrateUserAccess(data as User)
+        verifiedProgrammerCache = { key: cacheKey, user: hydrated, expiresAt: Date.now() + VERIFY_PROGRAMMER_TTL_MS }
+        return hydrated
+      }
+    } catch (err: any) {
+      if (err?.message?.startsWith('ACESSO NEGADO')) throw err
+    } finally {
+      inFlightVerifyProgrammer = null
+    }
+
+    const fallback = hydrateUserAccess(actor)
+    verifiedProgrammerCache = { key: cacheKey, user: fallback, expiresAt: Date.now() + VERIFY_PROGRAMMER_TTL_MS }
+    return fallback
+  }
+
+  inFlightVerifyProgrammer = runVerification()
+  return inFlightVerifyProgrammer
 }
 
 export async function recordAuditLog(entry: Omit<AccessAuditLog, 'id' | 'created_at'>): Promise<AccessAuditLog> {
