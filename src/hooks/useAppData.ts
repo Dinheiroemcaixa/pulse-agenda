@@ -828,6 +828,7 @@ export function useAppData(currentUser?: User | null) {
   const [fullHistoryLoaded, setFullHistoryLoaded] = useState(false)
   const loadGenerationRef = useRef(0)
   const completedRecurKeysRef = useRef<Set<string>>(new Set())
+  const [completedRecurKeys, setCompletedRecurKeys] = useState<Set<string>>(new Set())
   const loadingFullHistRef = useRef(false)
 
   // Estado local para subtarefas de tarefas virtuais (não persiste no tasks state)
@@ -844,13 +845,19 @@ export function useAppData(currentUser?: User | null) {
     const rangeEnd = new Date(today)
     rangeEnd.setDate(rangeEnd.getDate() + 90)
 
-    // Unificar fonte de dados: apenas tarefas ativas (não concluídas)
-    const result: Task[] = tasks.filter(t => t.status !== 'Concluída')
+    // Unificar fonte de dados: apenas tarefas ativas (não concluídas e não já concluídas na série)
+    const result: Task[] = tasks.filter(t => {
+      if (t.status === 'Concluída') return false
+      if (t.recur_group_id && t.date && completedRecurKeys.has(`${t.recur_group_id}_${t.date}`)) {
+        return false
+      }
+      return true
+    })
 
     // Lookup de datas já materializadas por série
-    // Garante que ocorrências já gravadas em tasks (físicas), concluídas em completedRecurKeysRef OU concluídas em hist
+    // Garante que ocorrências já gravadas em tasks (físicas), concluídas em completedRecurKeys OU concluídas em hist
     // NUNCA sejam geradas novamente como virtuais (deduplicação absoluta).
-    const materializedKeys = new Set<string>(completedRecurKeysRef.current)
+    const materializedKeys = new Set<string>(completedRecurKeys)
     tasks.forEach(t => {
       if (t.recur_group_id && t.date) {
         materializedKeys.add(`${t.recur_group_id}_${t.date}`)
@@ -866,7 +873,7 @@ export function useAppData(currentUser?: User | null) {
     })
 
     // Agrupa mestres por série — pega o mais ANTIGO não concluído para servir de âncora
-    const recurrenceMasters = result.filter(t =>
+    const recurrenceMasters = tasks.filter(t =>
       t.recur && t.recur !== 'none' &&
       t.recur_group_id &&
       t.status !== 'Concluída'
@@ -970,7 +977,7 @@ export function useAppData(currentUser?: User | null) {
     })
 
     return finalResult
-  }, [tasks, hist, vsOverrides])
+  }, [tasks, hist, vsOverrides, completedRecurKeys])
 
   // ── TAREFAS ATRASADAS DA LISTA PRINCIPAL ─────────────────
   const atrasadasDaLista = useMemo(() => {
@@ -992,6 +999,7 @@ export function useAppData(currentUser?: User | null) {
     const activeUser = userOverride ?? currentUser
     if (!activeUser || !isUserActive(activeUser)) {
       completedRecurKeysRef.current = new Set()
+      setCompletedRecurKeys(new Set())
       setTasks([])
       setHist([])
       setMeets([])
@@ -1008,10 +1016,6 @@ export function useAppData(currentUser?: User | null) {
     const canSeeBackup = canAccessModule(activeUser, 'backup')
     const userRespName = (activeUser.name || '').trim()
 
-    const cutoff60d = new Date()
-    cutoff60d.setDate(cutoff60d.getDate() - 60)
-    const cutoff60dStr = cutoff60d.toISOString().split('T')[0]
-
     const fetchActiveTasksAndRecurKeys = async () => {
       const fetchOpenTasks = async () => {
         let all: any[] = []
@@ -1024,7 +1028,6 @@ export function useAppData(currentUser?: User | null) {
             .select('*')
             .neq('status', 'Concluída')
             .order('sort_order', { ascending: true })
-            .order('date', { ascending: true })
           if (!canSeeAll) {
             q = q.ilike('resp', userRespName)
           }
@@ -1038,19 +1041,53 @@ export function useAppData(currentUser?: User | null) {
         return filterTasksForUser(activeUser, all)
       }
 
-      const fetchCompletedRecurKeys = async () => {
-        let q = sb
-          .from('tasks')
-          .select('id, recur_group_id, date, status, resp')
-          .eq('status', 'Concluída')
-          .not('recur_group_id', 'is', null)
-          .gte('date', cutoff60dStr)
-          .limit(2000)
-        if (!canSeeAll) {
-          q = q.ilike('resp', userRespName)
+      const fetchPagedMinimalRecurRows = async (table: 'tasks' | 'hist') => {
+        const BATCH_PAGES = 5
+        const step = 1000
+        let all: any[] = []
+        let waveIndex = 0
+        while (true) {
+          if (myGen !== loadGenerationRef.current) break
+          const pagePromises = Array.from({ length: BATCH_PAGES }, (_, i) => {
+            const from = (waveIndex * BATCH_PAGES + i) * step
+            let q = sb
+              .from(table)
+              .select('recur_group_id,date,resp')
+              .not('recur_group_id', 'is', null)
+            if (table === 'tasks') {
+              q = q.eq('status', 'Concluída')
+            }
+            if (!canSeeAll) {
+              q = q.ilike('resp', userRespName)
+            }
+            return q.range(from, from + step - 1)
+          })
+          const results = await Promise.all(pagePromises)
+          if (myGen !== loadGenerationRef.current) break
+          let done = false
+          for (const res of results) {
+            if (res.error || !res.data || res.data.length === 0) {
+              done = true
+              break
+            }
+            all = all.concat(res.data)
+            if (res.data.length < step) {
+              done = true
+              break
+            }
+          }
+          if (done) break
+          waveIndex++
         }
-        const { data } = await q
-        return filterTasksForUser(activeUser, (data || []) as Task[])
+        return filterTasksForUser(activeUser, all as Task[])
+      }
+
+      const fetchCompletedRecurKeys = async () => {
+        const [taskRecurRows, histRecurRows] = await Promise.all([
+          fetchPagedMinimalRecurRows('tasks'),
+          fetchPagedMinimalRecurRows('hist'),
+        ])
+        return [...taskRecurRows, ...histRecurRows]
       }
 
       const [openTasks, completedRecurRows] = await Promise.all([
@@ -1099,6 +1136,7 @@ export function useAppData(currentUser?: User | null) {
       }
     }
     completedRecurKeysRef.current = nextCompletedKeys
+    setCompletedRecurKeys(nextCompletedKeys)
 
     setHist(
       (histRes.data || []).map(h => ({
@@ -1507,6 +1545,7 @@ export function useAppData(currentUser?: User | null) {
       }
       if (t.recur_group_id && t.date) {
         completedRecurKeysRef.current.add(`${t.recur_group_id}_${t.date}`)
+        setCompletedRecurKeys(new Set(completedRecurKeysRef.current))
       }
       // Atualiza estado local para remover virtual imediatamente das pendências
       const nextTasks = [...tasksRef.current, completedPayload]
@@ -1552,6 +1591,7 @@ export function useAppData(currentUser?: User | null) {
 
       if (t.recur_group_id && originalDate) {
         completedRecurKeysRef.current.add(`${t.recur_group_id}_${originalDate}`)
+        setCompletedRecurKeys(new Set(completedRecurKeysRef.current))
       }
 
       if (nextDate) {
@@ -1610,6 +1650,7 @@ export function useAppData(currentUser?: User | null) {
       await sb.from('tasks').insert(deletedRecord)
       if (t.recur_group_id && t.date) {
         completedRecurKeysRef.current.add(`${t.recur_group_id}_${t.date}`)
+        setCompletedRecurKeys(new Set(completedRecurKeysRef.current))
       }
       setTasks(prev => [...prev, deletedRecord])
       return
@@ -1771,6 +1812,7 @@ export function useAppData(currentUser?: User | null) {
     await sb.from('hist').delete().eq('id', histId)
     if (newTask.recur_group_id) {
       completedRecurKeysRef.current.delete(`${newTask.recur_group_id}_${originalDate}`)
+      setCompletedRecurKeys(new Set(completedRecurKeysRef.current))
     }
     setTasks(prev => [newTask, ...prev.filter(x => x.id !== newTask.id)])
     setHist(prev => prev.filter(x => x.id !== histId))
@@ -1806,6 +1848,7 @@ export function useAppData(currentUser?: User | null) {
         }
         if (vt.recur_group_id && vt.date) {
           completedRecurKeysRef.current.add(`${vt.recur_group_id}_${vt.date}`)
+          setCompletedRecurKeys(new Set(completedRecurKeysRef.current))
         }
         const nextTasks = [...tasksRef.current, skipped]
         tasksRef.current = nextTasks
@@ -1829,6 +1872,7 @@ export function useAppData(currentUser?: User | null) {
       }
       if (t.recur_group_id && t.date) {
         completedRecurKeysRef.current.add(`${t.recur_group_id}_${t.date}`)
+        setCompletedRecurKeys(new Set(completedRecurKeysRef.current))
       }
 
       let nextDate = getNextOccurrenceAfter(t.recur!, t.recur_days || [], t.recur_start || t.date, t.date)
@@ -1889,10 +1933,15 @@ export function useAppData(currentUser?: User | null) {
         onProgress,
       })
 
+      let keysChanged = false
       for (const ct of res.nextTasks) {
         if (ct.status === 'Concluída' && ct.recur_group_id && ct.date) {
           completedRecurKeysRef.current.add(`${ct.recur_group_id}_${ct.date}`)
+          keysChanged = true
         }
+      }
+      if (keysChanged) {
+        setCompletedRecurKeys(new Set(completedRecurKeysRef.current))
       }
 
       tasksRef.current = res.nextTasks
@@ -1921,10 +1970,15 @@ export function useAppData(currentUser?: User | null) {
         onProgress,
       })
 
+      let keysChanged = false
       for (const ct of res.nextTasks) {
         if (ct.status === 'Concluída' && ct.recur_group_id && ct.date) {
           completedRecurKeysRef.current.add(`${ct.recur_group_id}_${ct.date}`)
+          keysChanged = true
         }
+      }
+      if (keysChanged) {
+        setCompletedRecurKeys(new Set(completedRecurKeysRef.current))
       }
 
       tasksRef.current = res.nextTasks
