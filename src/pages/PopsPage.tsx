@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Pop, User } from '../types'
 import { togglePopActiveApi, deletePopApi } from '../lib/popsApi'
+import { canCreatePop } from '../lib/accessControlApi'
 import { PopRunnerModal } from '../components/PopRunnerModal'
 import { DcxFlowBrand } from '../components/DcxFlowLogo'
 
@@ -29,7 +30,13 @@ export function PopsPage({
   } | null>(null)
   const [confirmDel, setConfirmDel] = useState<Pop | null>(null)
 
+  const allowCreatePop = Boolean(isAdmin || canCreatePop(currentUser))
+
   const openNewPop = () => {
+    if (!allowCreatePop) {
+      showToast('Você não possui permissão para criar POP.', 'warn')
+      return
+    }
     setRunnerModalState({
       initialMode: 'edit',
       createNew: true
@@ -107,8 +114,8 @@ export function PopsPage({
           </button>
         </div>
 
-        {isAdmin && (
-          <button className="add-btn" onClick={openNewPop}>
+        {allowCreatePop && (
+          <button className="add-btn" data-testid="new-pop-btn" onClick={openNewPop}>
             + Novo POP
           </button>
         )}

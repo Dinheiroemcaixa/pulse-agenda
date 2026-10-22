@@ -1,6 +1,7 @@
 import { sb } from './supabase'
 import { genId } from './utils'
-import type { Pop, PopStep, PopStepMedia, Task } from '../types'
+import { canCreatePop, resolveCurrentSessionUser } from './accessControlApi'
+import type { Pop, PopStep, PopStepMedia, Task, User } from '../types'
 
 const POPS_LOCAL_STORAGE_KEY = 'pulse_pops_cache_v5'
 const TASK_POP_LINKS_KEY = 'pulse_task_pop_links_v2'
@@ -1492,7 +1493,24 @@ export async function fetchPopsApi(force = false): Promise<Pop[]> {
   return inFlightFetchPops
 }
 
-export async function savePopApi(popData: Partial<Pop>, editId?: string): Promise<Pop> {
+export async function savePopApi(
+  popData: Partial<Pop>,
+  editId?: string,
+  actor?: User | null
+): Promise<Pop> {
+  const effectiveActor = actor !== undefined ? actor : resolveCurrentSessionUser()
+  if (effectiveActor) {
+    if (!editId) {
+      if (!canCreatePop(effectiveActor) && !Boolean(effectiveActor.is_admin)) {
+        throw new Error('ACESSO NEGADO: Você não possui permissão para criar procedimentos (POP).')
+      }
+    } else {
+      if (!Boolean(effectiveActor.is_admin)) {
+        throw new Error('ACESSO NEGADO: Apenas administradores podem editar procedimentos (POP) existentes.')
+      }
+    }
+  }
+
   const localList = getLocalPops()
   const now = new Date().toISOString()
 

@@ -3,6 +3,7 @@ import { genId } from './utils'
 import type {
   AccessAuditLog,
   AccessProfile,
+  AccessProfilePermissionsMap,
   AccessStatus,
   AppModule,
   OperatorTestSession,
@@ -66,6 +67,7 @@ export const LEGACY_APPROVED_ACCOUNTS: Record<string, LegacyAccountSeed> = {
 const ACCESS_OVERRIDES_STORAGE_KEY = 'pulse_access_control_overrides_v1'
 const ACCESS_AUDIT_STORAGE_KEY = 'pulse_access_audit_logs_v1'
 const PENDING_USERS_STORAGE_KEY = 'pulse_pending_signup_users_v1'
+export const PROFILE_DEFAULTS_STORAGE_KEY = 'pulse_profile_permissions_defaults_v1'
 export const SESSION_PROOF_STORAGE_KEY = 'pulse_session_proof'
 export const OPERATOR_TEST_SESSION_STORAGE_KEY = 'pulse_operator_test_session_v1'
 
@@ -117,7 +119,26 @@ export const MODULE_METADATA: { key: AppModule; label: string; description: stri
 // PERMISSÕES PADRÃO POR PERFIL
 // ──────────────────────────────────────────────────────────────
 
-export function getDefaultPermissionsForProfile(profile: AccessProfile): UserPermissions {
+export function getProfilePermissionDefaultsMap(): AccessProfilePermissionsMap {
+  try {
+    if (typeof localStorage === 'undefined') return {}
+    const raw = localStorage.getItem(PROFILE_DEFAULTS_STORAGE_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+function setProfilePermissionDefaultsMap(map: AccessProfilePermissionsMap): void {
+  try {
+    if (typeof localStorage === 'undefined') return
+    localStorage.setItem(PROFILE_DEFAULTS_STORAGE_KEY, JSON.stringify(map))
+  } catch (e) {
+    console.error('Erro ao salvar defaults de permissão por perfil:', e)
+  }
+}
+
+export function getBaseStaticPermissionsForProfile(profile: AccessProfile): UserPermissions {
   if (profile === 'programador') {
     return {
       tasks: true,
@@ -130,6 +151,7 @@ export function getDefaultPermissionsForProfile(profile: AccessProfile): UserPer
       backup: true,
       settings: true,
       view_all_tasks: true,
+      create_pops: true,
     }
   }
   if (profile === 'gestora') {
@@ -144,6 +166,7 @@ export function getDefaultPermissionsForProfile(profile: AccessProfile): UserPer
       backup: true,
       settings: false, // Jamais tem acesso a Configurações
       view_all_tasks: true,
+      create_pops: true,
     }
   }
   // Operador
@@ -158,6 +181,31 @@ export function getDefaultPermissionsForProfile(profile: AccessProfile): UserPer
     backup: false,
     settings: false,
     view_all_tasks: false, // Operador acessa apenas suas próprias tarefas
+    create_pops: false, // Restrito por padrão até liberação explícita pelo administrador
+  }
+}
+
+export function getDefaultPermissionsForProfile(profile: AccessProfile): UserPermissions {
+  const base = getBaseStaticPermissionsForProfile(profile)
+  if (profile === 'programador') {
+    return { ...base }
+  }
+  const customProfileDefaults = getProfilePermissionDefaultsMap()[profile]
+  if (!customProfileDefaults || typeof customProfileDefaults !== 'object') {
+    return { ...base }
+  }
+  return {
+    tasks: customProfileDefaults.tasks ?? base.tasks,
+    atrasadas: customProfileDefaults.atrasadas ?? base.atrasadas,
+    history: customProfileDefaults.history ?? base.history,
+    pops: customProfileDefaults.pops ?? base.pops,
+    team: profile === 'operador' ? false : (customProfileDefaults.team ?? base.team),
+    meetings: customProfileDefaults.meetings ?? base.meetings,
+    messages: customProfileDefaults.messages ?? base.messages,
+    backup: customProfileDefaults.backup ?? base.backup,
+    settings: false,
+    view_all_tasks: customProfileDefaults.view_all_tasks ?? base.view_all_tasks,
+    create_pops: customProfileDefaults.create_pops ?? base.create_pops,
   }
 }
 
@@ -168,7 +216,7 @@ export function normalizePermissionsForProfile(
   const defaults = getDefaultPermissionsForProfile(profile)
   if (profile === 'programador') {
     // Programador sempre mantém acesso administrativo total
-    return { ...defaults }
+    return { ...defaults, create_pops: true }
   }
   const merged: UserPermissions = {
     tasks: raw?.tasks ?? defaults.tasks,
@@ -180,7 +228,8 @@ export function normalizePermissionsForProfile(
     messages: raw?.messages ?? defaults.messages,
     backup: raw?.backup ?? defaults.backup,
     settings: false, // Nunca permitido fora do Programador
-    view_all_tasks: profile === 'operador' ? Boolean(raw?.view_all_tasks ?? false) : (raw?.view_all_tasks ?? defaults.view_all_tasks),
+    view_all_tasks: profile === 'operador' ? Boolean(raw?.view_all_tasks ?? defaults.view_all_tasks) : (raw?.view_all_tasks ?? defaults.view_all_tasks),
+    create_pops: raw?.create_pops ?? defaults.create_pops,
   }
   return merged
 }
@@ -353,9 +402,18 @@ export function hydrateUserAccess(rawUser: User): User {
   }
 
   // 4. Normalizar permissões conforme o perfil
-  const rawPerms = (rawUser.permissions && typeof rawUser.permissions === 'object')
+  const dbPerms = (rawUser.permissions && typeof rawUser.permissions === 'object')
     ? rawUser.permissions
-    : override?.permissions
+    : undefined
+  const overrideNewer = Boolean(
+    override?.permissions &&
+    (!rawUser.status_updated_at || (override.status_updated_at && override.status_updated_at >= rawUser.status_updated_at))
+  )
+  const rawPerms: Partial<UserPermissions> | undefined = overrideNewer
+    ? { ...(dbPerms || {}), ...override!.permissions }
+    : dbPerms
+      ? { ...(override?.permissions || {}), ...dbPerms }
+      : override?.permissions
   const permissions = normalizePermissionsForProfile(profile, rawPerms)
 
   // is_admin reflete se possui perfil de gestão operacional (Programador ou Gestora ativos)
@@ -424,6 +482,62 @@ export function canAccessModule(user: User | null | undefined, pageOrModule: Pag
 
   const perms = hydrated.permissions || getDefaultPermissionsForProfile(hydrated.access_profile || 'operador')
   return Boolean(perms[pageOrModule as keyof UserPermissions])
+}
+
+export function canCreatePop(user: User | null | undefined): boolean {
+  if (!user) return false
+  const hydrated = hydrateUserAccess(user)
+  if (hydrated.access_status !== 'active') return false
+  if (isProgrammer(hydrated)) return true
+  if (!canAccessModule(hydrated, 'pops')) return false
+  const perms = hydrated.permissions || getDefaultPermissionsForProfile(hydrated.access_profile || 'operador')
+  return Boolean(perms.create_pops)
+}
+
+export function resolveCurrentSessionUser(): User | null {
+  try {
+    if (typeof localStorage === 'undefined') return null
+    const savedEmail = (localStorage.getItem('pulse_session') || '').trim().toLowerCase()
+    if (!savedEmail) return null
+
+    const overrides = getLocalOverridesMap()
+    const overrideByEmail = overrides[savedEmail] || Object.values(overrides).find(
+      o => (o.email || '').trim().toLowerCase() === savedEmail
+    )
+    const opSession = getStoredOperatorTestSessionRaw()
+    const matchingOpSession =
+      opSession && (opSession.targetEmail || '').trim().toLowerCase() === savedEmail
+        ? opSession
+        : null
+    const legacySeed = LEGACY_APPROVED_ACCOUNTS[savedEmail]
+    const localPending = getLocalPendingUsers().find(
+      u => (u.email || '').trim().toLowerCase() === savedEmail
+    )
+
+    const baseUser: User = localPending
+      ? {
+          ...localPending,
+          permissions: overrideByEmail?.permissions || localPending.permissions,
+          status_updated_at: overrideByEmail?.status_updated_at || localPending.status_updated_at,
+        }
+      : {
+          id: matchingOpSession?.targetId || overrideByEmail?.user_id || legacySeed?.id || savedEmail,
+          name: matchingOpSession?.targetName || savedEmail.split('@')[0],
+          role: '',
+          email: savedEmail,
+          pass_hash: '',
+          color: '#4f6ef7',
+          is_admin: false,
+          access_profile: overrideByEmail?.access_profile || matchingOpSession?.targetProfile || legacySeed?.profile,
+          access_status: overrideByEmail?.access_status || legacySeed?.status || (matchingOpSession ? 'active' : undefined),
+          permissions: overrideByEmail?.permissions,
+          status_updated_at: overrideByEmail?.status_updated_at,
+        }
+
+    return hydrateUserAccess(baseUser)
+  } catch {
+    return null
+  }
 }
 
 export function canViewAllTasks(user: User | null | undefined): boolean {
@@ -779,6 +893,7 @@ export async function rejectUserRequest(
     backup: false,
     settings: false,
     view_all_tasks: false,
+    create_pops: false,
   })
 
   const updated = await persistUserAccessState(targetUser, 'operador', 'rejected', perms, verifiedActor)
@@ -892,7 +1007,7 @@ export async function updateUserAccessConfig(
     target_user_name: targetUser.name,
     target_user_email: targetUser.email,
     action: targetUser.access_profile !== effectiveProfile ? 'UPDATE_PROFILE' : 'UPDATE_PERMISSIONS',
-    details: `Perfil definido como "${effectiveProfile.toUpperCase()}". Módulos liberados: ${enabledModules || 'Nenhum'}${normalizedPerms.view_all_tasks ? ' + Visão Geral de Tarefas' : ' (Apenas próprias tarefas)'}.`,
+    details: `Perfil definido como "${effectiveProfile.toUpperCase()}". Módulos liberados: ${enabledModules || 'Nenhum'}${normalizedPerms.view_all_tasks ? ' + Visão Geral de Tarefas' : ' (Apenas próprias tarefas)'}${normalizedPerms.create_pops ? ' + Criar POP' : ''}.`,
     previous_state: {
       access_profile: targetUser.access_profile,
       permissions: targetUser.permissions,
@@ -904,6 +1019,72 @@ export async function updateUserAccessConfig(
   })
 
   return updated
+}
+
+export async function updateProfileDefaultPermissions(
+  actor: User | null | undefined,
+  profile: AccessProfile,
+  patch: Partial<UserPermissions>
+): Promise<UserPermissions> {
+  const verifiedActor = await verifyProgrammerActor(actor)
+
+  if (profile === 'programador') {
+    return getDefaultPermissionsForProfile('programador')
+  }
+
+  const previousDefaults = getDefaultPermissionsForProfile(profile)
+  const currentMap = getProfilePermissionDefaultsMap()
+  const existingProfilePatch = currentMap[profile] || {}
+  const nextProfilePatch: Partial<UserPermissions> = {
+    ...existingProfilePatch,
+    ...patch,
+    settings: false,
+    ...(profile === 'operador' ? { team: false } : {}),
+  }
+
+  setProfilePermissionDefaultsMap({
+    ...currentMap,
+    [profile]: nextProfilePatch,
+  })
+
+  const nextDefaults = getDefaultPermissionsForProfile(profile)
+
+  // Propaga a atualização do padrão de perfil para os overrides locais já existentes daquele perfil
+  const overrides = getLocalOverridesMap()
+  let overridesChanged = false
+  const now = new Date().toISOString()
+  for (const key of Object.keys(overrides)) {
+    const entry = overrides[key]
+    if (entry && entry.access_profile === profile && entry.permissions) {
+      overrides[key] = {
+        ...entry,
+        permissions: normalizePermissionsForProfile(profile, {
+          ...entry.permissions,
+          ...patch,
+        }),
+        status_updated_at: now,
+      }
+      overridesChanged = true
+    }
+  }
+  if (overridesChanged) {
+    setLocalOverridesMap(overrides)
+  }
+
+  await recordAuditLog({
+    actor_id: verifiedActor.id,
+    actor_name: verifiedActor.name,
+    actor_email: verifiedActor.email,
+    target_user_id: `PROFILE:${profile}`,
+    target_user_name: `Perfil ${profile.toUpperCase()}`,
+    target_user_email: profile,
+    action: 'UPDATE_PERMISSIONS',
+    details: `Permissões padrão do perfil "${profile.toUpperCase()}" atualizadas (Criar POP: ${nextDefaults.create_pops ? 'Liberado' : 'Restrito'}).`,
+    previous_state: { profile, permissions: previousDefaults },
+    new_state: { profile, permissions: nextDefaults },
+  })
+
+  return nextDefaults
 }
 
 // ──────────────────────────────────────────────────────────────

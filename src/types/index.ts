@@ -13,7 +13,10 @@ export interface UserPermissions {
   backup: boolean
   settings: boolean
   view_all_tasks: boolean
+  create_pops: boolean
 }
+
+export type AccessProfilePermissionsMap = Partial<Record<AccessProfile, Partial<UserPermissions>>>
 
 export type AccessAuditAction =
   | 'APPROVE_USER'

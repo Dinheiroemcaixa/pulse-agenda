@@ -17,6 +17,7 @@ import {
   cleanupUnreferencedPopStorageFiles,
   type ResolvedPopMediaAccess
 } from '../lib/popsApi'
+import { canCreatePop } from '../lib/accessControlApi'
 import { genId } from '../lib/utils'
 
 interface Props {
@@ -79,7 +80,8 @@ export function PopRunnerModal(props: Props) {
     showToast
   } = props
 
-  const canEdit = Boolean(isAdmin)
+  const canEditExisting = Boolean(isAdmin)
+  const canCreateNew = Boolean(isAdmin || canCreatePop(currentUser))
 
   const basePops = propAllPops ?? propPops ?? getLocalPops()
   const allPops = basePops
@@ -96,6 +98,9 @@ export function PopRunnerModal(props: Props) {
   const [isCreatingForTask, setIsCreatingForTask] = useState<boolean>(false)
   const [pendingSelectPopId, setPendingSelectPopId] = useState<string>('')
   const [confirmUnlinkInRunner, setConfirmUnlinkInRunner] = useState<boolean>(false)
+
+  const isNewCreationFlow = Boolean((createNew && !currentPopOverride) || isCreatingForTask)
+  const canEdit = isNewCreationFlow ? canCreateNew : canEditExisting
 
   const emptyPopTemplate: Pop = {
     id: '',
@@ -166,7 +171,7 @@ export function PopRunnerModal(props: Props) {
 
   // Modo de visualização vs edição interna unificada
   const [isEditing, setIsEditing] = useState<boolean>(
-    Boolean((createNew || initialMode === 'edit') && canEdit)
+    Boolean((createNew && canCreateNew) || (initialMode === 'edit' && !createNew && canEditExisting))
   )
   const [isSaving, setIsSaving] = useState(false)
 
@@ -700,6 +705,16 @@ export function PopRunnerModal(props: Props) {
   }
 
   const handleSavePop = async () => {
+    const isNewPopCreation = (createNew && !currentPopOverride) || isCreatingForTask
+    if (isNewPopCreation && !canCreateNew) {
+      showToast('Você não possui permissão para criar POP.', 'warn')
+      return
+    }
+    if (!isNewPopCreation && !canEditExisting) {
+      showToast('Apenas administradores podem editar procedimentos (POP).', 'warn')
+      return
+    }
+
     if (!fTitle.trim()) {
       showToast('⚠ Preencha o título do POP', 'warn')
       return
@@ -720,7 +735,6 @@ export function PopRunnerModal(props: Props) {
 
     setIsSaving(true)
     try {
-      const isNewPopCreation = (createNew && !currentPopOverride) || isCreatingForTask
       const editTargetId = isNewPopCreation ? undefined : pop.id || undefined
       const payload: Partial<Pop> = {
         id: editTargetId || draftPopIdRef.current,
@@ -746,7 +760,7 @@ export function PopRunnerModal(props: Props) {
         active: pop.active !== undefined ? pop.active : true
       }
 
-      const saved = await savePopApi(payload, editTargetId)
+      const saved = await savePopApi(payload, editTargetId, currentUser)
 
       if (pendingDeletedStoragePathsRef.current.length > 0) {
         const popsSnapshot = allPops.some(p => p.id === saved.id)
@@ -775,6 +789,8 @@ export function PopRunnerModal(props: Props) {
       onSaved?.(saved)
       setIsEditing(false)
       showToast(`✅ POP salvo com sucesso (${saved.steps.length} etapas)!`, 'success')
+    } catch (err: any) {
+      showToast(err?.message || '❌ Erro ao salvar procedimento (POP).', 'error')
     } finally {
       setIsSaving(false)
     }
@@ -828,6 +844,10 @@ export function PopRunnerModal(props: Props) {
   }
 
   const handleStartCreatePopForTask = () => {
+    if (!canCreateNew) {
+      showToast('Você não possui permissão para criar POP.', 'warn')
+      return
+    }
     draftPopIdRef.current = `pop_${Date.now()}`
     setCurrentPopOverride(null)
     setIsCreatingForTask(true)
@@ -1508,7 +1528,7 @@ export function PopRunnerModal(props: Props) {
                 )}
               </div>
 
-              {canEdit && (
+              {canCreateNew && (
                 <div
                   style={{
                     display: 'flex',

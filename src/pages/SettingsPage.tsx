@@ -20,6 +20,7 @@ import {
   reactivateUserAccess,
   rejectUserRequest,
   suspendUserAccess,
+  updateProfileDefaultPermissions,
   updateUserAccessConfig,
 } from '../lib/accessControlApi'
 
@@ -78,6 +79,10 @@ export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser, onS
   const [pendingProfiles, setPendingProfiles] = useState<Record<string, AccessProfile>>({})
   const [selectedTestOperatorId, setSelectedTestOperatorId] = useState<string>('')
   const [startingSessionId, setStartingSessionId] = useState<string | null>(null)
+  const [profileDefaults, setProfileDefaults] = useState<Record<'operador' | 'gestora', UserPermissions>>(() => ({
+    operador: getDefaultPermissionsForProfile('operador'),
+    gestora: getDefaultPermissionsForProfile('gestora'),
+  }))
 
   // Modal de edição de permissões e perfil por usuário
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
@@ -102,6 +107,10 @@ export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser, onS
       ])
       setUsers(managedUsers)
       setAuditLogs(logs)
+      setProfileDefaults({
+        operador: getDefaultPermissionsForProfile('operador'),
+        gestora: getDefaultPermissionsForProfile('gestora'),
+      })
       const firstTestable = managedUsers.find(
         u => !isPrimaryProgrammerIdentity(u) && u.access_status === 'active'
       )
@@ -235,6 +244,28 @@ export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser, onS
       showToast(err?.message || '❌ Erro ao salvar permissões', 'error')
     } finally {
       setSavingConfig(false)
+    }
+  }
+
+  const handleToggleProfileCreatePops = async (profile: 'operador' | 'gestora') => {
+    const currentDefault = getDefaultPermissionsForProfile(profile)
+    const nextValue = !currentDefault.create_pops
+    try {
+      const updatedDefaults = await updateProfileDefaultPermissions(currentUser, profile, {
+        create_pops: nextValue,
+      })
+      setProfileDefaults(prev => ({
+        ...prev,
+        [profile]: updatedDefaults,
+      }))
+      showToast(
+        `✅ Permissão padrão "Criar POP" do perfil ${PROFILE_LABELS[profile].label}: ${nextValue ? 'Liberada' : 'Restrita'}!`,
+        'success'
+      )
+      await loadData()
+      await onRefreshCurrentUser?.()
+    } catch (err: any) {
+      showToast(err?.message || '❌ Erro ao atualizar permissão padrão do perfil', 'error')
     }
   }
 
@@ -609,6 +640,58 @@ export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser, onS
             </div>
           </div>
 
+          {/* Padrão de Permissão Criar POP por Perfil */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: 12,
+              padding: '12px 14px',
+              marginBottom: 14,
+              borderRadius: 10,
+              background: 'var(--bg3)',
+              border: '1px solid var(--border)',
+            }}
+          >
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>
+                📘 Permissão Padrão por Perfil: Criar POP
+              </div>
+              <div style={{ fontSize: 11.5, color: 'var(--text3)', marginTop: 2 }}>
+                Defina se todo um perfil pode cadastrar novos POPs por padrão ou configure individualmente em ⚙️ Permissões / Perfil de cada operadora.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              {(['operador', 'gestora'] as const).map(profKey => {
+                const enabled = Boolean(profileDefaults[profKey]?.create_pops)
+                const meta = PROFILE_LABELS[profKey]
+                return (
+                  <button
+                    key={profKey}
+                    type="button"
+                    data-testid={`profile-default-create-pops-${profKey}`}
+                    className="mc-btn"
+                    onClick={() => handleToggleProfileCreatePops(profKey)}
+                    style={{
+                      width: 'auto',
+                      padding: '6px 12px',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      borderColor: enabled ? meta.color : 'var(--border)',
+                      background: enabled ? meta.bg : 'var(--bg2)',
+                      color: enabled ? meta.color : 'var(--text3)',
+                    }}
+                  >
+                    {enabled ? '✅' : '🔒'} Perfil {meta.label}: Criar POP {enabled ? 'Liberado' : 'Restrito'}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
           {loading ? (
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--text3)' }}>Carregando usuários...</div>
           ) : (
@@ -695,6 +778,11 @@ export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser, onS
                           {st === 'active' && (
                             <span style={{ marginLeft: 8, color: perms.view_all_tasks ? 'var(--accent)' : 'var(--text3)' }}>
                               · {perms.view_all_tasks ? '👁️ Vê tarefas da equipe' : '🔒 Apenas próprias tarefas'}
+                            </span>
+                          )}
+                          {st === 'active' && perms.create_pops && (
+                            <span style={{ marginLeft: 8, color: 'var(--green)' }}>
+                              · 📘 Criar POP
                             </span>
                           )}
                         </div>
@@ -1000,6 +1088,38 @@ export function SettingsPage({ currentUser, showToast, onRefreshCurrentUser, onS
                     checked={Boolean(editPermissions.view_all_tasks)}
                     disabled={isPrimaryProgrammerIdentity(selectedUser)}
                     onChange={() => toggleModulePermission('view_all_tasks')}
+                    style={{ width: 16, height: 16 }}
+                  />
+                </label>
+
+                {/* Permissão explícita para Criar POP */}
+                <label
+                  data-testid="permission-create-pops-toggle"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '9px 12px',
+                    borderRadius: 8,
+                    background: 'var(--bg3)',
+                    border: '1px solid var(--border)',
+                    opacity: isPrimaryProgrammerIdentity(selectedUser) ? 0.65 : 1,
+                    cursor: isPrimaryProgrammerIdentity(selectedUser) ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)' }}>
+                      Criar POP
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+                      Permite cadastrar novos Procedimentos Operacionais Padrão (POP) na biblioteca e diretamente nas tarefas.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(editPermissions.create_pops)}
+                    disabled={isPrimaryProgrammerIdentity(selectedUser)}
+                    onChange={() => toggleModulePermission('create_pops')}
                     style={{ width: 16, height: 16 }}
                   />
                 </label>
