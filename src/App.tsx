@@ -70,6 +70,34 @@ export default function App() {
   }, [theme])
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark')
 
+  // Remove ativamente qualquer barra/botão flutuante externo de desenvolvimento (Vercel Toolbar)
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('vercel_toolbar') === '1' && isProgrammer(currentUser)) return
+
+    const selector = [
+      'vercel-live-feedback',
+      '#__vercel-live-token',
+      '[data-vercel-toolbar]',
+      'script[src*="vercel.live"]',
+      'iframe[src*="vercel.live"]',
+    ].join(',')
+
+    const purgeExternalDevToolbar = () => {
+      try {
+        document.querySelectorAll(selector).forEach(el => el.remove())
+      } catch {
+        // Ignora falhas de DOM
+      }
+    }
+
+    purgeExternalDevToolbar()
+    const observer = new MutationObserver(() => purgeExternalDevToolbar())
+    observer.observe(document.documentElement, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [currentUser])
+
   // Auth forms
   const [authTab, setAuthTab] = useState<'login' | 'signup' | 'recover'>('login')
   const [lEmail, setLEmail] = useState('')
