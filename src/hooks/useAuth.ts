@@ -14,6 +14,7 @@ import {
   sanitizeSelfProfileUpdate,
   saveLocalPendingUsers,
   startOperatorTestSession,
+  syncCentralAccessControlState,
   verifyStoredOperatorTestSession,
 } from '../lib/accessControlApi'
 import type { OperatorTestSession, User } from '../types'
@@ -95,6 +96,7 @@ export function useAuth() {
       }
     }
 
+    await syncCentralAccessControlState()
     const verifiedTestSession = await verifyStoredOperatorTestSession(savedEmail)
     setOperatorTestSession(verifiedTestSession)
     setCurrentUser(hydrateUserAccess(rawUser))
@@ -130,6 +132,7 @@ export function useAuth() {
     localStorage.setItem('pulse_session', trimmedEmail)
     localStorage.setItem(SESSION_PROOF_STORAGE_KEY, sessionProof)
 
+    await syncCentralAccessControlState()
     const hydrated = hydrateUserAccess(rawUser)
     setOperatorTestSession(null)
     setCurrentUser(hydrated)
@@ -213,6 +216,7 @@ export function useAuth() {
       return 'Dados incorretos. Verifique o e-mail e o nome digitado.'
     }
 
+    await syncCentralAccessControlState()
     const hydrated = hydrateUserAccess(rawUser)
     // Bloqueia redefinição de senha para contas suspensas ou recusadas
     if (hydrated.access_status === 'suspended' || hydrated.access_status === 'rejected') {

@@ -20,7 +20,8 @@ ALTER TABLE public.users
     "messages": true,
     "backup": false,
     "settings": false,
-    "view_all_tasks": false
+    "view_all_tasks": false,
+    "create_pops": false
   }'::jsonb,
   ADD COLUMN IF NOT EXISTS approved_by text,
   ADD COLUMN IF NOT EXISTS approved_at timestamptz,
@@ -43,7 +44,8 @@ SET
     "messages": true,
     "backup": true,
     "settings": true,
-    "view_all_tasks": true
+    "view_all_tasks": true,
+    "create_pops": true
   }'::jsonb,
   approved_by = 'SYSTEM_BOOTSTRAP',
   approved_at = timezone('utc'::text, now()),
@@ -66,7 +68,8 @@ SET
     "messages": true,
     "backup": true,
     "settings": false,
-    "view_all_tasks": true
+    "view_all_tasks": true,
+    "create_pops": true
   }'::jsonb,
   approved_by = 'RAMON CARDOSO',
   approved_at = timezone('utc'::text, now()),
@@ -89,7 +92,8 @@ SET
     "messages": true,
     "backup": false,
     "settings": false,
-    "view_all_tasks": false
+    "view_all_tasks": false,
+    "create_pops": false
   }'::jsonb,
   approved_by = 'RAMON CARDOSO',
   approved_at = timezone('utc'::text, now()),
@@ -167,7 +171,8 @@ BEGIN
         "messages": true,
         "backup": false,
         "settings": false,
-        "view_all_tasks": false
+        "view_all_tasks": false,
+        "create_pops": false
       }'::jsonb;
     END IF;
     RETURN NEW;

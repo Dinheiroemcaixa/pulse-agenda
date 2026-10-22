@@ -71,6 +71,18 @@ export const PROFILE_DEFAULTS_STORAGE_KEY = 'pulse_profile_permissions_defaults_
 export const SESSION_PROOF_STORAGE_KEY = 'pulse_session_proof'
 export const OPERATOR_TEST_SESSION_STORAGE_KEY = 'pulse_operator_test_session_v1'
 
+const CENTRAL_ACCESS_STATE_BUCKET = 'pop-media'
+export const CENTRAL_ACCESS_STATE_PATH = 'pops/_system_access_control/access_state_v1.txt'
+
+export interface CentralAccessControlStateEnvelope {
+  version: 1
+  updatedAt: string
+  updatedBy: string
+  overrides: Record<string, UserAccessOverride>
+  profileDefaults: AccessProfilePermissionsMap
+  signature: string
+}
+
 let auditTableAvailable: boolean | null = null
 let operatorSessionRpcAvailable: boolean | null = null
 
@@ -287,6 +299,163 @@ function saveLocalAuditLogs(logs: AccessAuditLog[]): void {
   } catch (e) {
     console.error('Erro ao salvar logs de auditoria:', e)
   }
+}
+
+function computeCentralAccessStateSignature(
+  adminPassHash: string,
+  updatedAt: string,
+  overrides: Record<string, UserAccessOverride>,
+  profileDefaults: AccessProfilePermissionsMap
+): string {
+  const canonicalPayload = JSON.stringify({
+    version: 1,
+    updatedAt,
+    overrides,
+    profileDefaults,
+  })
+  return computeSessionProof(
+    PROGRAMMER_USER_ID,
+    PROGRAMMER_EMAIL,
+    `${adminPassHash}|${canonicalPayload}`,
+    'central_access_state_v1'
+  )
+}
+
+let inFlightCentralSync: Promise<boolean> | null = null
+
+/**
+ * Sincroniza o estado central de permissões (overrides por usuário e padrões por perfil)
+ * armazenado no Supabase e assinado criptograficamente pelo Programador principal.
+ * Permite que alterações salvas pelo administrador reflitam em outros computadores e navegadores.
+ */
+export async function syncCentralAccessControlState(): Promise<boolean> {
+  if (inFlightCentralSync) {
+    return inFlightCentralSync
+  }
+
+  const runSync = async (): Promise<boolean> => {
+    try {
+      const { data: blob, error: dlErr } = await sb.storage
+        .from(CENTRAL_ACCESS_STATE_BUCKET)
+        .download(CENTRAL_ACCESS_STATE_PATH)
+
+      if (dlErr || !blob) {
+        return false
+      }
+
+      const rawText = await blob.text()
+      if (!rawText) return false
+
+      const parsed = JSON.parse(rawText) as CentralAccessControlStateEnvelope
+      if (
+        !parsed ||
+        parsed.version !== 1 ||
+        typeof parsed.updatedAt !== 'string' ||
+        typeof parsed.signature !== 'string' ||
+        typeof parsed.overrides !== 'object' ||
+        typeof parsed.profileDefaults !== 'object'
+      ) {
+        return false
+      }
+
+      const { data: adminRow, error: adminErr } = await sb
+        .from('users')
+        .select('id,email,pass_hash')
+        .eq('email', PROGRAMMER_EMAIL)
+        .single()
+
+      if (adminErr || !adminRow || !adminRow.pass_hash) {
+        return false
+      }
+
+      const expectedSig = computeCentralAccessStateSignature(
+        adminRow.pass_hash,
+        parsed.updatedAt,
+        parsed.overrides || {},
+        parsed.profileDefaults || {}
+      )
+
+      if (parsed.signature !== expectedSig) {
+        console.warn('Assinatura criptográfica do estado central de permissões inválida; ignorando envelope remoto.')
+        return false
+      }
+
+      const currentLocalProfileDefaults = getProfilePermissionDefaultsMap()
+      setProfilePermissionDefaultsMap({
+        ...(parsed.profileDefaults || {}),
+        ...currentLocalProfileDefaults,
+      })
+
+      const currentLocal = getLocalOverridesMap()
+      const mergedOverrides: Record<string, UserAccessOverride> = { ...(parsed.overrides || {}) }
+      for (const [k, localEntry] of Object.entries(currentLocal)) {
+        const remoteEntry = mergedOverrides[k]
+        if (
+          localEntry &&
+          (!remoteEntry ||
+            (localEntry.status_updated_at &&
+              (!remoteEntry.status_updated_at || localEntry.status_updated_at >= remoteEntry.status_updated_at)))
+        ) {
+          mergedOverrides[k] = localEntry
+        }
+      }
+      setLocalOverridesMap(mergedOverrides)
+      return true
+    } catch {
+      return false
+    } finally {
+      inFlightCentralSync = null
+    }
+  }
+
+  inFlightCentralSync = runSync()
+  return inFlightCentralSync
+}
+
+/**
+ * Persiste centralmente no Supabase o mapa de overrides por usuário e os defaults por perfil,
+ * assinados criptograficamente com o pass_hash do Programador principal.
+ */
+export async function persistCentralAccessControlState(actor: User | null | undefined): Promise<void> {
+  const verifiedActor = await verifyProgrammerActor(actor)
+
+  const { data: adminRow, error: adminErr } = await sb
+    .from('users')
+    .select('id,email,pass_hash')
+    .eq('email', PROGRAMMER_EMAIL)
+    .single()
+
+  if (adminErr || !adminRow || !adminRow.pass_hash) {
+    return
+  }
+
+  const updatedAt = new Date().toISOString()
+  const overrides = getLocalOverridesMap()
+  const profileDefaults = getProfilePermissionDefaultsMap()
+
+  const signature = computeCentralAccessStateSignature(
+    adminRow.pass_hash,
+    updatedAt,
+    overrides,
+    profileDefaults
+  )
+
+  const envelope: CentralAccessControlStateEnvelope = {
+    version: 1,
+    updatedAt,
+    updatedBy: verifiedActor.email,
+    overrides,
+    profileDefaults,
+    signature,
+  }
+
+  await sb.storage
+    .from(CENTRAL_ACCESS_STATE_BUCKET)
+    .upload(CENTRAL_ACCESS_STATE_PATH, JSON.stringify(envelope), {
+      upsert: true,
+      contentType: 'text/plain',
+      cacheControl: '0',
+    })
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -711,6 +880,7 @@ export async function recordAuditLog(entry: Omit<AccessAuditLog, 'id' | 'created
 
 export async function fetchAllManagedUsers(actor: User | null | undefined): Promise<User[]> {
   await verifyProgrammerActor(actor)
+  await syncCentralAccessControlState()
 
   const { data: dbUsers } = await sb.from('users').select('*').order('name', { ascending: true })
   const pendingLocal = getLocalPendingUsers()
@@ -824,6 +994,12 @@ async function persistUserAccessState(
     })
   } catch {
     // RPC ainda não aplicada no banco — mantido via camada de controle de acesso
+  }
+
+  try {
+    await persistCentralAccessControlState(actor)
+  } catch (err) {
+    console.warn('Aviso ao sincronizar estado central de permissões:', err)
   }
 
   return hydrateUserAccess({
@@ -1071,6 +1247,12 @@ export async function updateProfileDefaultPermissions(
     setLocalOverridesMap(overrides)
   }
 
+  try {
+    await persistCentralAccessControlState(verifiedActor)
+  } catch (err) {
+    console.warn('Aviso ao sincronizar permissões padrão por perfil centralmente:', err)
+  }
+
   await recordAuditLog({
     actor_id: verifiedActor.id,
     actor_name: verifiedActor.name,
@@ -1206,7 +1388,8 @@ export async function startOperatorTestSession(
     throw new Error('ACESSO NEGADO: Somente o Desenvolvedor autenticado pode iniciar uma sessão de teste como Operador.')
   }
 
-  // 2. Buscar o registro real do operador alvo no banco (ou pendente local aprovado)
+  // 2. Sincronizar estado central de permissões e buscar o registro real do operador alvo no banco
+  await syncCentralAccessControlState()
   const { data: allDbUsers } = await sb.from('users').select('*')
   const rawDbMatch = (allDbUsers || []).find(
     (u: any) =>
